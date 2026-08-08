@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import base64
 import logging
+import subprocess
+import tempfile
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -17,6 +19,35 @@ from cryptography.hazmat.primitives.asymmetric import padding
 from tenacity import retry, stop_after_attempt, wait_exponential_jitter
 
 logger = logging.getLogger(__name__)
+
+
+def _sign_pss_openssl(private_key_path: str, message: bytes) -> bytes:
+    """RSA-PSS SHA256 sign via openssl (fallback when cryptography rejects PEM)."""
+    with tempfile.NamedTemporaryFile(delete=False) as msg_f:
+        msg_f.write(message)
+        msg_path = msg_f.name
+    try:
+        proc = subprocess.run(
+            [
+                "openssl",
+                "dgst",
+                "-sha256",
+                "-sigopt",
+                "rsa_padding_mode:pss",
+                "-sigopt",
+                "rsa_pss_saltlen:digest",
+                "-sign",
+                private_key_path,
+                msg_path,
+            ],
+            capture_output=True,
+            check=False,
+        )
+        if proc.returncode != 0:
+            raise RuntimeError(proc.stderr.decode()[:300] or "openssl sign failed")
+        return proc.stdout
+    finally:
+        Path(msg_path).unlink(missing_ok=True)
 
 
 @dataclass
@@ -90,29 +121,48 @@ class KalshiClient:
         self.base_url = base_url.rstrip("/")
         self.api_key_id = api_key_id
         self._private_key = None
-        if private_key_path and Path(private_key_path).exists():
-            pem = Path(private_key_path).read_bytes()
-            self._private_key = serialization.load_pem_private_key(pem, password=None)
+        self._private_key_path = private_key_path if private_key_path and Path(private_key_path).exists() else ""
+        self._sign_backend = "none"
+        if self._private_key_path:
+            try:
+                pem = Path(self._private_key_path).read_bytes()
+                self._private_key = serialization.load_pem_private_key(pem, password=None)
+                self._sign_backend = "cryptography"
+            except ValueError as exc:
+                # Some Kalshi-exported PEMs fail cryptography's multiprime checks
+                # but still sign correctly via openssl (and Kalshi accepts them).
+                logger.warning(
+                    "cryptography rejected Kalshi PEM (%s); using openssl signing backend",
+                    exc,
+                )
+                self._sign_backend = "openssl"
         self._http = httpx.Client(timeout=timeout)
 
     @property
     def authenticated(self) -> bool:
-        return bool(self.api_key_id and self._private_key)
+        return bool(self.api_key_id and self._sign_backend in ("cryptography", "openssl"))
 
     def close(self) -> None:
         self._http.close()
 
     def _sign(self, timestamp_ms: str, method: str, path: str) -> str:
-        if not self._private_key:
+        if self._sign_backend == "none":
             raise RuntimeError("Kalshi private key not loaded")
         # Sign path without query string
         path = path.split("?")[0]
         message = f"{timestamp_ms}{method.upper()}{path}".encode()
-        sig = self._private_key.sign(
-            message,
-            padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.DIGEST_LENGTH),
-            hashes.SHA256(),
-        )
+        if self._sign_backend == "openssl":
+            sig = _sign_pss_openssl(self._private_key_path, message)
+        else:
+            assert self._private_key is not None
+            sig = self._private_key.sign(
+                message,
+                padding.PSS(
+                    mgf=padding.MGF1(hashes.SHA256()),
+                    salt_length=padding.PSS.DIGEST_LENGTH,
+                ),
+                hashes.SHA256(),
+            )
         return base64.b64encode(sig).decode()
 
     def _headers(self, method: str, full_path: str) -> dict[str, str]:
