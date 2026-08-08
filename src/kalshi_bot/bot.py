@@ -1,23 +1,26 @@
-"""Main bot loop — scan mispricing + cross-venue arb, execute per risk rules."""
+"""Main settlement-aware forecasting, decision, and execution loop."""
 
 from __future__ import annotations
 
 import logging
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 
 from rich.console import Console
 from rich.table import Table
 
 from kalshi_bot.config import AppConfig, Settings
-from kalshi_bot.data.ibit_options import BRTIProxy, IBITOptionsProvider
+from kalshi_bot.data.cf_benchmark import CFBenchmarkClient
+from kalshi_bot.data.ibit_options import IBITOptionsProvider
+from kalshi_bot.data.supporting_feeds import SupportingFeeds
+from kalshi_bot.domain import ContractSide, MarketPosition, OpenOrder
 from kalshi_bot.execution.engine import ExecutionEngine, ExecutionReport
+from kalshi_bot.execution.position_manager import PositionManager, PositionManagerConfig
 from kalshi_bot.execution.risk import RiskManager
 from kalshi_bot.journal import TradeJournal
-from kalshi_bot.strategies.cross_venue_arb import CrossVenueArbScanner
-from kalshi_bot.strategies.mispricing import MispricingScanner
+from kalshi_bot.strategies.forecasting import ForecastCycle, ForecastingScanner
 from kalshi_bot.venues.kalshi import KalshiClient
-from kalshi_bot.venues.polymarket import PolymarketClient
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -26,9 +29,9 @@ console = Console()
 @dataclass
 class BotStats:
     loops: int = 0
-    signals_seen: int = 0
+    decisions: int = 0
     trades: int = 0
-    arbs: int = 0
+    no_trades: int = 0
     reports: list[ExecutionReport] = field(default_factory=list)
 
 
@@ -47,94 +50,179 @@ class TradingBot:
             api_key_id=settings.kalshi_api_key_id,
             private_key_path=settings.kalshi_private_key_path,
         )
-        self.poly = PolymarketClient()
         self.options = IBITOptionsProvider(
             cache_sec=config.pricing.smile_cache_sec,
             default_iv=config.pricing.default_iv,
         )
-        self.brti = BRTIProxy(self.options)
+        self.benchmark = CFBenchmarkClient(
+            config.data.cf_benchmark_url,
+            api_key=config.data.cf_benchmark_api_key or None,
+            api_key_header=config.data.cf_benchmark_api_key_header,
+            api_key_prefix=config.data.cf_benchmark_api_key_prefix,
+            max_age_seconds=config.data.max_brti_age_seconds,
+        )
+        self.supporting = SupportingFeeds(
+            minimum_venues=config.data.min_supporting_venues
+        )
+        self.positions = PositionManager(
+            PositionManagerConfig(
+                max_flips_per_contract=config.risk.max_flips_per_contract,
+                max_trades_per_contract=config.risk.max_trades_per_contract,
+            ),
+            mode="paper" if config.execution.dry_run else "live",
+        )
         self.risk = RiskManager(
             config,
-            max_daily_loss=settings.max_daily_loss_usd,
-            cooldown_sec=900.0,
+            max_daily_loss=config.risk.max_daily_loss,
+            cooldown_sec=config.risk.cooldown_seconds,
             max_trades_per_cycle=1,
-            max_per_ticker_usd=min(2.0, settings.max_position_usd),
+            max_per_ticker_usd=config.risk.max_contract_exposure,
         )
         self._hydrate_positions()
-        self.engine = ExecutionEngine(self.kalshi, self.risk, config, journal=self.journal)
-        self.mispricing = MispricingScanner(self.kalshi, self.options, self.brti, config)
-        self.arb = CrossVenueArbScanner(self.kalshi, self.poly, config.cross_venue)
+        self.engine = ExecutionEngine(
+            self.kalshi,
+            self.risk,
+            config,
+            journal=self.journal,
+            positions=self.positions,
+        )
+        self.forecasting = ForecastingScanner(
+            kalshi=self.kalshi,
+            benchmark=self.benchmark,
+            supporting=self.supporting,
+            options=self.options,
+            config=config,
+            position_lookup=self._position_lookup,
+            orders_lookup=self._orders_lookup,
+        )
         self.stats = BotStats()
 
     def _hydrate_positions(self) -> None:
+        if not self.kalshi.authenticated:
+            return
         try:
-            data = self.kalshi.get("/portfolio/positions", params={"limit": 200})
-            mkts = data.get("market_positions") or []
+            mkts = self.kalshi.get_positions(limit=200)
             self.risk.seed_from_positions(mkts)
+            now = datetime.now(timezone.utc)
+            for raw in mkts:
+                ticker = str(raw.get("ticker") or "")
+                position = float(raw.get("position_fp") or raw.get("position") or 0)
+                if not ticker or position == 0:
+                    continue
+                quantity = abs(position)
+                exposure = abs(float(raw.get("market_exposure_dollars") or 0))
+                average_price = exposure / quantity if exposure > 0 else 0.5
+                self.positions.seed_position(
+                    contract=ticker,
+                    side=ContractSide.YES if position > 0 else ContractSide.NO,
+                    quantity=quantity,
+                    entry_price=max(0.0, min(1.0, average_price)),
+                    timestamp=now,
+                )
             logger.info(
                 "Hydrated %d positions, exposure=$%.2f",
                 len(self.risk.state.positions),
                 self.risk.state.open_exposure_usd,
             )
         except Exception as exc:
-            logger.warning("Could not hydrate positions: %s", exc)
+            self.risk.lock(f"position verification failed: {exc}")
+            logger.error("Could not safely hydrate positions: %s", exc)
+
+    def _position_lookup(self, ticker: str) -> MarketPosition | None:
+        position = self.positions.position(ticker)
+        if position is None:
+            return None
+        return MarketPosition(
+            side=position.side,
+            quantity=position.quantity,
+            average_price=position.entry_price,
+        )
+
+    def _orders_lookup(self, ticker: str) -> tuple[OpenOrder, ...]:
+        if not self.kalshi.authenticated:
+            return ()
+        try:
+            raw_orders = self.kalshi.get_open_orders(ticker=ticker)
+            orders: list[OpenOrder] = []
+            for raw in raw_orders:
+                raw_side = str(raw.get("side") or raw.get("outcome") or "yes").lower()
+                side = ContractSide.NO if raw_side == "no" else ContractSide.YES
+                price = float(
+                    raw.get("yes_price_dollars")
+                    or raw.get("no_price_dollars")
+                    or raw.get("price")
+                    or 0
+                )
+                orders.append(
+                    OpenOrder(
+                        order_id=str(raw.get("order_id") or raw.get("client_order_id") or "unknown"),
+                        side=side,
+                        quantity=float(raw.get("remaining_count_fp") or raw.get("count") or 0),
+                        price=price,
+                        status=str(raw.get("status") or "open"),
+                    )
+                )
+            return tuple(orders)
+        except Exception as exc:
+            logger.error("Open-order verification failed: %s", exc)
+            return (
+                OpenOrder(
+                    order_id="verification-failed",
+                    side=ContractSide.YES,
+                    quantity=0,
+                    price=0,
+                    status="pending",
+                ),
+            )
 
     def close(self) -> None:
         self.kalshi.close()
-        self.poly.close()
+        self.benchmark.close()
+        self.supporting.close()
 
     def once(self) -> BotStats:
         self.stats.loops += 1
         self.risk.begin_cycle()
         mode = "DRY-RUN" if self.engine.dry_run else "LIVE"
-
-        # --- Mispricing ---
-        try:
-            scan = self.mispricing.scan()
-            self._print_mispricing(scan)
-            scan_id = self.journal.log_scan(
-                spot=scan.spot,
-                ibit=scan.ibit,
-                iv_atm=scan.iv_atm,
-                markets_scanned=scan.markets_scanned,
-                signal_count=len(scan.signals),
-                mode=mode,
+        cycle = self.forecasting.scan(risk_locked=self.risk.locked)
+        report = None
+        if (
+            self.config.execution.orders_enabled
+            and cycle.market is not None
+            and cycle.decision is not None
+        ):
+            report = self.engine.execute_decision(
+                cycle.market,
+                cycle.decision,
+                timestamp=cycle.timestamp,
             )
-            for sig in scan.signals:
-                self.stats.signals_seen += 1
-                report = self.engine.execute_mispricing(sig)
-                traded = bool(report and report.ok)
-                self.journal.log_signal(scan_id, sig, traded=traded)
-                if report:
-                    self.stats.trades += 1
-                    self.stats.reports.append(report)
-                    console.print(f"[green]{report.detail}[/green]")
-        except Exception as exc:
-            logger.exception("Mispricing scan failed: %s", exc)
-            console.print(f"[red]Mispricing scan error: {exc}[/red]")
-
-        # --- Cross-venue arb ---
-        try:
-            opps = self.arb.scan()
-            if opps:
-                table = Table(title="Cross-venue arb (Kalshi ↔ Polymarket)")
-                table.add_column("Pair cost")
-                table.add_column("Edge")
-                table.add_column("Reason")
-                for o in opps:
-                    table.add_row(f"{o.pair_cost:.4f}", f"{o.edge:.4f}", o.reason)
-                console.print(table)
-            for o in opps:
-                report = self.engine.execute_arb(o)
-                if report:
-                    self.stats.arbs += 1
-                    self.stats.reports.append(report)
-                    console.print(f"[cyan]{report.detail}[/cyan]")
-            if not opps:
-                console.print("[dim]No cross-venue arb this cycle[/dim]")
-        except Exception as exc:
-            logger.exception("Arb scan failed: %s", exc)
-            console.print(f"[red]Arb scan error: {exc}[/red]")
+        traded = bool(report and report.ok)
+        self.journal.log_decision(
+            cycle,
+            dry_run=self.engine.dry_run,
+            traded=traded,
+            payload={
+                "execution": report.payload if report else None,
+                "risk": {
+                    "locked": self.risk.locked,
+                    "reason": self.risk.state.halt_reason,
+                    "realized_pnl": self.risk.state.realized_pnl,
+                    "open_exposure_usd": self.risk.state.open_exposure_usd,
+                    "consecutive_losses": self.risk.state.consecutive_losses,
+                },
+            },
+        )
+        self.stats.decisions += 1
+        if traded:
+            self.stats.trades += 1
+        else:
+            self.stats.no_trades += 1
+        if report:
+            self.stats.reports.append(report)
+        self._print_cycle(cycle, mode)
+        if report:
+            color = "green" if report.ok else "red"
+            console.print(f"[{color}]{report.detail}[/{color}]")
 
         return self.stats
 
@@ -157,38 +245,40 @@ class TradingBot:
         finally:
             self.close()
 
-    def _print_mispricing(self, scan) -> None:
-        console.print(
-            f"BTC(BRTI proxy)=${scan.spot:,.2f}  IBIT=${scan.ibit:.2f}  "
-            f"ATM IV={((scan.iv_atm or 0)*100):.1f}%  scanned={scan.markets_scanned}"
-        )
-        if not scan.signals:
-            console.print("[dim]No actionable mispricing signals[/dim]")
-            return
-        table = Table(title="Options-implied mispricing")
-        table.add_column("Tier")
-        table.add_column("Ticker")
-        table.add_column("Side")
-        table.add_column("Kalshi")
-        table.add_column("Options")
-        table.add_column("Edge pp")
-        table.add_column("IV")
-        table.add_column("Book $")
-        for s in scan.signals[:15]:
-            color = {
-                "HIGH": "bold green",
-                "MEDIUM": "yellow",
-                "LOW": "white",
-                "PASS": "dim",
-            }.get(s.confidence.value, "white")
+    def _print_cycle(self, cycle: ForecastCycle, mode: str) -> None:
+        decision = cycle.decision
+        table = Table(title=f"Kalshi BTC 15m forecast · {mode}")
+        table.add_column("Field")
+        table.add_column("Value")
+        table.add_row("Data health", cycle.data_health)
+        if cycle.market:
+            table.add_row("Ticker", cycle.market.ticker)
+            table.add_row("Strike", f"${cycle.market.strike:,.2f}")
             table.add_row(
-                f"[{color}]{s.confidence.value}[/{color}]",
-                s.ticker,
-                s.side.value,
-                f"{s.kalshi_prob*100:.1f}%",
-                f"{s.options_prob*100:.1f}%",
-                f"{s.edge_pp:.1f}",
-                f"{s.iv*100:.1f}%",
-                f"{s.book_usd:.0f}",
+                "Time remaining",
+                f"{max(0, (cycle.market.expiration-cycle.timestamp).total_seconds()):.0f}s",
             )
+            table.add_row(
+                "Book",
+                f"YES {cycle.market.yes_bid:.2f}/{cycle.market.yes_ask:.2f} · "
+                f"NO {cycle.market.no_bid:.2f}/{cycle.market.no_ask:.2f}",
+            )
+        if cycle.benchmark:
+            table.add_row("Primary BRTI", f"${cycle.benchmark.price:,.2f}")
+        if cycle.forecast:
+            table.add_row(
+                "Probability",
+                f"UP {cycle.forecast.p_up:.1%} · DOWN {cycle.forecast.p_down:.1%}",
+            )
+            table.add_row(
+                "Confidence",
+                f"{cycle.forecast.confidence:.1%} · agreement {cycle.forecast.signal_agreement:.1%}",
+            )
+        if cycle.regime:
+            table.add_row("Regime", cycle.regime.value)
+        if decision:
+            table.add_row("Decision", decision.action.value)
+            if decision.edge is not None:
+                table.add_row("All-in edge", f"{decision.edge:.1%}")
+            table.add_row("Why", cycle.reason)
         console.print(table)

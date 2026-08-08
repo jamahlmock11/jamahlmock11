@@ -110,8 +110,18 @@ def parse_orderbook_fp(
         raw = raw["orderbook"]
     if not isinstance(raw, Mapping):
         raise OrderBookError("orderbook_fp payload must be an object")
-    yes_bids = _levels(raw.get("yes"), reverse=True)
-    no_bids = _levels(raw.get("no"), reverse=True)
+    yes_bids = _levels(
+        raw.get("yes_dollars")
+        if raw.get("yes_dollars") is not None
+        else raw.get("yes"),
+        reverse=True,
+    )
+    no_bids = _levels(
+        raw.get("no_dollars")
+        if raw.get("no_dollars") is not None
+        else raw.get("no"),
+        reverse=True,
+    )
     if not yes_bids and not no_bids:
         raise OrderBookError("orderbook has no bid levels")
     book = OrderBookSnapshot(

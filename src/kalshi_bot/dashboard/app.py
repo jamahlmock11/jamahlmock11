@@ -40,6 +40,10 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
     def api_scans(limit: int = Query(40, ge=1, le=200)) -> dict:
         return {"scans": journal.recent_scans(limit)}
 
+    @app.get("/api/decisions")
+    def api_decisions(limit: int = Query(100, ge=1, le=500)) -> dict:
+        return {"decisions": journal.recent_decisions(limit)}
+
     @app.get("/api/health")
     def health() -> dict:
         return {"ok": True, "db": str(journal.path)}

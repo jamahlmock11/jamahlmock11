@@ -42,6 +42,8 @@ FEATURE_RATIONALE: dict[str, str] = {
     "trajectory": "Short/medium trend signs plus acceleration distinguish continuation, fading, reversal, and flat paths.",
     "sample_count": "The number of causal primary observations exposes the statistical support behind the snapshot.",
     "oldest_sample_age": "History span verifies that nominal long-horizon features have genuine temporal coverage.",
+    "settlement_effective_strike": "Inside the final 60-second BRTI averaging window, already observed index values change the average required over the remaining seconds.",
+    "settlement_locked_fraction": "The elapsed fraction of Kalshi's final 60-second settlement average measures how much of the outcome path is already fixed.",
 }
 
 
@@ -181,9 +183,25 @@ class FeatureEngine:
             else 0.0
         )
         seconds_remaining = max(0.0, (market.expiration - observed_now).total_seconds())
+        settlement_effective_strike = market.strike
+        settlement_locked_fraction = 0.0
+        if 0 < seconds_remaining < 60:
+            locked_seconds = 60.0 - seconds_remaining
+            window_start = market.expiration.timestamp() - 60.0
+            locked_prices = [
+                point.price
+                for point in points
+                if window_start <= point.timestamp.timestamp() <= observed_now.timestamp()
+            ]
+            if locked_prices:
+                locked_average = statistics.fmean(locked_prices)
+                settlement_effective_strike = (
+                    market.strike * 60.0 - locked_average * locked_seconds
+                ) / seconds_remaining
+                settlement_locked_fraction = locked_seconds / 60.0
         expected_move = current.price * realized_vol * math.sqrt(seconds_remaining / SECONDS_PER_YEAR)
         if expected_move > 0:
-            z_distance = (current.price - market.strike) / expected_move
+            z_distance = (current.price - settlement_effective_strike) / expected_move
         else:
             z_distance = 0.0
 
@@ -205,6 +223,18 @@ class FeatureEngine:
             venue_agreement = tightness * direction_factor
 
         completeness = len(changes) / len(HORIZONS)
+        if 0 < seconds_remaining < 60:
+            locked_seconds = 60.0 - seconds_remaining
+            final_window_samples = sum(
+                point.timestamp.timestamp() >= market.expiration.timestamp() - 60.0
+                for point in points
+            )
+            expected_samples = max(1.0, locked_seconds)
+            completeness = min(
+                completeness,
+                final_window_samples / expected_samples,
+                1.0,
+            )
         trajectory = classify_trajectory(
             short_trend,
             medium_trend,
@@ -233,6 +263,8 @@ class FeatureEngine:
             sample_count=len(points),
             oldest_sample_age=(observed_now - points[0].timestamp).total_seconds(),
             rationale=FEATURE_RATIONALE,
+            settlement_effective_strike=settlement_effective_strike,
+            settlement_locked_fraction=settlement_locked_fraction,
         )
 
     build = compute

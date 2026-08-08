@@ -6,9 +6,20 @@ import logging
 import time
 import uuid
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any
 
 from kalshi_bot.config import AppConfig
+from kalshi_bot.domain import (
+    ContractSide,
+    DecisionAction,
+    DecisionResult,
+    MarketSnapshot,
+)
+from kalshi_bot.execution.position_manager import (
+    PositionManager,
+    PositionManagerError,
+)
 from kalshi_bot.execution.risk import RiskManager
 from kalshi_bot.journal import TradeJournal
 from kalshi_bot.models.probability import EdgeSignal, Side
@@ -35,11 +46,13 @@ class ExecutionEngine:
         risk: RiskManager,
         config: AppConfig,
         journal: TradeJournal | None = None,
+        positions: PositionManager | None = None,
     ):
         self.kalshi = kalshi
         self.risk = risk
         self.config = config
         self.journal = journal
+        self.positions = positions or PositionManager(mode="paper" if self.dry_run else "live")
 
     @property
     def dry_run(self) -> bool:
@@ -145,6 +158,212 @@ class ExecutionEngine:
                 payload={"error": str(exc)},
             )
             return ExecutionReport(False, False, "mispricing", detail, {"error": str(exc)}, trade_id)
+
+    def execute_decision(
+        self,
+        market: MarketSnapshot,
+        decision: DecisionResult,
+        *,
+        timestamp: datetime | None = None,
+        intent_id: str | None = None,
+    ) -> ExecutionReport | None:
+        """Execute one already safety-gated decision with a final invariant check."""
+        if decision.action in {DecisionAction.NO_TRADE, DecisionAction.HOLD}:
+            return None
+        observed_at = timestamp or datetime.now(timezone.utc)
+        side = decision.selected_side
+        if side is None:
+            return ExecutionReport(
+                False,
+                self.dry_run,
+                "forecast",
+                "decision has no selected side",
+                {},
+            )
+        if market.status.lower() not in {"open", "active"} or not market.valid:
+            return ExecutionReport(False, self.dry_run, "forecast", "final market validation failed", {})
+        if market.expiration <= observed_at:
+            return ExecutionReport(False, self.dry_run, "forecast", "market is expired", {})
+
+        intent = intent_id or (
+            f"forecast-{market.ticker}-{decision.action.value.lower()}-"
+            f"{int(observed_at.timestamp() * 1000)}"
+        )
+        side_text = "yes" if side is ContractSide.YES else "no"
+
+        if decision.action in {DecisionAction.BUY_UP, DecisionAction.BUY_DOWN}:
+            if (
+                decision.gate_failures
+                or decision.edge is None
+                or decision.edge + 1e-12 < 0.20
+                or decision.execution is None
+                or not decision.execution.fully_filled
+            ):
+                return ExecutionReport(
+                    False,
+                    self.dry_run,
+                    "forecast",
+                    "final edge/data/execution validation failed",
+                    {"edge": decision.edge},
+                )
+            size = self.risk.size_decision(decision)
+            if size <= 0:
+                return None
+            order_price = min(
+                0.99,
+                decision.execution.average_price
+                + decision.execution.slippage_per_contract,
+            )
+            notional = size * decision.execution.executable_cost
+            allowed, reason = self.risk.entry_allowed(
+                ticker=market.ticker,
+                edge=decision.edge,
+                notional=notional,
+                intent_id=intent,
+            )
+            if not allowed:
+                return ExecutionReport(False, self.dry_run, "forecast", reason, {})
+            price_cents = max(1, min(99, int(round(order_price * 100))))
+            payload: dict[str, Any] = {
+                "ticker": market.ticker,
+                "action": decision.action.value,
+                "side": side_text,
+                "count": size,
+                "price_cents": price_cents,
+                "model_probability": decision.predicted_probability,
+                "executable_cost": decision.executable_cost,
+                "edge": decision.edge,
+                "client_order_id": intent,
+            }
+            try:
+                if not self.dry_run:
+                    payload["response"] = self.kalshi.create_order(
+                        ticker=market.ticker,
+                        side=side_text,
+                        action="buy",
+                        count=size,
+                        yes_price=price_cents if side is ContractSide.YES else None,
+                        no_price=price_cents if side is ContractSide.NO else None,
+                        client_order_id=intent,
+                    )
+                self.positions.enter(
+                    intent_id=intent,
+                    contract=market.ticker,
+                    side=side,
+                    quantity=size,
+                    price=order_price,
+                    fee=decision.execution.fee_per_contract * size,
+                    timestamp=observed_at,
+                )
+                self.risk.register_intent(intent)
+                self.risk.register_fill(market.ticker, notional)
+                detail = (
+                    f"{'[PAPER]' if self.dry_run else '[LIVE]'} "
+                    f"{decision.action.value} {size} {market.ticker} @{price_cents}¢ "
+                    f"edge={decision.edge:.1%}"
+                )
+                trade_id = self._persist_trade(
+                    strategy="forecast",
+                    ticker=market.ticker,
+                    side=side_text,
+                    count=size,
+                    price=order_price,
+                    notional=notional,
+                    edge=decision.edge * 100,
+                    confidence="ENSEMBLE",
+                    dry_run=self.dry_run,
+                    ok=True,
+                    detail=detail,
+                    payload=payload,
+                )
+                return ExecutionReport(True, self.dry_run, "forecast", detail, payload, trade_id)
+            except Exception as exc:
+                detail = f"order failed safely: {exc}"
+                return ExecutionReport(
+                    False,
+                    self.dry_run,
+                    "forecast",
+                    detail,
+                    {"error": str(exc), **payload},
+                )
+
+        if decision.action is DecisionAction.EXIT:
+            position = self.positions.position(market.ticker)
+            if position is None or position.side is not side:
+                return ExecutionReport(False, self.dry_run, "forecast", "no matching position to exit", {})
+            bids = market.orderbook.levels(side, asks=False)
+            if not bids or sum(level.size for level in bids) + 1e-12 < position.quantity:
+                return ExecutionReport(False, self.dry_run, "forecast", "insufficient exit liquidity", {})
+            remaining = position.quantity
+            proceeds = 0.0
+            for level in bids:
+                filled = min(remaining, level.size)
+                proceeds += filled * level.price
+                remaining -= filled
+                if remaining <= 1e-12:
+                    break
+            exit_price = proceeds / position.quantity
+            price_cents = max(1, min(99, int(round(exit_price * 100))))
+            payload = {
+                "ticker": market.ticker,
+                "action": "EXIT",
+                "side": side_text,
+                "count": position.quantity,
+                "price_cents": price_cents,
+                "client_order_id": intent,
+            }
+            try:
+                if not self.dry_run:
+                    payload["response"] = self.kalshi.create_order(
+                        ticker=market.ticker,
+                        side=side_text,
+                        action="sell",
+                        count=int(position.quantity),
+                        yes_price=price_cents if side is ContractSide.YES else None,
+                        no_price=price_cents if side is ContractSide.NO else None,
+                        client_order_id=intent,
+                    )
+                exit_record = self.positions.exit(
+                    intent_id=intent,
+                    contract=market.ticker,
+                    price=exit_price,
+                    timestamp=observed_at,
+                    reason=decision.reason,
+                )
+                self.risk.register_intent(intent)
+                self.risk.release(
+                    market.ticker,
+                    position.quantity * position.entry_price,
+                )
+                self.risk.register_pnl(exit_record.realized_pnl)
+                detail = (
+                    f"{'[PAPER]' if self.dry_run else '[LIVE]'} EXIT "
+                    f"{position.quantity:g} {side.value} {market.ticker} @{price_cents}¢ "
+                    f"pnl=${exit_record.realized_pnl:.2f}"
+                )
+                trade_id = self._persist_trade(
+                    strategy="forecast_exit",
+                    ticker=market.ticker,
+                    side=side_text,
+                    count=position.quantity,
+                    price=exit_price,
+                    notional=position.quantity * exit_price,
+                    edge=(decision.edge or 0.0) * 100,
+                    confidence="EXIT",
+                    dry_run=self.dry_run,
+                    ok=True,
+                    detail=detail,
+                    payload=payload,
+                )
+                return ExecutionReport(True, self.dry_run, "forecast_exit", detail, payload, trade_id)
+            except (PositionManagerError, Exception) as exc:
+                return ExecutionReport(
+                    False,
+                    self.dry_run,
+                    "forecast_exit",
+                    f"exit failed safely: {exc}",
+                    {"error": str(exc), **payload},
+                )
 
     def execute_arb(self, opp: ArbOpportunity) -> ExecutionReport | None:
         size = self.risk.size_arb(opp.edge, opp.pair_cost, self.config.cross_venue.order_size)

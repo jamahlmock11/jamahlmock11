@@ -124,11 +124,20 @@ class EnsembleProbabilityModel:
             else cfg.fallback_volatility
         )
         volatility = _clip(volatility, cfg.minimum_volatility, cfg.maximum_volatility)
-        terminal = _terminal_probability(
-            features.current_price,
-            features.strike,
-            features.seconds_remaining,
-            volatility,
+        effective_strike = (
+            features.settlement_effective_strike
+            if features.settlement_effective_strike is not None
+            else features.strike
+        )
+        terminal = (
+            0.999
+            if effective_strike <= 0
+            else _terminal_probability(
+                features.current_price,
+                effective_strike,
+                features.seconds_remaining,
+                volatility,
+            )
         )
         strike_distance = NormalDist().cdf(features.z_distance_to_strike)
 

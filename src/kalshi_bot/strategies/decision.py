@@ -47,6 +47,12 @@ class DecisionConfig:
     fee_per_contract: float = 0.0
     slippage_bps: float = 0.0
     slippage_per_contract: float = 0.0
+    late_seconds: float = 120.0
+    late_minimum_edge: float = 0.25
+    final_seconds: float = 60.0
+    final_minimum_edge: float = 0.25
+    late_confidence_increment: float = 0.10
+    allow_replay_data: bool = False
 
     @property
     def effective_minimum_edge(self) -> Decimal:
@@ -115,7 +121,7 @@ class DecisionEngine:
                     "primary CME CF BRTI",
                 )
             )
-        if not benchmark.is_live or benchmark.replay:
+        if (not benchmark.is_live or benchmark.replay) and not cfg.allow_replay_data:
             failures.append(
                 _failure(
                     "live_data",
@@ -160,6 +166,17 @@ class DecisionEngine:
                     "ensemble confidence is below minimum",
                     forecast.confidence,
                     cfg.minimum_confidence,
+                )
+            )
+        seconds = (market.expiration - now).total_seconds()
+        late_confidence = min(1.0, cfg.minimum_confidence + cfg.late_confidence_increment)
+        if seconds <= cfg.late_seconds and forecast.confidence < late_confidence:
+            failures.append(
+                _failure(
+                    "late_confidence",
+                    "late-contract confidence is below the conservative minimum",
+                    forecast.confidence,
+                    late_confidence,
                 )
             )
         if forecast.signal_agreement < cfg.minimum_agreement:
@@ -351,13 +368,19 @@ class DecisionEngine:
         edge_decimal = Decimal(str(side_probabilities[selected_side])) - Decimal(
             str(selected_execution.executable_cost)
         )
-        if edge_decimal + EDGE_TOLERANCE < cfg.effective_minimum_edge:
+        seconds_remaining = (market.expiration - observed_now).total_seconds()
+        required_edge = cfg.effective_minimum_edge
+        if seconds_remaining <= cfg.late_seconds:
+            required_edge = max(required_edge, Decimal(str(cfg.late_minimum_edge)))
+        if seconds_remaining <= cfg.final_seconds:
+            required_edge = max(required_edge, Decimal(str(cfg.final_minimum_edge)))
+        if edge_decimal + EDGE_TOLERANCE < required_edge:
             failures.append(
                 _failure(
                     "minimum_edge",
-                    "best all-in edge is below the hard minimum",
+                    "best all-in edge is below the applicable hard minimum",
                     selected_edge,
-                    float(cfg.effective_minimum_edge),
+                    float(required_edge),
                 )
             )
 

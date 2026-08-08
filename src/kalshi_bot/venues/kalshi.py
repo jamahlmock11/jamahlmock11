@@ -209,6 +209,9 @@ class KalshiClient:
     def post(self, endpoint: str, json: dict | None = None) -> Any:
         return self.request("POST", endpoint, json=json)
 
+    def delete(self, endpoint: str) -> Any:
+        return self.request("DELETE", endpoint)
+
     def get_markets(
         self,
         series_ticker: str,
@@ -241,6 +244,17 @@ class KalshiClient:
     def get_balance(self) -> dict[str, Any]:
         return self.get("/portfolio/balance")
 
+    def get_positions(self, limit: int = 200) -> list[dict[str, Any]]:
+        data = self.get("/portfolio/positions", params={"limit": limit})
+        return list(data.get("market_positions") or [])
+
+    def get_open_orders(self, ticker: str | None = None, limit: int = 200) -> list[dict[str, Any]]:
+        params: dict[str, Any] = {"status": "resting", "limit": limit}
+        if ticker:
+            params["ticker"] = ticker
+        data = self.get("/portfolio/orders", params=params)
+        return list(data.get("orders") or [])
+
     def create_order(
         self,
         ticker: str,
@@ -253,30 +267,31 @@ class KalshiClient:
         client_order_id: str | None = None,
         time_in_force: str = "immediate_or_cancel",
     ) -> dict[str, Any]:
-        """Place order via CreateOrderV2 (/portfolio/events/orders).
+        """Place an idempotent buy or sell via CreateOrderV2.
 
         V2 quotes the YES book only:
           - buy YES  → side=bid at yes price
           - buy NO   → side=ask at (1 - no_price)  [sell YES ≡ buy NO]
+          - sell YES → side=ask at yes price
+          - sell NO  → side=bid at (1 - no_price)
         Prices args are integer cents (1-99).
         """
         import uuid as _uuid
 
         side_l = side.lower()
         action_l = action.lower()
-        if action_l != "buy":
-            raise ValueError("Only buy orders are supported currently")
+        if action_l not in {"buy", "sell"}:
+            raise ValueError("action must be buy or sell")
 
         if side_l == "yes":
             if yes_price is None:
-                raise ValueError("yes_price required for YES buys")
-            book_side = "bid"
+                raise ValueError("yes_price required for YES orders")
+            book_side = "bid" if action_l == "buy" else "ask"
             price = yes_price / 100.0
         elif side_l == "no":
             if no_price is None:
-                raise ValueError("no_price required for NO buys")
-            # Sell YES at complementary price ≡ buy NO
-            book_side = "ask"
+                raise ValueError("no_price required for NO orders")
+            book_side = "ask" if action_l == "buy" else "bid"
             price = (100 - int(no_price)) / 100.0
         else:
             raise ValueError(f"Unsupported side: {side}")

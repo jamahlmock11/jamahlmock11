@@ -74,8 +74,47 @@ class TradeJournal:
                     detail TEXT,
                     payload TEXT
                 );
+                CREATE TABLE IF NOT EXISTS decisions (
+                    id TEXT PRIMARY KEY,
+                    ts REAL NOT NULL,
+                    ticker TEXT,
+                    strike REAL,
+                    brti_price REAL,
+                    benchmark_source TEXT,
+                    seconds_remaining REAL,
+                    yes_bid REAL,
+                    yes_ask REAL,
+                    no_bid REAL,
+                    no_ask REAL,
+                    up_probability REAL,
+                    down_probability REAL,
+                    executable_price REAL,
+                    edge REAL,
+                    confidence REAL,
+                    momentum REAL,
+                    acceleration REAL,
+                    volatility REAL,
+                    regime TEXT,
+                    trajectory TEXT,
+                    signal_agreement REAL,
+                    current_direction TEXT,
+                    predicted_direction TEXT,
+                    trade_direction TEXT,
+                    action TEXT NOT NULL,
+                    data_health TEXT,
+                    reason TEXT,
+                    gate_failures TEXT,
+                    position TEXT,
+                    dry_run INTEGER,
+                    traded INTEGER DEFAULT 0,
+                    outcome REAL,
+                    pnl REAL,
+                    payload TEXT
+                );
                 CREATE INDEX IF NOT EXISTS idx_trades_ts ON trades(ts DESC);
                 CREATE INDEX IF NOT EXISTS idx_signals_ts ON signals(ts DESC);
+                CREATE INDEX IF NOT EXISTS idx_decisions_ts ON decisions(ts DESC);
+                CREATE INDEX IF NOT EXISTS idx_decisions_ticker ON decisions(ticker, ts DESC);
                 """
             )
 
@@ -184,6 +223,134 @@ class TradeJournal:
             )
         return trade_id
 
+    def log_decision(
+        self,
+        cycle: Any,
+        *,
+        dry_run: bool,
+        traded: bool = False,
+        payload: dict[str, Any] | None = None,
+    ) -> str:
+        """Persist every forecast outcome, including failed-data NO TRADE rows."""
+        decision_id = uuid.uuid4().hex[:12]
+        market = getattr(cycle, "market", None)
+        benchmark = getattr(cycle, "benchmark", None)
+        features = getattr(cycle, "features", None)
+        forecast = getattr(cycle, "forecast", None)
+        decision = getattr(cycle, "decision", None)
+        now = getattr(cycle, "timestamp", None)
+        ts = now.timestamp() if hasattr(now, "timestamp") else time.time()
+
+        def enum_value(value: Any) -> str | None:
+            if value is None:
+                return None
+            return str(value.value if hasattr(value, "value") else value)
+
+        failures = []
+        for failure in getattr(decision, "gate_failures", ()) if decision else ():
+            failures.append(
+                {
+                    "gate": failure.gate,
+                    "reason": failure.reason,
+                    "observed": failure.observed,
+                    "required": failure.required,
+                }
+            )
+        position = getattr(market, "current_position", None) if market else None
+        position_payload = (
+            {
+                "side": enum_value(position.side),
+                "quantity": position.quantity,
+                "average_price": position.average_price,
+            }
+            if position
+            else None
+        )
+        seconds_remaining = (
+            max(0.0, (market.expiration.timestamp() - ts)) if market else None
+        )
+        values = (
+            decision_id,
+            ts,
+            getattr(market, "ticker", None),
+            getattr(market, "strike", None),
+            getattr(benchmark, "price", None),
+            getattr(benchmark, "source", None),
+            seconds_remaining,
+            getattr(market, "yes_bid", None),
+            getattr(market, "yes_ask", None),
+            getattr(market, "no_bid", None),
+            getattr(market, "no_ask", None),
+            getattr(forecast, "p_up", None),
+            getattr(forecast, "p_down", None),
+            getattr(decision, "executable_cost", None),
+            getattr(decision, "edge", None),
+            getattr(forecast, "confidence", None),
+            getattr(features, "short_trend", None),
+            getattr(features, "acceleration", None),
+            getattr(features, "realized_vol", None),
+            enum_value(getattr(cycle, "regime", None)),
+            enum_value(getattr(features, "trajectory", None)),
+            getattr(forecast, "signal_agreement", None),
+            enum_value(getattr(decision, "current_direction", None)),
+            enum_value(getattr(decision, "predicted_direction", None)),
+            enum_value(getattr(decision, "trade_direction", None)),
+            enum_value(getattr(decision, "action", None)) or "NO_TRADE",
+            getattr(cycle, "data_health", "FAILED"),
+            getattr(cycle, "reason", None) or getattr(decision, "reason", ""),
+            json.dumps(failures, default=str),
+            json.dumps(position_payload),
+            1 if dry_run else 0,
+            1 if traded else 0,
+            None,
+            None,
+            json.dumps(payload or {}, default=str),
+        )
+        with self._lock, self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO decisions (
+                    id, ts, ticker, strike, brti_price, benchmark_source,
+                    seconds_remaining, yes_bid, yes_ask, no_bid, no_ask,
+                    up_probability, down_probability, executable_price, edge,
+                    confidence, momentum, acceleration, volatility, regime,
+                    trajectory, signal_agreement, current_direction,
+                    predicted_direction, trade_direction, action, data_health,
+                    reason, gate_failures, position, dry_run, traded, outcome,
+                    pnl, payload
+                ) VALUES (
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                )
+                """,
+                values,
+            )
+        return decision_id
+
+    def label_decisions(
+        self,
+        ticker: str,
+        *,
+        up_won: bool,
+        pnl: float | None = None,
+    ) -> int:
+        """Label resolved forecasts after settlement without rewriting inputs."""
+        with self._lock, self._connect() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE decisions
+                SET outcome = CASE
+                    WHEN trade_direction = 'UP' THEN ?
+                    WHEN trade_direction = 'DOWN' THEN ?
+                    ELSE NULL
+                END,
+                pnl = CASE WHEN traded = 1 THEN ? ELSE pnl END
+                WHERE ticker = ? AND outcome IS NULL
+                """,
+                (1.0 if up_won else 0.0, 0.0 if up_won else 1.0, pnl, ticker),
+            )
+            return cursor.rowcount
+
     def recent_trades(self, limit: int = 100) -> list[dict[str, Any]]:
         with self._lock, self._connect() as conn:
             rows = conn.execute(
@@ -205,6 +372,13 @@ class TradeJournal:
             ).fetchall()
         return [dict(r) for r in rows]
 
+    def recent_decisions(self, limit: int = 100) -> list[dict[str, Any]]:
+        with self._lock, self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM decisions ORDER BY ts DESC LIMIT ?", (limit,)
+            ).fetchall()
+        return [dict(r) for r in rows]
+
     def stats(self) -> dict[str, Any]:
         with self._lock, self._connect() as conn:
             trade_n = conn.execute("SELECT COUNT(*) AS n FROM trades").fetchone()["n"]
@@ -218,6 +392,7 @@ class TradeJournal:
                 "SELECT COUNT(*) AS n FROM trades WHERE ok=0"
             ).fetchone()["n"]
             signal_n = conn.execute("SELECT COUNT(*) AS n FROM signals").fetchone()["n"]
+            decision_n = conn.execute("SELECT COUNT(*) AS n FROM decisions").fetchone()["n"]
             notional = conn.execute(
                 "SELECT COALESCE(SUM(notional),0) AS s FROM trades WHERE ok=1"
             ).fetchone()["s"]
@@ -229,6 +404,9 @@ class TradeJournal:
             ).fetchone()
             last_scan = conn.execute(
                 "SELECT * FROM scans ORDER BY ts DESC LIMIT 1"
+            ).fetchone()
+            last_decision = conn.execute(
+                "SELECT * FROM decisions ORDER BY ts DESC LIMIT 1"
             ).fetchone()
             by_strategy = conn.execute(
                 """
@@ -248,10 +426,12 @@ class TradeJournal:
             "dry_trades": dry_n,
             "failed_trades": fail_n,
             "signals": signal_n,
+            "decisions": decision_n,
             "notional_usd": float(notional),
             "avg_edge": float(avg_edge),
             "last_trade_ts": last["ts"] if last else None,
             "last_scan": dict(last_scan) if last_scan else None,
+            "last_decision": dict(last_decision) if last_decision else None,
             "by_strategy": [dict(r) for r in by_strategy],
             "by_tier": [dict(r) for r in by_tier],
         }

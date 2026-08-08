@@ -1,48 +1,63 @@
-# Kalshi BTC Trading Bot
+# Kalshi BTC 15-Minute Forecasting & Trading System
 
-Profitability-first bot for Kalshi **KXBTC15M** (15-minute) and **KXBTCD** (hourly directional / threshold) Bitcoin markets.
+Safety-first Python system for Kalshi **KXBTC15M** markets. It forecasts the
+terminal BRTI outcome, compares calibrated probability with executable order-book
+cost, and defaults to **NO TRADE**.
 
-## Edge model
+## Decision model
 
-Mispricing is detected by comparing:
+Each decision combines:
 
-1. **Kalshi implied probability** — executable YES/NO ask on the book  
-2. **Options-implied probability** — Black-Scholes \(N(d_2)\) using the **IBIT ETF volatility smile**, translated into BTC spot space via the live `IBIT/BTC` price ratio
+1. official CME CF Bitcoin Real Time Index (BRTI) settlement data
+2. causal 5s–5m velocity, acceleration, trajectory, and reversal features
+3. volatility-normalized strike distance and time remaining
+4. regime-dependent trend, mean-reversion, order-book, and venue-confirmation signals
+5. optional IBIT volatility and historical/calibrated priors
+6. executable Kalshi depth, fees, and slippage
 
-Example: Kalshi YES @ 22% while options imply 37.8% → **15.8pp edge** → take the trade.
+`P(DOWN) = 1 - P(UP)`. Current direction and predicted expiration direction
+remain separate.
 
-Settlement reference for Kalshi is **CF Benchmarks BRTI** (60s average). Without a CF license the bot proxies spot with BTC-USD; relative moves dominate short-horizon probability.
+### Immutable entry rule
 
-### Confidence tiers (BTC 50–80% IV regime)
+An entry is impossible unless:
 
-| Tier   | Rule                                      |
-|--------|-------------------------------------------|
-| HIGH   | ≥15pp edge **and** tight book             |
-| MEDIUM | ≥10pp edge                                |
-| LOW    | 5–10pp edge                               |
-| PASS   | &lt;5pp                                     |
+```text
+model probability - all-in executable price >= 0.20
+```
 
-Default execution only takes **HIGH** and **MEDIUM**.
+The configured target is 0.25. Configuration can tighten the 0.20 floor but
+cannot lower it. Stale/missing BRTI, malformed contracts, poor liquidity, wide
+spreads, low confidence, signal conflict, open orders, and risk locks all produce
+NO TRADE. The final 60 seconds require at least the target edge and stronger
+confidence.
 
-## Cross-venue arb
+## Settlement data
 
-Secondary strategy: same 15-minute BTC window on Kalshi and Polymarket.
+Set `CF_BENCHMARK_URL` to an official/licensed JSON endpoint returning an
+explicit BRTI source, price, and timestamp. Optional authorization fields are in
+`.env.example`.
 
-- Buy **Kalshi UP + Polymarket DOWN** when asks sum &lt; `$1.00` (config default `0.99`)
-- Or **Kalshi DOWN + Polymarket UP** under the same rule  
+The system never substitutes Coinbase, Kraken, Bitstamp, Yahoo, or another BTC
+feed for BRTI. Those feeds are supporting evidence only. Without official BRTI,
+the correct runtime result is NO TRADE.
 
-That locked pair pays `$1.00` at settlement → risk-free residual is the edge (basis risk: BRTI vs Chainlink TWAP).
+Kalshi's contract uses the simple average of the final 60 BRTI observations. The
+market strike/reference is read from the live Kalshi contract; current spot is
+never used as an invented strike.
 
 ## Dashboard
 
-Trade blotter UI that reads the SQLite journal (`data/journal.db`):
+The real-time dashboard reads the SQLite decision journal:
 
 ```bash
-python -m kalshi_bot --once          # run a cycle (logs signals + fills)
-python -m kalshi_bot --dashboard     # Edge Desk on http://0.0.0.0:8787
+python -m kalshi_bot --once
+python -m kalshi_bot --dashboard     # http://0.0.0.0:8787
 ```
 
-Shows fills, signal tape, scan history, and notional/edge stats. Auto-refreshes every 3s.
+It shows BRTI, strike, time, probabilities, executable prices/edges, momentum,
+acceleration, volatility, regime, signal agreement, position, data health, risk
+state, and structured reasons for BUY, EXIT, HOLD, and NO TRADE.
 
 ## Quick start
 
@@ -52,10 +67,10 @@ pip install -e ".[dev]"
 cp .env.example .env
 # edit .env — leave DRY_RUN=true until keys are set
 
-python -m kalshi_bot --once          # one scan cycle (dry-run)
-python -m kalshi_bot --scan-only     # print signals, never size orders
-python -m kalshi_bot                 # continuous loop
-python -m kalshi_bot --live          # real Kalshi orders (requires API key)
+python -m kalshi_bot --once          # one PAPER cycle
+python -m kalshi_bot --scan-only     # decide and journal; no simulated order
+python -m kalshi_bot                 # continuous PAPER mode
+python -m kalshi_bot --live          # explicit LIVE switch; requires credentials
 ```
 
 ### Kalshi credentials
@@ -65,20 +80,26 @@ python -m kalshi_bot --live          # real Kalshi orders (requires API key)
 3. Set `KALSHI_API_KEY_ID` in `.env`  
 4. Set `DRY_RUN=false` or pass `--live`
 
-### Config
+### Configuration
 
-See `config/default.yaml` for series, tier thresholds, arb pair-cost, and risk caps.
+See `config/default.yaml` for data freshness, hard/target edge, late-contract
+gates, execution assumptions, and risk limits. PAPER is the default.
 
 ## Architecture
 
 ```
 src/kalshi_bot/
-  models/          Black-Scholes, vol smile, edge/tiers
-  data/            IBIT options (yfinance) + BRTI proxy
-  venues/          Kalshi RSA-PSS client, Polymarket Gamma/CLOB
-  strategies/      Mispricing scanner, cross-venue arb
-  execution/       Risk sizing (fractional Kelly), order engine
-  bot.py / cli.py  Loop + rich tables
+  data/            strict BRTI + supporting venues + optional IBIT volatility
+  market/          active-contract validation + order-book execution estimates
+  features/        causal trajectory/volatility/strike-distance features
+  models/          regime classifier + ensemble terminal probability
+  strategies/      hard-gated structured decision pipeline
+  execution/       positions, exits, duplicate protection, risk locks
+  calibration/     reliability bins and causal probability calibration
+  backtest/        chronological depth/fee/slippage replay
+  learning/        observational segment analysis
+  dashboard/       decision, position, and explanation UI
+  journal.py       SQLite journal for every decision
 ```
 
 ## Tests
@@ -87,8 +108,14 @@ src/kalshi_bot/
 pytest -q
 ```
 
-Live read-only venue tests hit public Kalshi/Polymarket APIs (no keys).
+The suite covers the hard edge boundary, BUY UP/DOWN, stale/malformed data,
+market discovery, trajectory/reversal logic, execution/positions, risk locks,
+exits/flips, calibration, and no-lookahead replay. Public venue tests are
+read-only.
 
 ## Disclaimer
 
-Prediction-market trading is risky. This software defaults to **dry-run**. Options-implied probabilities are risk-neutral model estimates, not guarantees. Cross-venue arb has settlement-index basis risk (BRTI vs Chainlink). You are responsible for compliance with Kalshi / Polymarket terms and applicable law.
+Prediction-market trading is risky. This software defaults to **PAPER**.
+Probabilities are model estimates, not guarantees. Calibration requires
+sufficient resolved out-of-sample decisions before live use. You are responsible
+for data licensing, Kalshi eligibility, compliance, and losses.

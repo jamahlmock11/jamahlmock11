@@ -17,8 +17,8 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="kalshi-bot",
         description=(
-            "Kalshi BTC 15m/1h mispricing bot: IBIT options-implied Black-Scholes "
-            "probabilities vs Kalshi book, plus Kalshi↔Polymarket cross-venue arb."
+            "Settlement-aware Kalshi BTC 15-minute ensemble forecaster and "
+            "safety-gated paper/live execution system."
         ),
     )
     p.add_argument("--config", default="config/default.yaml", help="YAML config path")
@@ -62,19 +62,17 @@ def main(argv: list[str] | None = None) -> int:
         settings.dry_run = False
     if args.scan_only:
         config.execution.dry_run = True
+        config.execution.orders_enabled = False
 
     console = Console()
     bot = TradingBot(config, settings, journal=journal)
-
-    if args.scan_only:
-        config.execution.only_tiers = []
 
     try:
         if args.once or args.scan_only:
             bot.once()
             console.print(
-                f"Done. signals={bot.stats.signals_seen} "
-                f"trades={bot.stats.trades} arbs={bot.stats.arbs} "
+                f"Done. decisions={bot.stats.decisions} "
+                f"trades={bot.stats.trades} no_trades={bot.stats.no_trades} "
                 f"journal={args.db}"
             )
             return 0

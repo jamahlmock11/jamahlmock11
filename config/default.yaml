@@ -1,12 +1,11 @@
 series:
   - KXBTC15M
-  - KXBTCD
 
-# Confidence tiers calibrated for BTC 50-80% IV regime
+# Display tiers. Execution separately enforces the immutable 20-point minimum.
 tiers:
-  high_pp: 15.0      # ≥15pp edge + tight book → HIGH
-  medium_pp: 10.0    # ≥10pp → MEDIUM
-  low_pp: 5.0        # 5-10pp → LOW; <5 → PASS
+  high_pp: 25.0
+  medium_pp: 20.0
+  low_pp: 20.0
   tight_spread_cents: 3.0   # max yes ask-bid for HIGH tier
   min_book_usd: 25.0
 
@@ -18,11 +17,49 @@ cross_venue:
   order_size: 5
 
 execution:
-  dry_run: false
-  max_position_usd: 5
+  dry_run: true
+  orders_enabled: true
+  max_position_usd: 50
   max_contracts_per_trade: 25
-  poll_interval_sec: 5.0
-  only_tiers: ["HIGH"]  # live start: HIGH only
+  poll_interval_sec: 1.0
+  only_tiers: ["HIGH", "MEDIUM"]
+  fee_rate: 0.0
+  fee_per_contract: 0.0
+  slippage_bps: 5.0
+  slippage_per_contract: 0.0
+
+strategy:
+  min_edge: 0.20       # cannot be configured below 0.20
+  target_edge: 0.25
+  min_confidence: 0.60
+  min_signal_agreement: 0.60
+  min_data_completeness: 0.75
+  max_spread: 0.12
+  min_seconds_remaining: 30
+  late_seconds: 120
+  final_seconds: 60
+  final_min_edge: 0.25
+  order_quantity: 1
+
+risk:
+  max_daily_loss: 100
+  max_contract_exposure: 25
+  max_position_size: 50
+  max_consecutive_losses: 4
+  max_trades_per_contract: 2
+  max_flips_per_contract: 1
+  cooldown_seconds: 30
+
+data:
+  # Official/licensed CME CF BRTI JSON endpoint. If absent, the bot fails
+  # closed with NO TRADE; supporting exchange prices never replace BRTI.
+  cf_benchmark_url: ""
+  cf_benchmark_api_key: ""
+  cf_benchmark_api_key_header: Authorization
+  cf_benchmark_api_key_prefix: Bearer
+  max_brti_age_seconds: 15
+  min_supporting_venues: 2
+  max_supporting_dispersion: 0.003
 
 pricing:
   risk_free_rate: 0.05
@@ -34,7 +71,6 @@ pricing:
   smile_cache_sec: 60
 
 settlement:
-  # Kalshi settles on CF Benchmarks BRTI (60s average before expiry)
+  # Kalshi settles on the 60-second average of CF Benchmarks BRTI.
   reference: BRTI
-  # Public proxy when CF Benchmarks credentials are absent
-  proxy_symbol: BTC-USD
+  proxy_symbol: ""

@@ -253,6 +253,8 @@ class FeatureSnapshot:
     sample_count: int
     oldest_sample_age: float
     rationale: Mapping[str, str] = field(default_factory=dict)
+    settlement_effective_strike: float | None = None
+    settlement_locked_fraction: float = 0.0
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "timestamp", utc_datetime(self.timestamp))
