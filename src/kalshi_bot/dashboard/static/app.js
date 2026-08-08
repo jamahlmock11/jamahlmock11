@@ -25,6 +25,14 @@
     })}`;
   }
 
+  function pct(n, digits = 1) {
+    return n == null ? "—" : `${(Number(n) * 100).toFixed(digits)}%`;
+  }
+
+  function fixed(n, digits = 2) {
+    return n == null ? "—" : Number(n).toFixed(digits);
+  }
+
   function tierBadge(tier) {
     const t = (tier || "").toLowerCase();
     const cls =
@@ -122,18 +130,85 @@
       .join("");
   }
 
+  function renderCurrentDecision(d) {
+    if (!d) return;
+    const action = d.action || "NO_TRADE";
+    $("decisionAction").textContent = action;
+    $("decisionAction").className = `decision-action ${action.toLowerCase()}`;
+    $("decisionTicker").textContent = d.ticker || "—";
+    $("decisionPrices").textContent =
+      d.brti_price != null && d.strike != null
+        ? `${money(d.brti_price)} / ${money(d.strike)}`
+        : "—";
+    $("decisionTime").textContent =
+      d.seconds_remaining != null ? `${Math.max(0, d.seconds_remaining).toFixed(0)}s` : "—";
+    $("decisionProbability").textContent = `${pct(d.up_probability)} / ${pct(d.down_probability)}`;
+    $("decisionBook").textContent =
+      d.yes_ask != null && d.no_ask != null
+        ? `${pct(d.yes_ask, 0)} / ${pct(d.no_ask, 0)}`
+        : "—";
+    $("decisionEdge").textContent = pct(d.edge);
+    $("decisionDirection").textContent =
+      `${d.current_direction || "FLAT"} → ${d.predicted_direction || "FLAT"}`;
+    $("decisionRegime").textContent = `${d.regime || "—"} / ${d.trajectory || "—"}`;
+    $("decisionConfidence").textContent =
+      `${pct(d.confidence)} / ${pct(d.signal_agreement)}`;
+    $("decisionMotion").textContent =
+      `${fixed(d.momentum, 6)} / ${fixed(d.acceleration, 8)}`;
+    $("decisionHealth").textContent =
+      `${pct(d.volatility)} / ${d.data_health || "UNKNOWN"}`;
+    let position = "FLAT";
+    try {
+      const parsed = d.position ? JSON.parse(d.position) : null;
+      if (parsed) position = `${parsed.side} × ${parsed.quantity}`;
+    } catch (_) {}
+    let risk = "OK";
+    try {
+      const payload = d.payload ? JSON.parse(d.payload) : null;
+      if (payload?.risk?.locked) risk = `LOCKED: ${payload.risk.reason || "limit"}`;
+      else if (payload?.risk) risk = `OK · P/L ${money(payload.risk.realized_pnl)}`;
+    } catch (_) {}
+    $("decisionPosition").textContent = `${position} / ${risk}`;
+    $("whyLabel").textContent =
+      action === "NO_TRADE" ? "WHY NO TRADE" :
+      action === "EXIT" ? "WHY EXIT" :
+      action === "HOLD" ? "WHY HOLD" : "WHY BUY";
+    $("decisionReason").textContent = d.reason || "No explanation recorded.";
+  }
+
+  function renderDecisions(decisions) {
+    const body = $("decisionsBody");
+    $("decisionsEmpty").hidden = decisions.length > 0;
+    body.innerHTML = decisions.slice(0, 100).map((d) => `
+      <tr>
+        <td class="mono">${fmtTime(d.ts)}</td>
+        <td>${tierBadge(d.action)}</td>
+        <td class="mono">${d.ticker || "—"}</td>
+        <td class="mono">${pct(d.up_probability)}</td>
+        <td class="mono">${pct(d.executable_price)}</td>
+        <td class="edge-pos mono">${pct(d.edge)}</td>
+        <td class="mono">${pct(d.confidence)}</td>
+        <td>${d.regime || "—"}</td>
+        <td>${d.data_health || "—"}</td>
+        <td class="reason-cell">${d.reason || "—"}</td>
+      </tr>`).join("");
+  }
+
   function renderStats(stats) {
     $("statTrades").textContent = String(stats.trades || 0);
     $("statTradeSplit").textContent = `dry ${stats.dry_trades || 0} · live ${stats.live_trades || 0}`;
     $("statNotional").textContent = money(stats.notional_usd);
     $("statEdge").textContent = `${Number(stats.avg_edge || 0).toFixed(1)}pp`;
-    $("statSignals").textContent = String(stats.signals || 0);
+    $("statSignals").textContent = String(stats.decisions || 0);
 
+    const decision = stats.last_decision;
     const scan = stats.last_scan;
-    if (scan) {
-      $("mode").textContent = scan.mode || "—";
-      $("statSpot").textContent = `BTC ${money(scan.spot)}`;
-      $("lastScan").textContent = `Last scan ${fmtTime(scan.ts)} · ${scan.markets_scanned} mkts · ${scan.signal_count} signals`;
+    if (decision || scan) {
+      $("mode").textContent = decision ? (decision.dry_run ? "PAPER" : "LIVE") : (scan.mode || "—");
+      $("statSpot").textContent = decision ? `REF ${money(decision.brti_price)}` : `BTC ${money(scan.spot)}`;
+      $("lastScan").textContent = decision
+        ? `Last decision ${fmtTime(decision.ts)} · ${decision.action} · ${decision.data_health}`
+        : `Last scan ${fmtTime(scan.ts)} · ${scan.markets_scanned} mkts`;
       $("pulse").classList.remove("off");
     } else {
       $("mode").textContent = "IDLE";
@@ -143,15 +218,18 @@
 
   async function refresh() {
     try {
-      const [stats, trades, signals, scans] = await Promise.all([
+      const [stats, trades, decisions, signals, scans] = await Promise.all([
         fetch("/api/stats").then((r) => r.json()),
         fetch("/api/trades?limit=150").then((r) => r.json()),
+        fetch("/api/decisions?limit=100").then((r) => r.json()),
         fetch("/api/signals?limit=100").then((r) => r.json()),
         fetch("/api/scans?limit=40").then((r) => r.json()),
       ]);
       state.trades = trades.trades || [];
       renderStats(stats);
       renderTrades();
+      renderDecisions(decisions.decisions || []);
+      renderCurrentDecision((decisions.decisions || [])[0]);
       renderSignals(signals.signals || []);
       renderScans(scans.scans || []);
     } catch (err) {

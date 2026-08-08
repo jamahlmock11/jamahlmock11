@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 from dotenv import load_dotenv
@@ -11,9 +11,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class TierConfig(BaseModel):
-    high_pp: float = 15.0
-    medium_pp: float = 10.0
-    low_pp: float = 5.0
+    high_pp: float = 25.0
+    medium_pp: float = 20.0
+    low_pp: float = 20.0
     tight_spread_cents: float = 3.0
     min_book_usd: float = 25.0
 
@@ -27,10 +27,50 @@ class CrossVenueConfig(BaseModel):
 
 class ExecutionConfig(BaseModel):
     dry_run: bool = True
+    orders_enabled: bool = True
     max_position_usd: float = 50.0
     max_contracts_per_trade: int = 100
     poll_interval_sec: float = 3.0
     only_tiers: list[str] = Field(default_factory=lambda: ["HIGH", "MEDIUM"])
+    fee_rate: float = 0.0
+    fee_per_contract: float = 0.0
+    slippage_bps: float = 5.0
+    slippage_per_contract: float = 0.0
+
+
+class StrategyConfig(BaseModel):
+    min_edge: float = Field(default=0.20, ge=0.20)
+    target_edge: float = Field(default=0.25, ge=0.20)
+    min_confidence: float = Field(default=0.60, ge=0.0, le=1.0)
+    min_signal_agreement: float = Field(default=0.60, ge=0.0, le=1.0)
+    min_data_completeness: float = Field(default=0.75, ge=0.0, le=1.0)
+    max_spread: float = Field(default=0.12, ge=0.0, le=1.0)
+    min_seconds_remaining: float = Field(default=30.0, ge=0.0)
+    late_seconds: float = Field(default=120.0, ge=0.0)
+    final_seconds: float = Field(default=60.0, ge=0.0)
+    final_min_edge: float = Field(default=0.25, ge=0.20)
+    order_quantity: float = Field(default=1.0, gt=0.0)
+
+
+class RiskConfig(BaseModel):
+    max_daily_loss: float = Field(default=100.0, gt=0.0)
+    max_contract_exposure: float = Field(default=25.0, gt=0.0)
+    max_position_size: float = Field(default=50.0, gt=0.0)
+    max_consecutive_losses: int = Field(default=4, gt=0)
+    max_trades_per_contract: int = Field(default=2, gt=0)
+    max_flips_per_contract: int = Field(default=1, ge=0)
+    cooldown_seconds: float = Field(default=30.0, ge=0.0)
+
+
+class DataConfig(BaseModel):
+    benchmark_mode: Literal["official", "constituent_proxy"] = "constituent_proxy"
+    cf_benchmark_url: str = ""
+    cf_benchmark_api_key: str = ""
+    cf_benchmark_api_key_header: str = "Authorization"
+    cf_benchmark_api_key_prefix: str = "Bearer"
+    max_brti_age_seconds: float = Field(default=15.0, gt=0.0)
+    min_supporting_venues: int = Field(default=3, ge=2)
+    max_supporting_dispersion: float = Field(default=0.003, gt=0.0)
 
 
 class PricingConfig(BaseModel):
@@ -47,10 +87,13 @@ class SettlementConfig(BaseModel):
 
 
 class AppConfig(BaseModel):
-    series: list[str] = Field(default_factory=lambda: ["KXBTC15M", "KXBTCD"])
+    series: list[str] = Field(default_factory=lambda: ["KXBTC15M"])
     tiers: TierConfig = Field(default_factory=TierConfig)
     cross_venue: CrossVenueConfig = Field(default_factory=CrossVenueConfig)
     execution: ExecutionConfig = Field(default_factory=ExecutionConfig)
+    strategy: StrategyConfig = Field(default_factory=StrategyConfig)
+    risk: RiskConfig = Field(default_factory=RiskConfig)
+    data: DataConfig = Field(default_factory=DataConfig)
     pricing: PricingConfig = Field(default_factory=PricingConfig)
     settlement: SettlementConfig = Field(default_factory=SettlementConfig)
 
@@ -73,6 +116,11 @@ class Settings(BaseSettings):
     min_book_depth_usd: float = 25.0
     risk_free_rate: float = 0.05
     poll_interval_sec: float = 3.0
+    cf_benchmark_url: str = ""
+    cf_benchmark_api_key: str = ""
+    cf_benchmark_api_key_header: str = "Authorization"
+    cf_benchmark_api_key_prefix: str = "Bearer"
+    benchmark_mode: Literal["official", "constituent_proxy"] | None = None
 
     @property
     def kalshi_url(self) -> str:
@@ -109,6 +157,14 @@ def merge_runtime(config: AppConfig, settings: Settings) -> AppConfig:
     cfg.execution.poll_interval_sec = settings.poll_interval_sec
     cfg.pricing.risk_free_rate = settings.risk_free_rate
     cfg.tiers.min_book_usd = max(cfg.tiers.min_book_usd, settings.min_book_depth_usd)
+    cfg.risk.max_daily_loss = settings.max_daily_loss_usd
+    cfg.risk.max_position_size = settings.max_position_usd
+    cfg.data.cf_benchmark_url = settings.cf_benchmark_url or cfg.data.cf_benchmark_url
+    cfg.data.cf_benchmark_api_key = settings.cf_benchmark_api_key or cfg.data.cf_benchmark_api_key
+    cfg.data.cf_benchmark_api_key_header = settings.cf_benchmark_api_key_header
+    cfg.data.cf_benchmark_api_key_prefix = settings.cf_benchmark_api_key_prefix
+    if settings.benchmark_mode is not None:
+        cfg.data.benchmark_mode = settings.benchmark_mode
     return cfg
 
 

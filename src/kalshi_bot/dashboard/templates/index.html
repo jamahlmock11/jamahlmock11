@@ -14,7 +14,7 @@
     <header class="top">
       <div>
         <h1 class="brand">Edge <span>Desk</span></h1>
-        <p class="lede">Live blotter for Kalshi BTC mispricing fills and cross-venue arb — options edge vs the book.</p>
+        <p class="lede">BRTI-first BTC 15-minute forecasts, executable edge, and safety-gated decisions.</p>
       </div>
       <aside class="status-panel">
         <div class="status-row">
@@ -25,6 +25,31 @@
         <div class="meta" id="lastScan">Waiting for first scan…</div>
       </aside>
     </header>
+
+    <section class="panel decision-panel">
+      <div class="panel-head">
+        <h2>Current decision</h2>
+        <div class="decision-action" id="decisionAction">NO DATA</div>
+      </div>
+      <div class="decision-grid">
+        <article><span>Contract</span><strong id="decisionTicker">—</strong></article>
+        <article><span>Reference / Strike</span><strong id="decisionPrices">—</strong></article>
+        <article><span>Time remaining</span><strong id="decisionTime">—</strong></article>
+        <article><span>UP / DOWN</span><strong id="decisionProbability">—</strong></article>
+        <article><span>YES / NO ask</span><strong id="decisionBook">—</strong></article>
+        <article><span>Executable edge</span><strong id="decisionEdge">—</strong></article>
+        <article><span>Direction now → expiry</span><strong id="decisionDirection">—</strong></article>
+        <article><span>Regime / Trajectory</span><strong id="decisionRegime">—</strong></article>
+        <article><span>Confidence / Agreement</span><strong id="decisionConfidence">—</strong></article>
+        <article><span>Momentum / Acceleration</span><strong id="decisionMotion">—</strong></article>
+        <article><span>Volatility / Data</span><strong id="decisionHealth">—</strong></article>
+        <article><span>Position / Risk</span><strong id="decisionPosition">—</strong></article>
+      </div>
+      <div class="decision-why">
+        <span id="whyLabel">WHY NO TRADE</span>
+        <p id="decisionReason">Waiting for the first decision.</p>
+      </div>
+    </section>
 
     <section class="stats" id="stats">
       <article class="stat">
@@ -43,7 +68,7 @@
         <div class="hint">on executed trades</div>
       </article>
       <article class="stat">
-        <div class="label">Signals</div>
+        <div class="label">Decisions</div>
         <div class="value" id="statSignals">0</div>
         <div class="hint" id="statSpot">BTC —</div>
       </article>
@@ -80,6 +105,33 @@
           <tbody id="tradesBody"></tbody>
         </table>
         <div class="empty" id="tradesEmpty" hidden>No trades yet. Run <code>python -m kalshi_bot --once</code> to seed the blotter.</div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <h2>Decision journal</h2>
+        <div class="sub">every decision · including no trade</div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Action</th>
+              <th>Ticker</th>
+              <th>UP</th>
+              <th>Price</th>
+              <th>Edge</th>
+              <th>Confidence</th>
+              <th>Regime</th>
+              <th>Health</th>
+              <th>Reason</th>
+            </tr>
+          </thead>
+          <tbody id="decisionsBody"></tbody>
+        </table>
+        <div class="empty" id="decisionsEmpty" hidden>No decisions logged yet.</div>
       </div>
     </section>
 
@@ -133,7 +185,7 @@
       </section>
     </section>
 
-    <footer>Auto-refreshes every 3s · journal: data/journal.db · dry-run until --live</footer>
+    <footer>Auto-refreshes every 3s · official BRTI required · PAPER by default</footer>
   </main>
   <script src="/static/app.js"></script>
 </body>

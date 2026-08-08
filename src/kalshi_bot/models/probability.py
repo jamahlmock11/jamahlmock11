@@ -60,13 +60,7 @@ def classify_tier(
     book_usd: float,
     tiers: TierConfig,
 ) -> Confidence:
-    """Confidence tiers calibrated for BTC's higher volatility (50-80% IV).
-
-    HIGH  ≥15pp edge with tight book
-    MEDIUM ≥10pp
-    LOW   5-10pp
-    PASS  below 5pp
-    """
+    """Display confidence tiers; execution independently enforces 20 points."""
     if edge_pp < tiers.low_pp:
         return Confidence.PASS
     if edge_pp >= tiers.high_pp and spread_cents <= tiers.tight_spread_cents and book_usd >= tiers.min_book_usd:

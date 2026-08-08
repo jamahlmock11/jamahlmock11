@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
 from kalshi_bot.dashboard.app import create_app
+from kalshi_bot.domain import DecisionAction, DecisionResult, Direction
 from kalshi_bot.journal import TradeJournal
 from kalshi_bot.models.probability import Confidence, EdgeSignal, Side
 
@@ -77,10 +80,42 @@ def test_dashboard_api(tmp_path: Path):
         ok=True,
         detail="arb",
     )
+    now = datetime.now(timezone.utc)
+    cycle = SimpleNamespace(
+        timestamp=now,
+        data_health="FAILED",
+        reason="primary BRTI unavailable",
+        market=SimpleNamespace(
+            ticker="KXBTC15M-X",
+            strike=65000,
+            expiration=now + timedelta(minutes=5),
+            yes_bid=0.48,
+            yes_ask=0.52,
+            no_bid=0.48,
+            no_ask=0.52,
+            current_position=None,
+        ),
+        benchmark=None,
+        features=None,
+        forecast=None,
+        regime=None,
+        decision=DecisionResult(
+            action=DecisionAction.NO_TRADE,
+            reason="primary BRTI unavailable",
+            gate_failures=(),
+            current_direction=Direction.FLAT,
+            predicted_direction=Direction.FLAT,
+            trade_direction=Direction.FLAT,
+        ),
+    )
+    j.log_decision(cycle, dry_run=True)
     client = TestClient(create_app(db))
     assert client.get("/api/health").json()["ok"] is True
     trades = client.get("/api/trades").json()["trades"]
     assert len(trades) == 1
+    decisions = client.get("/api/decisions").json()["decisions"]
+    assert len(decisions) == 1
+    assert decisions[0]["action"] == "NO_TRADE"
     assert client.get("/").status_code == 200
     assert "Edge" in client.get("/").text
     assert client.get("/static/styles.css").status_code == 200

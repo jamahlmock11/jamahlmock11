@@ -6,7 +6,10 @@ import time
 from dataclasses import dataclass, field
 
 from kalshi_bot.config import AppConfig
+from kalshi_bot.domain import DecisionAction, DecisionResult
 from kalshi_bot.models.probability import Confidence, EdgeSignal
+
+HARD_MIN_EDGE = 0.20
 
 
 @dataclass
@@ -19,6 +22,10 @@ class RiskState:
     positions: dict[str, float] = field(default_factory=dict)
     last_trade_ts: dict[str, float] = field(default_factory=dict)
     trades_this_cycle: int = 0
+    consecutive_losses: int = 0
+    trades_by_contract: dict[str, int] = field(default_factory=dict)
+    flips_by_contract: dict[str, int] = field(default_factory=dict)
+    intent_ids: set[str] = field(default_factory=set)
 
 
 class RiskManager:
@@ -27,23 +34,40 @@ class RiskManager:
     def __init__(
         self,
         config: AppConfig,
-        max_daily_loss: float = 100.0,
-        cooldown_sec: float = 900.0,
+        max_daily_loss: float | None = None,
+        cooldown_sec: float | None = None,
         max_trades_per_cycle: int = 1,
-        max_per_ticker_usd: float = 2.0,
+        max_per_ticker_usd: float | None = None,
     ):
         self.config = config
-        self.max_daily_loss = max_daily_loss
-        self.cooldown_sec = cooldown_sec
+        self.max_daily_loss = max_daily_loss or config.risk.max_daily_loss
+        self.cooldown_sec = (
+            config.risk.cooldown_seconds if cooldown_sec is None else cooldown_sec
+        )
         self.max_trades_per_cycle = max_trades_per_cycle
-        self.max_per_ticker_usd = max_per_ticker_usd
+        self.max_per_ticker_usd = (
+            config.risk.max_contract_exposure
+            if max_per_ticker_usd is None
+            else max_per_ticker_usd
+        )
         self.state = RiskState()
+
+    @property
+    def locked(self) -> bool:
+        return self.state.halted
+
+    def lock(self, reason: str) -> None:
+        self.state.halted = True
+        self.state.halt_reason = reason
 
     def begin_cycle(self) -> None:
         self.state.trades_this_cycle = 0
 
     def size_mispricing(self, signal: EdgeSignal) -> int:
         if self.state.halted:
+            return 0
+        # Legacy strategy cannot bypass the system-wide hard edge invariant.
+        if signal.edge_fraction + 1e-12 < HARD_MIN_EDGE:
             return 0
         if signal.confidence is Confidence.PASS:
             return 0
@@ -84,15 +108,62 @@ class RiskManager:
         contracts = max(0, min(contracts, self.config.execution.max_contracts_per_trade))
         return contracts
 
-    def size_arb(self, edge: float, pair_cost: float, default_size: int) -> int:
-        if self.state.halted or edge <= 0:
-            return 0
+    def entry_allowed(
+        self,
+        *,
+        ticker: str,
+        edge: float,
+        notional: float,
+        intent_id: str,
+    ) -> tuple[bool, str]:
+        if edge + 1e-12 < HARD_MIN_EDGE:
+            return False, "edge below non-overridable 20-point minimum"
+        if self.state.halted:
+            return False, self.state.halt_reason or "risk lock active"
+        if intent_id in self.state.intent_ids:
+            return False, "duplicate order intent"
         if self.state.trades_this_cycle >= self.max_trades_per_cycle:
+            return False, "cycle trade limit reached"
+        if self.state.trades_by_contract.get(ticker, 0) >= self.config.risk.max_trades_per_contract:
+            return False, "contract trade limit reached"
+        existing = self.state.positions.get(ticker, 0.0)
+        if existing + notional > self.max_per_ticker_usd + 1e-12:
+            return False, "contract exposure limit reached"
+        if self.state.open_exposure_usd + notional > self.config.risk.max_position_size + 1e-12:
+            return False, "portfolio position limit reached"
+        last = self.state.last_trade_ts.get(ticker, 0.0)
+        if last and time.time() - last < self.cooldown_sec:
+            return False, "contract cooldown active"
+        return True, ""
+
+    def size_decision(self, decision: DecisionResult) -> int:
+        if decision.action not in {DecisionAction.BUY_UP, DecisionAction.BUY_DOWN}:
             return 0
-        remaining = self.config.execution.max_position_usd - self.state.open_exposure_usd
-        if remaining < pair_cost * default_size:
-            return max(0, int(remaining / max(pair_cost, 0.01)))
-        return default_size
+        if decision.edge is None or decision.executable_cost is None:
+            return 0
+        if decision.edge + 1e-12 < HARD_MIN_EDGE or decision.executable_cost <= 0:
+            return 0
+        requested = max(1, int(decision.quantity))
+        available_usd = max(
+            0.0,
+            min(
+                self.config.risk.max_position_size - self.state.open_exposure_usd,
+                self.max_per_ticker_usd,
+            ),
+        )
+        affordable = int(available_usd / decision.executable_cost)
+        return max(
+            0,
+            min(requested, affordable, self.config.execution.max_contracts_per_trade),
+        )
+
+    def register_intent(self, intent_id: str) -> None:
+        self.state.intent_ids.add(intent_id)
+
+    def size_arb(self, edge: float, pair_cost: float, default_size: int) -> int:
+        # Cross-venue pair cost has basis/execution risk and is not a calibrated
+        # terminal probability edge. It cannot satisfy the mandated entry rule.
+        return 0
 
     def register_fill(self, ticker: str, notional: float) -> None:
         self.state.open_exposure_usd += notional
@@ -100,6 +171,9 @@ class RiskManager:
         self.state.trades_this_cycle += 1
         self.state.positions[ticker] = self.state.positions.get(ticker, 0.0) + notional
         self.state.last_trade_ts[ticker] = time.time()
+        self.state.trades_by_contract[ticker] = (
+            self.state.trades_by_contract.get(ticker, 0) + 1
+        )
 
     def seed_from_positions(self, market_positions: list[dict]) -> None:
         """Hydrate exposure from Kalshi portfolio so restarts don't double up."""
@@ -116,9 +190,16 @@ class RiskManager:
 
     def register_pnl(self, pnl: float) -> None:
         self.state.realized_pnl += pnl
+        if pnl < 0:
+            self.state.consecutive_losses += 1
+        elif pnl > 0:
+            self.state.consecutive_losses = 0
         if self.state.realized_pnl <= -abs(self.max_daily_loss):
-            self.state.halted = True
-            self.state.halt_reason = f"daily loss limit {self.max_daily_loss}"
+            self.lock(f"daily loss limit {self.max_daily_loss}")
+        elif self.state.consecutive_losses >= self.config.risk.max_consecutive_losses:
+            self.lock(
+                f"consecutive loss limit {self.config.risk.max_consecutive_losses}"
+            )
 
     def release(self, ticker: str, notional: float) -> None:
         self.state.open_exposure_usd = max(0.0, self.state.open_exposure_usd - notional)
