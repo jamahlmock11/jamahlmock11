@@ -1,2 +1,0 @@
-"""Trading strategy decision logic."""
-
