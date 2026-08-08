@@ -1,0 +1,65 @@
+# Kalshi BTC edge bot — paper-first by default.
+# Live trading requires BOTH execution.mode: live AND ENABLE_LIVE_TRADING=1.
+
+markets:
+  series:
+    - KXBTC15M   # 15-minute up/down vs open-window BRTI
+    - KXBTCD     # hourly/daily strike ladder vs end BRTI
+  kalshi_base_url: "https://api.elections.kalshi.com/trade-api/v2"
+  status: open
+  page_limit: 200
+
+pricing:
+  # Settlement reference is CF Benchmarks BRTI (60s average).
+  # Spot feeds below are proxies for live pricing only.
+  btc_spot_source: coinbase   # coinbase | file
+  ibit_spot_source: yahoo     # yahoo | file | static
+  smile_source: file          # file | static | yahoo_ibit
+  smile_file: data/ibit_smile.json
+  # Fallback when smile missing: flat IV in 50–80% BTC-vol regime
+  static_iv: 0.65
+  risk_free_rate: 0.05
+  # Dividend/borrow yield on IBIT (approx); kept small
+  dividend_yield: 0.0
+  # Reject edges when smile quality is poor
+  min_smile_points: 3
+
+confidence:
+  # Calibrated for BTC 50–80% IV regime (percentage points of probability)
+  high_pp: 15.0
+  medium_pp: 10.0
+  low_pp: 5.0
+  # Tight book required for HIGH
+  high_max_spread_cents: 4.0
+  medium_max_spread_cents: 8.0
+  # Above this vs liquid books → treat as bad smile/tenor, not alpha
+  max_credible_edge_pp: 25.0
+
+execution:
+  mode: paper                 # paper | live
+  min_confidence: HIGH        # HIGH | MEDIUM | LOW
+  poll_seconds: 15
+  max_paper_fills_per_scan: 5
+  # Dual opt-in: also set ENABLE_LIVE_TRADING=1 for live orders
+  require_env_live_flag: true
+
+risk:
+  bankroll_usd: 1000.0
+  kelly_fraction: 0.25        # fractional Kelly
+  max_contracts_per_market: 50
+  max_notional_per_trade_usd: 100.0
+  max_open_notional_usd: 500.0
+  max_spread_cents: 10.0
+
+cross_venue:
+  enabled: true
+  polymarket_gamma_url: "https://gamma-api.polymarket.com"
+  # Flag when Kalshi UP ask + Polymarket DOWN ask < threshold
+  arb_sum_threshold: 1.00
+  # Heuristic pairing by nearest end time within this window (seconds)
+  max_end_time_delta_seconds: 180
+  # Explicit pairs override heuristic (ticker -> polymarket condition/slug)
+  contract_map: {}
+
+logging:
+  level: INFO
