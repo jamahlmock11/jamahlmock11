@@ -1,0 +1,67 @@
+series:
+  - KXBTC15M
+
+tiers:
+  high_pp: 25.0
+  medium_pp: 20.0
+  low_pp: 20.0
+  tight_spread_cents: 3.0
+  min_book_usd: 25.0
+
+cross_venue:
+  enabled: false
+
+execution:
+  dry_run: false
+  orders_enabled: true
+  max_position_usd: 5
+  max_contracts_per_trade: 5
+  poll_interval_sec: 5.0
+  only_tiers: ["HIGH"]
+  fee_rate: 0.0
+  fee_per_contract: 0.0
+  slippage_bps: 5.0
+  slippage_per_contract: 0.0
+
+strategy:
+  min_edge: 0.20
+  target_edge: 0.25
+  min_confidence: 0.60
+  min_signal_agreement: 0.60
+  min_data_completeness: 0.75
+  max_spread: 0.12
+  min_seconds_remaining: 30
+  late_seconds: 120
+  final_seconds: 60
+  final_min_edge: 0.25
+  order_quantity: 1
+
+risk:
+  max_daily_loss: 5
+  max_contract_exposure: 5
+  max_position_size: 5
+  max_consecutive_losses: 3
+  max_trades_per_contract: 1
+  max_flips_per_contract: 0
+  cooldown_seconds: 60
+
+data:
+  benchmark_mode: official
+  cf_benchmark_url: ""
+  cf_benchmark_api_key: ""
+  cf_benchmark_api_key_header: Authorization
+  cf_benchmark_api_key_prefix: Bearer
+  max_brti_age_seconds: 15
+  min_supporting_venues: 3
+  max_supporting_dispersion: 0.003
+
+pricing:
+  risk_free_rate: 0.05
+  min_iv: 0.30
+  max_iv: 1.50
+  default_iv: 0.60
+  smile_cache_sec: 60
+
+settlement:
+  reference: BRTI
+  proxy_symbol: ""
