@@ -12,17 +12,17 @@ tiers:
 
 # Cross-venue arb: Kalshi UP + Polymarket DOWN (or inverse) < threshold
 cross_venue:
-  enabled: true
+  enabled: false  # off live until Polymarket leg is automated (avoids unpaired Kalshi risk)
   max_pair_cost: 0.99   # risk-free if combined ask < 1.00; 0.99 leaves buffer
   min_edge_usd: 0.01
   order_size: 5
 
 execution:
-  dry_run: true
-  max_position_usd: 50
-  max_contracts_per_trade: 100
-  poll_interval_sec: 3.0
-  only_tiers: ["HIGH", "MEDIUM"]  # skip LOW by default
+  dry_run: false
+  max_position_usd: 5
+  max_contracts_per_trade: 25
+  poll_interval_sec: 5.0
+  only_tiers: ["HIGH"]  # live start: HIGH only
 
 pricing:
   risk_free_rate: 0.05

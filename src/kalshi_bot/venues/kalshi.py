@@ -195,7 +195,10 @@ class KalshiClient:
         resp = self._http.request(method, url, headers=headers, **kwargs)
         if resp.status_code == 429:
             raise httpx.HTTPStatusError("rate limited", request=resp.request, response=resp)
-        resp.raise_for_status()
+        if resp.status_code >= 400:
+            detail = resp.text[:500]
+            logger.error("Kalshi %s %s → %s %s", method, endpoint, resp.status_code, detail)
+            resp.raise_for_status()
         if resp.status_code == 204 or not resp.content:
             return {}
         return resp.json()
@@ -248,26 +251,47 @@ class KalshiClient:
         no_price: int | None = None,
         order_type: str = "limit",
         client_order_id: str | None = None,
+        time_in_force: str = "immediate_or_cancel",
     ) -> dict[str, Any]:
-        """Place order. Prices are in cents (1-99) for legacy endpoint.
+        """Place order via CreateOrderV2 (/portfolio/events/orders).
 
-        Uses /portfolio/orders (still widely supported). Prefer dry-run unless
-        credentials are configured.
+        V2 quotes the YES book only:
+          - buy YES  → side=bid at yes price
+          - buy NO   → side=ask at (1 - no_price)  [sell YES ≡ buy NO]
+        Prices args are integer cents (1-99).
         """
+        import uuid as _uuid
+
+        side_l = side.lower()
+        action_l = action.lower()
+        if action_l != "buy":
+            raise ValueError("Only buy orders are supported currently")
+
+        if side_l == "yes":
+            if yes_price is None:
+                raise ValueError("yes_price required for YES buys")
+            book_side = "bid"
+            price = yes_price / 100.0
+        elif side_l == "no":
+            if no_price is None:
+                raise ValueError("no_price required for NO buys")
+            # Sell YES at complementary price ≡ buy NO
+            book_side = "ask"
+            price = (100 - int(no_price)) / 100.0
+        else:
+            raise ValueError(f"Unsupported side: {side}")
+
         body: dict[str, Any] = {
             "ticker": ticker,
-            "side": side.lower(),  # "yes" | "no"
-            "action": action.lower(),  # "buy" | "sell"
-            "count": int(count),
-            "type": order_type,
+            "side": book_side,
+            "count": f"{int(count):.2f}",
+            "price": f"{price:.4f}",
+            "time_in_force": time_in_force,
+            "self_trade_prevention_type": "taker_at_cross",
+            "client_order_id": client_order_id or str(_uuid.uuid4()),
+            "exchange_index": -1,
         }
-        if yes_price is not None:
-            body["yes_price"] = int(yes_price)
-        if no_price is not None:
-            body["no_price"] = int(no_price)
-        if client_order_id:
-            body["client_order_id"] = client_order_id
-        return self.post("/portfolio/orders", json=body)
+        return self.post("/portfolio/events/orders", json=body)
 
     @staticmethod
     def _to_market(raw: dict[str, Any], series_hint: str = "") -> KalshiMarket | None:
