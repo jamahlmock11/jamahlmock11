@@ -258,4 +258,3 @@ class MarketDiscovery:
             now=now or self.clock(),
             config=self.config,
         )
-

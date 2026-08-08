@@ -412,4 +412,3 @@ def make_decision(
     **kwargs: object,
 ) -> DecisionResult:
     return DecisionEngine().decide(market, forecast, features, benchmark, **kwargs)
-

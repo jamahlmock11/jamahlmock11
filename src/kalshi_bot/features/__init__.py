@@ -1,2 +1,1 @@
 """Causal forecasting feature generation."""
-

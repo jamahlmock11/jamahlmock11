@@ -311,4 +311,3 @@ class DecisionResult:
     target_edge: float = 0.25
     quantity: float = 0.0
     execution: ExecutionEstimate | None = None
-

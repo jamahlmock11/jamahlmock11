@@ -213,4 +213,3 @@ class SupportingFeeds:
     def close(self) -> None:
         for feed in self.feeds:
             feed.close()
-

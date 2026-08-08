@@ -246,4 +246,3 @@ def estimate_probability(
     **kwargs: float | None,
 ) -> ProbabilityEstimate:
     return EnsembleProbabilityModel().estimate(features, regime, **kwargs)
-

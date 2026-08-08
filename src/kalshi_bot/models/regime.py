@@ -66,4 +66,3 @@ class RegimeClassifier:
 
     def classify(self, features: FeatureSnapshot) -> Regime:
         return classify_regime(features, self.config)
-
