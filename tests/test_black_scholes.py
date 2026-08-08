@@ -54,12 +54,11 @@ def test_scale_iv_bumps_short_tenor():
 
 
 def test_classify_tiers_btc_calibration():
-    tiers = TierConfig(high_pp=15, medium_pp=10, low_pp=5, tight_spread_cents=3, min_book_usd=25)
-    assert classify_tier(16, 2.0, 50, tiers) is Confidence.HIGH
-    assert classify_tier(16, 5.0, 50, tiers) is Confidence.MEDIUM  # wide spread demotes from HIGH
-    assert classify_tier(12, 2.0, 50, tiers) is Confidence.MEDIUM
-    assert classify_tier(7, 2.0, 50, tiers) is Confidence.LOW
-    assert classify_tier(3, 2.0, 50, tiers) is Confidence.PASS
+    tiers = TierConfig(high_pp=25, medium_pp=20, low_pp=20, tight_spread_cents=3, min_book_usd=25)
+    assert classify_tier(26, 2.0, 50, tiers) is Confidence.HIGH
+    assert classify_tier(26, 5.0, 50, tiers) is Confidence.MEDIUM
+    assert classify_tier(20, 2.0, 50, tiers) is Confidence.MEDIUM
+    assert classify_tier(19, 2.0, 50, tiers) is Confidence.PASS
 
 
 def test_detect_mispricing_example_15_8pp():

@@ -91,7 +91,7 @@ def test_risk_sizes_high_more_than_low():
         t_years=1 / 24,
         reason="test",
     )
-    high = EdgeSignal(side=Side.YES, edge_pp=15.8, confidence=Confidence.HIGH, **base)
+    high = EdgeSignal(side=Side.YES, edge_pp=26.0, confidence=Confidence.HIGH, **base)
     low = EdgeSignal(side=Side.YES, edge_pp=6.0, confidence=Confidence.LOW, **base)
     assert risk.size_mispricing(high) > risk.size_mispricing(low)
     assert risk.size_mispricing(high) > 0
