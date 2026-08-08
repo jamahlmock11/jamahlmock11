@@ -53,11 +53,31 @@ class TradingBot:
             default_iv=config.pricing.default_iv,
         )
         self.brti = BRTIProxy(self.options)
-        self.risk = RiskManager(config, max_daily_loss=settings.max_daily_loss_usd)
+        self.risk = RiskManager(
+            config,
+            max_daily_loss=settings.max_daily_loss_usd,
+            cooldown_sec=900.0,
+            max_trades_per_cycle=1,
+            max_per_ticker_usd=min(2.0, settings.max_position_usd),
+        )
+        self._hydrate_positions()
         self.engine = ExecutionEngine(self.kalshi, self.risk, config, journal=self.journal)
         self.mispricing = MispricingScanner(self.kalshi, self.options, self.brti, config)
         self.arb = CrossVenueArbScanner(self.kalshi, self.poly, config.cross_venue)
         self.stats = BotStats()
+
+    def _hydrate_positions(self) -> None:
+        try:
+            data = self.kalshi.get("/portfolio/positions", params={"limit": 200})
+            mkts = data.get("market_positions") or []
+            self.risk.seed_from_positions(mkts)
+            logger.info(
+                "Hydrated %d positions, exposure=$%.2f",
+                len(self.risk.state.positions),
+                self.risk.state.open_exposure_usd,
+            )
+        except Exception as exc:
+            logger.warning("Could not hydrate positions: %s", exc)
 
     def close(self) -> None:
         self.kalshi.close()
@@ -65,6 +85,7 @@ class TradingBot:
 
     def once(self) -> BotStats:
         self.stats.loops += 1
+        self.risk.begin_cycle()
         mode = "DRY-RUN" if self.engine.dry_run else "LIVE"
 
         # --- Mispricing ---
