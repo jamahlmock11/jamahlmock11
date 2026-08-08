@@ -190,6 +190,11 @@ class MarketSnapshot:
         object.__setattr__(self, "open_time", utc_datetime(self.open_time))
 
     @property
+    def open(self) -> datetime:
+        """Explicit market-open timestamp (convenient domain alias)."""
+        return self.open_time
+
+    @property
     def yes_bid(self) -> float | None:
         return self.orderbook.yes_bid
 

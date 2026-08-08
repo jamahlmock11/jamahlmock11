@@ -92,6 +92,17 @@ def _is_explicit_brti_source(value: Any) -> bool:
     )
 
 
+def _candidate_branches(payload: Any) -> Iterable[Mapping[str, Any]]:
+    """Yield narrow branches first so array entries cannot borrow sibling data."""
+    if isinstance(payload, Mapping):
+        for value in payload.values():
+            yield from _candidate_branches(value)
+        yield payload
+    elif isinstance(payload, list):
+        for value in payload:
+            yield from _candidate_branches(value)
+
+
 def parse_brti_payload(
     payload: Any,
     *,
@@ -103,22 +114,45 @@ def parse_brti_payload(
     if not isinstance(payload, (Mapping, list)):
         raise BenchmarkPayloadError("BRTI response must be a JSON object or array")
 
-    source_values = tuple(
-        _values_for_keys(
-            payload,
-            ("source", "index", "index_name", "indexName", "benchmark", "symbol", "instrument"),
-        )
+    source_keys = (
+        "source",
+        "index",
+        "index_name",
+        "indexName",
+        "benchmark",
+        "symbol",
+        "instrument",
     )
-    source = next((value for value in source_values if _is_explicit_brti_source(value)), None)
-    if source is None:
+    price_keys = ("price", "value", "index_value", "indexValue", "rate", "last", "last_price")
+    timestamp_keys = (
+        "timestamp",
+        "time",
+        "ts",
+        "as_of",
+        "asOf",
+        "published_at",
+        "publishedAt",
+        "date",
+    )
+    selected: tuple[Any, Any, Any] | None = None
+    for branch in _candidate_branches(payload):
+        sources = tuple(_values_for_keys(branch, source_keys))
+        source = next((value for value in sources if _is_explicit_brti_source(value)), None)
+        if source is None:
+            continue
+        price_value = _first_key(branch, price_keys)
+        timestamp_value = _first_key(branch, timestamp_keys)
+        if price_value is not None and timestamp_value is not None:
+            selected = source, price_value, timestamp_value
+            break
+    if selected is None:
+        source_values = tuple(_values_for_keys(payload, source_keys))
+        if any(_is_explicit_brti_source(value) for value in source_values):
+            raise BenchmarkPayloadError("BRTI source is present but price or timestamp is missing")
         raise BenchmarkSourceError(
             f"response sources {source_values!r} do not explicitly identify CME CF Bitcoin Real Time Index/BRTI"
         )
-
-    price_value = _first_key(
-        payload,
-        ("price", "value", "index_value", "indexValue", "rate", "last", "last_price"),
-    )
+    _, price_value, timestamp_value = selected
     try:
         price = float(price_value)
     except (TypeError, ValueError) as exc:
@@ -126,10 +160,6 @@ def parse_brti_payload(
     if not math.isfinite(price) or price <= 0:
         raise BenchmarkPayloadError(f"BRTI price must be positive and finite, got {price!r}")
 
-    timestamp_value = _first_key(
-        payload,
-        ("timestamp", "time", "ts", "as_of", "asOf", "published_at", "publishedAt", "date"),
-    )
     timestamp = _parse_timestamp(timestamp_value)
     now = utc_datetime(now)
     age = now - timestamp

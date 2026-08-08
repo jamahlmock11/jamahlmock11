@@ -23,6 +23,9 @@ HORIZONS = (5, 10, 15, 30, 60, 120, 180, 300)
 SECONDS_PER_YEAR = 365.25 * 24 * 60 * 60
 
 FEATURE_RATIONALE: dict[str, str] = {
+    "current_price": "The latest primary BRTI observation at or before evaluation time anchors every relative calculation.",
+    "strike": "The explicit contract barrier defines the terminal event; it is never inferred from current spot.",
+    "seconds_remaining": "Expiration minus evaluation time sets the forecast horizon and volatility scaling.",
     "changes": "Fractional BRTI returns at fixed horizons retain direction and make moves comparable across price levels.",
     "velocities": "Return per second separates the speed of a move from the selected lookback length.",
     "acceleration": "The change from 15-second to 5-second velocity identifies strengthening or fading impulse.",
@@ -37,6 +40,8 @@ FEATURE_RATIONALE: dict[str, str] = {
     "cross_venue_dispersion": "Maximum relative distance from the supporting median exposes venue dislocation and feed risk.",
     "data_completeness": "Available fixed-horizon returns divided by all required horizons quantifies causal history coverage.",
     "trajectory": "Short/medium trend signs plus acceleration distinguish continuation, fading, reversal, and flat paths.",
+    "sample_count": "The number of causal primary observations exposes the statistical support behind the snapshot.",
+    "oldest_sample_age": "History span verifies that nominal long-horizon features have genuine temporal coverage.",
 }
 
 

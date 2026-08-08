@@ -65,7 +65,6 @@ def _positive_strike(raw: Any) -> float | None:
         "floor_strike",
         "target_price",
         "target",
-        "reference_price",
         "strike_value",
     ):
         value = _get(raw, key)
