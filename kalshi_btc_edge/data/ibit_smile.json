@@ -1,0 +1,17 @@
+{
+  "asof": "2026-08-08T00:00:00Z",
+  "underlying": "IBIT",
+  "spot": 36.50,
+  "tenor_days": 30,
+  "note": "Sample smile for paper/dev. Replace with live OPRA/IBIT surface for production. IV is absolute (0.55 = 55%).",
+  "points": [
+    {"moneyness": 0.85, "iv": 0.78},
+    {"moneyness": 0.90, "iv": 0.72},
+    {"moneyness": 0.95, "iv": 0.68},
+    {"moneyness": 1.00, "iv": 0.65},
+    {"moneyness": 1.05, "iv": 0.63},
+    {"moneyness": 1.10, "iv": 0.62},
+    {"moneyness": 1.15, "iv": 0.61},
+    {"moneyness": 1.20, "iv": 0.60}
+  ]
+}
