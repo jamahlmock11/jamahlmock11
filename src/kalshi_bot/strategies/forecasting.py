@@ -33,6 +33,7 @@ from kalshi_bot.domain import (
     SupportingAggregate,
 )
 from kalshi_bot.features.engine import FeatureEngine, FeatureEngineConfig
+from kalshi_bot.intelligence.orchestrator import IntelligenceOrchestrator, IntelligenceReport
 from kalshi_bot.market.discovery import DiscoveryConfig, MarketDiscovery
 from kalshi_bot.models.ensemble import EnsembleProbabilityModel
 from kalshi_bot.models.regime import classify_regime
@@ -54,6 +55,7 @@ class ForecastCycle:
     decision: DecisionResult | None = None
     options_volatility: float | None = None
     market_rejections: dict[str, tuple[str, ...]] | None = None
+    intelligence: IntelligenceReport | None = None
 
 
 PositionLookup = Callable[[str], MarketPosition | None]
@@ -74,6 +76,7 @@ class ForecastingScanner:
         features: FeatureEngine | None = None,
         model: EnsembleProbabilityModel | None = None,
         decision_engine: DecisionEngine | None = None,
+        intelligence: IntelligenceOrchestrator | None = None,
         position_lookup: PositionLookup | None = None,
         orders_lookup: OrdersLookup | None = None,
     ) -> None:
@@ -127,6 +130,9 @@ class ForecastingScanner:
         )
         self.position_lookup = position_lookup or (lambda _ticker: None)
         self.orders_lookup = orders_lookup or (lambda _ticker: ())
+        self.intelligence = intelligence or IntelligenceOrchestrator(
+            confidence_threshold=config.strategy.min_confidence,
+        )
 
     @staticmethod
     def _no_trade(reason: str, gate: str, observed: object = None) -> DecisionResult:
@@ -274,14 +280,51 @@ class ForecastingScanner:
                     "unofficial constituent proxy: probability/confidence shrunk",
                 ),
             )
+
+        intel_report = self.intelligence.enrich(
+            forecast,
+            features,
+            market,
+            regime,
+            supporting=supporting,
+        )
+        trade_forecast = intel_report.adjusted_forecast or forecast
+
         decision = self.decision_engine.decide(
             market,
-            forecast,
+            trade_forecast,
             features,
             benchmark,
             now=observed_at,
-            risk_locked=risk_locked,
+            risk_locked=risk_locked or intel_report.skip_trade,
             duplicate_entry=duplicate_entry,
+        )
+        if intel_report.skip_trade and decision.action in {
+            DecisionAction.BUY_UP,
+            DecisionAction.BUY_DOWN,
+        }:
+            decision = replace(
+                decision,
+                action=DecisionAction.NO_TRADE,
+                reason=f"intelligence gate: {intel_report.skip_reason}",
+                gate_failures=decision.gate_failures + (
+                    GateFailure(
+                        gate="intelligence",
+                        reason=intel_report.skip_reason,
+                        observed=trade_forecast.confidence,
+                        required=self.config.strategy.min_confidence,
+                    ),
+                ),
+            )
+
+        intel_report = self.intelligence.enrich(
+            trade_forecast,
+            features,
+            market,
+            regime,
+            decision_action=decision.action.value,
+            decision_edge=decision.edge,
+            supporting=supporting,
         )
         health = (
             "PROXY"
@@ -295,6 +338,8 @@ class ForecastingScanner:
             reason = f"{reason}; unofficial constituent proxy (PAPER only)"
         if supporting_reason:
             reason = f"{reason}; supporting feeds: {supporting_reason}"
+        if intel_report.skip_trade:
+            reason = f"{reason}; {intel_report.skip_reason}"
         return ForecastCycle(
             timestamp=observed_at,
             data_health=health,
@@ -304,8 +349,9 @@ class ForecastingScanner:
             supporting=supporting,
             features=features,
             regime=regime,
-            forecast=forecast,
+            forecast=trade_forecast,
             decision=decision,
             options_volatility=options_vol,
             market_rejections=dict(discovered.rejections),
+            intelligence=intel_report,
         )

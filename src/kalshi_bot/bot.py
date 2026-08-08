@@ -6,6 +6,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 
 from rich.console import Console
 from rich.table import Table
@@ -18,7 +19,10 @@ from kalshi_bot.domain import ContractSide, MarketPosition, OpenOrder
 from kalshi_bot.execution.engine import ExecutionEngine, ExecutionReport
 from kalshi_bot.execution.position_manager import PositionManager, PositionManagerConfig
 from kalshi_bot.execution.risk import RiskManager
+from kalshi_bot.intelligence.kill_switch import ConfidenceKillSwitch
+from kalshi_bot.intelligence.orchestrator import IntelligenceOrchestrator
 from kalshi_bot.journal import TradeJournal
+from kalshi_bot.learning.signal_weights import SignalWeightTracker
 from kalshi_bot.strategies.forecasting import ForecastCycle, ForecastingScanner
 from kalshi_bot.venues.kalshi import KalshiClient
 
@@ -45,6 +49,19 @@ class TradingBot:
         self.config = config
         self.settings = settings
         self.journal = journal or TradeJournal()
+        signal_weights_path = Path("data/signal_weights.json")
+        self.signal_weights = (
+            SignalWeightTracker.load(signal_weights_path)
+            if signal_weights_path.exists()
+            else SignalWeightTracker()
+        )
+        self.kill_switch = ConfidenceKillSwitch()
+        self._hydrate_kill_switch()
+        self.intelligence = IntelligenceOrchestrator(
+            kill_switch=self.kill_switch,
+            signal_weights=self.signal_weights,
+            confidence_threshold=config.strategy.min_confidence,
+        )
         self.kalshi = KalshiClient(
             base_url=settings.kalshi_url,
             api_key_id=settings.kalshi_api_key_id,
@@ -101,8 +118,36 @@ class TradingBot:
             config=config,
             position_lookup=self._position_lookup,
             orders_lookup=self._orders_lookup,
+            intelligence=self.intelligence,
         )
         self.stats = BotStats()
+
+    def _hydrate_kill_switch(self) -> None:
+        """Load recent prediction outcomes into the kill switch."""
+        try:
+            decisions = self.journal.recent_decisions(limit=50)
+            outcomes: list[bool] = []
+            for row in reversed(decisions):
+                predicted = row.get("predicted_direction")
+                trade_dir = row.get("trade_direction")
+                outcome = row.get("outcome")
+                if outcome is None or trade_dir not in ("UP", "DOWN"):
+                    continue
+                actual_up = float(outcome) >= 0.5
+                predicted_up = trade_dir == "UP" if trade_dir in ("UP", "DOWN") else predicted == "UP"
+                outcomes.append(predicted_up == actual_up)
+            if outcomes:
+                self.kill_switch.hydrate(outcomes)
+        except Exception as exc:
+            logger.warning("Could not hydrate kill switch: %s", exc)
+
+    def _maybe_update_signal_weights(self) -> None:
+        """Run nightly signal weight update when UTC hour is 0."""
+        now = datetime.now(timezone.utc)
+        if now.hour == 0 and now.minute < 5:
+            path = Path("data/signal_weights.json")
+            self.signal_weights.update_weights()
+            self.signal_weights.save(path)
 
     def _hydrate_positions(self) -> None:
         if not self.kalshi.authenticated:
@@ -188,6 +233,7 @@ class TradingBot:
         self.supporting.close()
 
     def once(self) -> BotStats:
+        self._maybe_update_signal_weights()
         self.stats.loops += 1
         self.risk.begin_cycle()
         mode = "DRY-RUN" if self.engine.dry_run else "LIVE"
@@ -289,9 +335,20 @@ class TradingBot:
             )
         if cycle.regime:
             table.add_row("Regime", cycle.regime.value)
+        if cycle.intelligence:
+            intel = cycle.intelligence
+            table.add_row(
+                "Monte Carlo",
+                f"UP {intel.monte_carlo.p_up:.1%} · DOWN {intel.monte_carlo.p_down:.1%}",
+            )
+            table.add_row("Trading regime", intel.trading_regime.label)
+            if intel.kill_switch.halted:
+                table.add_row("Kill switch", f"ACTIVE: {intel.kill_switch.reason}")
         if decision:
             table.add_row("Decision", decision.action.value)
             if decision.edge is not None:
                 table.add_row("All-in edge", f"{decision.edge:.1%}")
             table.add_row("Why", cycle.reason)
+        if cycle.intelligence and cycle.intelligence.explainability:
+            console.print(cycle.intelligence.explainability.format_report())
         console.print(table)

@@ -11,6 +11,24 @@ from kalshi_bot.models.probability import Confidence, EdgeSignal
 
 HARD_MIN_EDGE = 0.20
 
+# Kelly-based edge tiers (edge fraction → target USD)
+EDGE_TIER_SIZING: tuple[tuple[float, float], ...] = (
+    (0.03, 5.0),
+    (0.08, 9.0),
+    (0.15, 14.0),
+    (0.20, 20.0),
+)
+
+
+def kelly_notional_usd(edge: float, daily_cap: float) -> float:
+    """Map edge to Kelly-tier notional, capped by daily risk budget."""
+    edge = max(edge, 0.0)
+    target = EDGE_TIER_SIZING[0][1]
+    for threshold, notional in EDGE_TIER_SIZING:
+        if edge >= threshold:
+            target = notional
+    return min(target, daily_cap)
+
 
 @dataclass
 class RiskState:
@@ -143,15 +161,18 @@ class RiskManager:
             return 0
         if decision.edge + 1e-12 < HARD_MIN_EDGE or decision.executable_cost <= 0:
             return 0
-        requested = max(1, int(decision.quantity))
+        daily_room = max(0.0, abs(self.max_daily_loss) + self.state.realized_pnl)
+        kelly_budget = kelly_notional_usd(decision.edge, daily_room)
         available_usd = max(
             0.0,
             min(
                 self.config.risk.max_position_size - self.state.open_exposure_usd,
                 self.max_per_ticker_usd,
+                kelly_budget,
             ),
         )
         affordable = int(available_usd / decision.executable_cost)
+        requested = max(1, int(decision.quantity))
         return max(
             0,
             min(requested, affordable, self.config.execution.max_contracts_per_trade),
