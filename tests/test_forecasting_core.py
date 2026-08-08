@@ -10,6 +10,7 @@ from kalshi_bot.data.cf_benchmark import (
     StaleBenchmarkError,
     parse_brti_payload,
 )
+from kalshi_bot.data.supporting_feeds import ConstituentBRTIProxy
 from kalshi_bot.domain import (
     BenchmarkQuote,
     ContractSide,
@@ -23,7 +24,7 @@ from kalshi_bot.domain import (
     SupportingQuote,
     TrajectoryState,
 )
-from kalshi_bot.features.engine import FeatureEngine, classify_trajectory
+from kalshi_bot.features.engine import FeatureEngine, FeatureEngineConfig, classify_trajectory
 from kalshi_bot.market.discovery import discover_current_market
 from kalshi_bot.market.orderbook import parse_orderbook_fp
 from kalshi_bot.models.ensemble import EnsembleProbabilityModel
@@ -124,6 +125,27 @@ def test_brti_parser_requires_explicit_fresh_provenance():
             now=NOW,
             max_age=timedelta(seconds=15),
         )
+
+
+def test_constituent_proxy_is_robust_and_never_primary():
+    class StubFeeds:
+        def get_quotes(self, *, now=None):
+            return (
+                SupportingQuote(65000, NOW, "Coinbase", bid=64999, ask=65001),
+                SupportingQuote(65002, NOW, "Kraken", bid=65001, ask=65003),
+                SupportingQuote(64998, NOW, "Bitstamp", bid=64997, ask=64999),
+            )
+
+    proxy = ConstituentBRTIProxy(StubFeeds(), minimum_venues=3)
+    quote = proxy.get_quote(now=NOW)
+    assert quote.price == pytest.approx(65000)
+    assert quote.is_proxy
+    assert not quote.primary
+    assert quote.constituent_count == 3
+    assert quote.dispersion < 0.001
+    FeatureEngine(FeatureEngineConfig(allow_proxy=True)).add_quote(quote)
+    with pytest.raises(ValueError):
+        FeatureEngine().add_quote(quote)
 
 
 def test_discovery_selects_active_explicit_brti_contract():
@@ -285,6 +307,48 @@ def test_buy_down_uses_executable_no_price():
     )
     assert result.action is DecisionAction.BUY_DOWN
     assert result.edge == pytest.approx(0.26)
+
+
+def test_proxy_requires_extra_edge_and_is_never_allowed_by_default():
+    proxy = BenchmarkQuote(
+        price=65020,
+        timestamp=NOW,
+        source="Unofficial CME CF BRTI constituent proxy",
+        primary=False,
+        is_proxy=True,
+        constituent_count=3,
+        dispersion=0.0002,
+    )
+    allowed = DecisionEngine(
+        DecisionConfig(allow_proxy_data=True)
+    ).decide(
+        market(0.52),
+        forecast(0.78),
+        features(),
+        proxy,
+        now=NOW,
+    )
+    assert allowed.action is DecisionAction.BUY_UP
+
+    insufficient_proxy_edge = DecisionEngine(
+        DecisionConfig(allow_proxy_data=True)
+    ).decide(
+        market(0.52),
+        forecast(0.76),
+        features(),
+        proxy,
+        now=NOW,
+    )
+    assert insufficient_proxy_edge.action is DecisionAction.NO_TRADE
+
+    live_locked = DecisionEngine().decide(
+        market(0.52),
+        forecast(0.78),
+        features(),
+        proxy,
+        now=NOW,
+    )
+    assert live_locked.action is DecisionAction.NO_TRADE
 
 
 def test_existing_position_exits_before_opposite_entry():

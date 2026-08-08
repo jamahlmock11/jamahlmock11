@@ -13,7 +13,9 @@ from kalshi_bot.config import AppConfig
 from kalshi_bot.data.cf_benchmark import BenchmarkDataError, CFBenchmarkClient
 from kalshi_bot.data.ibit_options import IBITOptionsProvider
 from kalshi_bot.data.supporting_feeds import (
+    ConstituentBRTIProxy,
     InsufficientSupportingFeeds,
+    SupportingFeedError,
     SupportingFeeds,
 )
 from kalshi_bot.domain import (
@@ -30,7 +32,7 @@ from kalshi_bot.domain import (
     Regime,
     SupportingAggregate,
 )
-from kalshi_bot.features.engine import FeatureEngine
+from kalshi_bot.features.engine import FeatureEngine, FeatureEngineConfig
 from kalshi_bot.market.discovery import DiscoveryConfig, MarketDiscovery
 from kalshi_bot.models.ensemble import EnsembleProbabilityModel
 from kalshi_bot.models.regime import classify_regime
@@ -65,7 +67,7 @@ class ForecastingScanner:
         self,
         *,
         kalshi: KalshiClient,
-        benchmark: CFBenchmarkClient,
+        benchmark: CFBenchmarkClient | ConstituentBRTIProxy,
         supporting: SupportingFeeds,
         options: IBITOptionsProvider,
         config: AppConfig,
@@ -80,7 +82,11 @@ class ForecastingScanner:
         self.supporting = supporting
         self.options = options
         self.config = config
-        self.features = features or FeatureEngine()
+        self.features = features or FeatureEngine(
+            FeatureEngineConfig(
+                allow_proxy=config.data.benchmark_mode == "constituent_proxy"
+            )
+        )
         self.model = model or EnsembleProbabilityModel()
         self.discovery = MarketDiscovery(
             DiscoveryConfig(
@@ -111,6 +117,12 @@ class ForecastingScanner:
                 late_minimum_edge=config.strategy.target_edge,
                 final_seconds=config.strategy.final_seconds,
                 final_minimum_edge=config.strategy.final_min_edge,
+                allow_proxy_data=(
+                    config.execution.dry_run
+                    and config.data.benchmark_mode == "constituent_proxy"
+                ),
+                proxy_minimum_constituents=config.data.min_supporting_venues,
+                proxy_maximum_dispersion=config.data.max_supporting_dispersion,
             )
         )
         self.position_lookup = position_lookup or (lambda _ticker: None)
@@ -194,7 +206,7 @@ class ForecastingScanner:
 
         try:
             benchmark = self.benchmark.get_quote(now=observed_at)
-        except BenchmarkDataError as exc:
+        except (BenchmarkDataError, SupportingFeedError) as exc:
             reason = f"primary BRTI unavailable: {exc}"
             return ForecastCycle(
                 observed_at,
@@ -208,15 +220,18 @@ class ForecastingScanner:
 
         supporting: SupportingAggregate | None = None
         supporting_reason = ""
-        try:
-            supporting = self.supporting.get_aggregate(now=observed_at)
-            if supporting.dispersion > self.config.data.max_supporting_dispersion:
-                supporting_reason = (
-                    f"supporting venue dispersion {supporting.dispersion:.4%} exceeds limit"
-                )
-                supporting = None
-        except InsufficientSupportingFeeds as exc:
-            supporting_reason = str(exc)
+        if benchmark.is_proxy and isinstance(self.benchmark, ConstituentBRTIProxy):
+            supporting = self.benchmark.last_aggregate
+        else:
+            try:
+                supporting = self.supporting.get_aggregate(now=observed_at)
+                if supporting.dispersion > self.config.data.max_supporting_dispersion:
+                    supporting_reason = (
+                        f"supporting venue dispersion {supporting.dispersion:.4%} exceeds limit"
+                    )
+                    supporting = None
+            except InsufficientSupportingFeeds as exc:
+                supporting_reason = str(exc)
 
         try:
             features = self.features.compute(market, now=observed_at, supporting=supporting)
@@ -245,6 +260,20 @@ class ForecastingScanner:
             options_volatility=options_vol,
             market_prior=market_prior,
         )
+        if benchmark.is_proxy:
+            # Basis uncertainty is represented by shrinking both probability
+            # and confidence before any edge comparison.
+            proxy_p_up = 0.5 + (forecast.p_up - 0.5) * 0.80
+            forecast = replace(
+                forecast,
+                p_up=proxy_p_up,
+                p_down=1.0 - proxy_p_up,
+                confidence=forecast.confidence * 0.80,
+                notes=forecast.notes
+                + (
+                    "unofficial constituent proxy: probability/confidence shrunk",
+                ),
+            )
         decision = self.decision_engine.decide(
             market,
             forecast,
@@ -254,8 +283,16 @@ class ForecastingScanner:
             risk_locked=risk_locked,
             duplicate_entry=duplicate_entry,
         )
-        health = "DEGRADED" if supporting is None else "HEALTHY"
+        health = (
+            "PROXY"
+            if benchmark.is_proxy
+            else "DEGRADED"
+            if supporting is None
+            else "HEALTHY"
+        )
         reason = decision.reason
+        if benchmark.is_proxy:
+            reason = f"{reason}; unofficial constituent proxy (PAPER only)"
         if supporting_reason:
             reason = f"{reason}; supporting feeds: {supporting_reason}"
         return ForecastCycle(

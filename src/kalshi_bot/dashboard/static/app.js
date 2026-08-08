@@ -205,7 +205,7 @@
     const scan = stats.last_scan;
     if (decision || scan) {
       $("mode").textContent = decision ? (decision.dry_run ? "PAPER" : "LIVE") : (scan.mode || "—");
-      $("statSpot").textContent = decision ? `BRTI ${money(decision.brti_price)}` : `BTC ${money(scan.spot)}`;
+      $("statSpot").textContent = decision ? `REF ${money(decision.brti_price)}` : `BTC ${money(scan.spot)}`;
       $("lastScan").textContent = decision
         ? `Last decision ${fmtTime(decision.ts)} · ${decision.action} · ${decision.data_health}`
         : `Last scan ${fmtTime(scan.ts)} · ${scan.markets_scanned} mkts`;

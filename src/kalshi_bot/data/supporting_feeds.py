@@ -10,7 +10,9 @@ from typing import Any
 
 import httpx
 
-from kalshi_bot.domain import SupportingAggregate, SupportingQuote, utc_datetime
+from kalshi_bot.domain import BenchmarkQuote, SupportingAggregate, SupportingQuote, utc_datetime
+
+CONSTITUENT_PROXY_SOURCE = "Unofficial CME CF BRTI constituent proxy"
 
 
 class SupportingFeedError(RuntimeError):
@@ -146,6 +148,53 @@ class BitstampFeed(PublicBTCUSDFeed):
         )
 
 
+class GeminiFeed(PublicBTCUSDFeed):
+    source = "Gemini BTC/USD"
+    endpoint = "https://api.gemini.com/v1/pubticker/btcusd"
+
+    def _parse(self, payload: Mapping[str, Any], received_at: datetime) -> tuple[float, float, float, datetime]:
+        volume = payload.get("volume")
+        timestamp = volume.get("timestamp") if isinstance(volume, Mapping) else None
+        return (
+            _positive(payload.get("last"), "last"),
+            _positive(payload.get("bid"), "bid"),
+            _positive(payload.get("ask"), "ask"),
+            _timestamp(timestamp, received_at),
+        )
+
+
+class CryptoComFeed(PublicBTCUSDFeed):
+    source = "Crypto.com BTC/USD"
+    endpoint = (
+        "https://api.crypto.com/exchange/v1/public/get-tickers"
+        "?instrument_name=BTC_USD"
+    )
+
+    def _parse(self, payload: Mapping[str, Any], received_at: datetime) -> tuple[float, float, float, datetime]:
+        if payload.get("code") not in (None, 0):
+            raise SupportingFeedError(f"Crypto.com code: {payload.get('code')}")
+        result = payload.get("result")
+        rows = result.get("data") if isinstance(result, Mapping) else None
+        if not isinstance(rows, list) or not rows:
+            raise SupportingFeedError("Crypto.com ticker is missing")
+        ticker = next(
+            (
+                row
+                for row in rows
+                if isinstance(row, Mapping) and row.get("i") == "BTC_USD"
+            ),
+            None,
+        )
+        if not isinstance(ticker, Mapping):
+            raise SupportingFeedError("Crypto.com BTC_USD ticker is missing")
+        return (
+            _positive(ticker.get("k"), "last"),
+            _positive(ticker.get("b"), "bid"),
+            _positive(ticker.get("a"), "ask"),
+            _timestamp(ticker.get("t"), received_at),
+        )
+
+
 def aggregate_supporting_quotes(
     quotes: Sequence[SupportingQuote],
     *,
@@ -190,7 +239,16 @@ class SupportingFeeds:
         *,
         minimum_venues: int = 2,
     ) -> None:
-        self.feeds = tuple(feeds or (CoinbaseFeed(), KrakenFeed(), BitstampFeed()))
+        self.feeds = tuple(
+            feeds
+            or (
+                CoinbaseFeed(),
+                KrakenFeed(),
+                BitstampFeed(),
+                GeminiFeed(),
+                CryptoComFeed(),
+            )
+        )
         self.minimum_venues = minimum_venues
         self.last_errors: dict[str, str] = {}
 
@@ -213,3 +271,80 @@ class SupportingFeeds:
     def close(self) -> None:
         for feed in self.feeds:
             feed.close()
+
+
+class ConstituentBRTIProxy:
+    """Robust public approximation from available CME CF constituent venues.
+
+    This is not BRTI. CF Benchmarks consolidates full capped order books,
+    uncrosses them, and applies price-volume curves. The proxy uses the median
+    top-of-book midpoint from public constituent venues and is PAPER-only.
+    """
+
+    def __init__(
+        self,
+        feeds: SupportingFeeds,
+        *,
+        minimum_venues: int = 3,
+        max_dispersion: float = 0.003,
+    ) -> None:
+        self.feeds = feeds
+        self.minimum_venues = minimum_venues
+        self.max_dispersion = max_dispersion
+        self.last_aggregate: SupportingAggregate | None = None
+
+    def get_quote(self, *, now: datetime | None = None) -> BenchmarkQuote:
+        quotes = self.feeds.get_quotes(now=now)
+        healthy = [
+            quote
+            for quote in quotes
+            if quote.healthy
+            and quote.bid is not None
+            and quote.ask is not None
+            and quote.bid <= quote.ask
+        ]
+        if len({quote.source for quote in healthy}) < self.minimum_venues:
+            raise InsufficientSupportingFeeds(
+                f"constituent proxy needs {self.minimum_venues} healthy venues; "
+                f"received {len(healthy)}"
+            )
+        midpoints = [
+            (float(quote.bid) + float(quote.ask)) / 2.0
+            for quote in healthy
+        ]
+        price = float(statistics.median(midpoints))
+        dispersion = max(abs(midpoint - price) / price for midpoint in midpoints)
+        if dispersion > self.max_dispersion:
+            raise SupportingFeedError(
+                f"constituent proxy dispersion {dispersion:.4%} exceeds "
+                f"{self.max_dispersion:.4%}"
+            )
+        self.last_aggregate = SupportingAggregate(
+            price=price,
+            timestamp=max(quote.timestamp for quote in healthy),
+            quotes=tuple(sorted(healthy, key=lambda quote: quote.source)),
+            dispersion=dispersion,
+            healthy_venues=len(healthy),
+            required_venues=self.minimum_venues,
+            primary=False,
+        )
+        return BenchmarkQuote(
+            price=price,
+            timestamp=self.last_aggregate.timestamp,
+            source=(
+                f"{CONSTITUENT_PROXY_SOURCE} "
+                f"({', '.join(quote.source for quote in self.last_aggregate.quotes)})"
+            ),
+            primary=False,
+            is_live=True,
+            replay=False,
+            is_proxy=True,
+            constituent_count=len(healthy),
+            dispersion=dispersion,
+        )
+
+    quote = get_quote
+
+    def close(self) -> None:
+        # SupportingFeeds owns and closes the underlying HTTP clients.
+        return None

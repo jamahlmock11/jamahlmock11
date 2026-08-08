@@ -13,7 +13,7 @@ from rich.table import Table
 from kalshi_bot.config import AppConfig, Settings
 from kalshi_bot.data.cf_benchmark import CFBenchmarkClient
 from kalshi_bot.data.ibit_options import IBITOptionsProvider
-from kalshi_bot.data.supporting_feeds import SupportingFeeds
+from kalshi_bot.data.supporting_feeds import ConstituentBRTIProxy, SupportingFeeds
 from kalshi_bot.domain import ContractSide, MarketPosition, OpenOrder
 from kalshi_bot.execution.engine import ExecutionEngine, ExecutionReport
 from kalshi_bot.execution.position_manager import PositionManager, PositionManagerConfig
@@ -54,16 +54,23 @@ class TradingBot:
             cache_sec=config.pricing.smile_cache_sec,
             default_iv=config.pricing.default_iv,
         )
-        self.benchmark = CFBenchmarkClient(
-            config.data.cf_benchmark_url,
-            api_key=config.data.cf_benchmark_api_key or None,
-            api_key_header=config.data.cf_benchmark_api_key_header,
-            api_key_prefix=config.data.cf_benchmark_api_key_prefix,
-            max_age_seconds=config.data.max_brti_age_seconds,
-        )
         self.supporting = SupportingFeeds(
             minimum_venues=config.data.min_supporting_venues
         )
+        if config.data.benchmark_mode == "constituent_proxy":
+            self.benchmark = ConstituentBRTIProxy(
+                self.supporting,
+                minimum_venues=config.data.min_supporting_venues,
+                max_dispersion=config.data.max_supporting_dispersion,
+            )
+        else:
+            self.benchmark = CFBenchmarkClient(
+                config.data.cf_benchmark_url,
+                api_key=config.data.cf_benchmark_api_key or None,
+                api_key_header=config.data.cf_benchmark_api_key_header,
+                api_key_prefix=config.data.cf_benchmark_api_key_prefix,
+                max_age_seconds=config.data.max_brti_age_seconds,
+            )
         self.positions = PositionManager(
             PositionManagerConfig(
                 max_flips_per_contract=config.risk.max_flips_per_contract,
@@ -195,6 +202,7 @@ class TradingBot:
                 cycle.market,
                 cycle.decision,
                 timestamp=cycle.timestamp,
+                benchmark=cycle.benchmark,
             )
         traded = bool(report and report.ok)
         self.journal.log_decision(
@@ -264,7 +272,12 @@ class TradingBot:
                 f"NO {cycle.market.no_bid:.2f}/{cycle.market.no_ask:.2f}",
             )
         if cycle.benchmark:
-            table.add_row("Primary BRTI", f"${cycle.benchmark.price:,.2f}")
+            label = (
+                "Unofficial proxy"
+                if cycle.benchmark.is_proxy
+                else "Primary BRTI"
+            )
+            table.add_row(label, f"${cycle.benchmark.price:,.2f}")
         if cycle.forecast:
             table.add_row(
                 "Probability",

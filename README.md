@@ -38,9 +38,18 @@ Set `CF_BENCHMARK_URL` to an official/licensed JSON endpoint returning an
 explicit BRTI source, price, and timestamp. Optional authorization fields are in
 `.env.example`.
 
-The system never substitutes Coinbase, Kraken, Bitstamp, Yahoo, or another BTC
-feed for BRTI. Those feeds are supporting evidence only. Without official BRTI,
-the correct runtime result is NO TRADE.
+When licensed data is unavailable, `benchmark_mode: constituent_proxy` provides
+an explicitly unofficial **PAPER-only** estimate from the median top-of-book
+midpoint on publicly accessible CME CF constituent venues: Coinbase, Kraken,
+Bitstamp, Gemini, and Crypto.com. At least three fresh venues must agree within
+the configured dispersion limit. Proxy probabilities and confidence are
+shrunk, require at least a 25-point edge, and cannot open positions in the final
+two minutes.
+
+This approximation is not BRTI. It does not include Bullish or LMAX Digital and
+cannot reproduce CF Benchmarks' capped, uncrossed consolidated order book and
+price-volume curves. LIVE entries remain locked unless official primary BRTI is
+configured.
 
 Kalshi's contract uses the simple average of the final 60 BRTI observations. The
 market strike/reference is read from the live Kalshi contract; current spot is

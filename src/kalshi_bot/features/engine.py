@@ -53,6 +53,7 @@ class FeatureEngineConfig:
     flat_return_threshold: float = 0.00005
     venue_neutral_band: float = 0.0002
     venue_dispersion_limit: float = 0.002
+    allow_proxy: bool = False
 
 
 def classify_trajectory(
@@ -94,7 +95,11 @@ class FeatureEngine:
 
     def add_quote(self, quote: BenchmarkQuote) -> None:
         source = quote.source.lower()
-        if not quote.primary or ("brti" not in source and "bitcoin real time index" not in source):
+        accepted_proxy = self.config.allow_proxy and quote.is_proxy
+        if (
+            (not quote.primary and not accepted_proxy)
+            or ("brti" not in source and "bitcoin real time index" not in source)
+        ):
             raise ValueError("feature history accepts primary BRTI observations only")
         if not math.isfinite(quote.price) or quote.price <= 0:
             raise ValueError("BRTI history price must be positive and finite")
@@ -102,7 +107,7 @@ class FeatureEngine:
             timestamp=quote.timestamp,
             price=quote.price,
             source=quote.source,
-            primary=True,
+            primary=quote.primary,
         )
         timestamps = [item.timestamp for item in self._history]
         index = bisect.bisect_left(timestamps, point.timestamp)
@@ -137,7 +142,17 @@ class FeatureEngine:
         points = [
             point
             for point in self._history
-            if point.primary and point.timestamp <= observed_now
+            if (
+                point.timestamp <= observed_now
+                and (
+                    point.primary
+                    or (
+                        self.config.allow_proxy
+                        and "unofficial" in point.source.lower()
+                        and "brti" in point.source.lower()
+                    )
+                )
+            )
         ]
         if not points:
             raise ValueError("no primary BRTI sample exists at or before now")

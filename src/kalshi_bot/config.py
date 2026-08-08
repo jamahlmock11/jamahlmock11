@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 from dotenv import load_dotenv
@@ -63,12 +63,13 @@ class RiskConfig(BaseModel):
 
 
 class DataConfig(BaseModel):
+    benchmark_mode: Literal["official", "constituent_proxy"] = "constituent_proxy"
     cf_benchmark_url: str = ""
     cf_benchmark_api_key: str = ""
     cf_benchmark_api_key_header: str = "Authorization"
     cf_benchmark_api_key_prefix: str = "Bearer"
     max_brti_age_seconds: float = Field(default=15.0, gt=0.0)
-    min_supporting_venues: int = Field(default=2, ge=1)
+    min_supporting_venues: int = Field(default=3, ge=2)
     max_supporting_dispersion: float = Field(default=0.003, gt=0.0)
 
 
@@ -119,6 +120,7 @@ class Settings(BaseSettings):
     cf_benchmark_api_key: str = ""
     cf_benchmark_api_key_header: str = "Authorization"
     cf_benchmark_api_key_prefix: str = "Bearer"
+    benchmark_mode: Literal["official", "constituent_proxy"] | None = None
 
     @property
     def kalshi_url(self) -> str:
@@ -161,6 +163,8 @@ def merge_runtime(config: AppConfig, settings: Settings) -> AppConfig:
     cfg.data.cf_benchmark_api_key = settings.cf_benchmark_api_key or cfg.data.cf_benchmark_api_key
     cfg.data.cf_benchmark_api_key_header = settings.cf_benchmark_api_key_header
     cfg.data.cf_benchmark_api_key_prefix = settings.cf_benchmark_api_key_prefix
+    if settings.benchmark_mode is not None:
+        cfg.data.benchmark_mode = settings.benchmark_mode
     return cfg
 
 

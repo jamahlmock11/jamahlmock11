@@ -51,14 +51,17 @@ risk:
   cooldown_seconds: 30
 
 data:
-  # Official/licensed CME CF BRTI JSON endpoint. If absent, the bot fails
-  # closed with NO TRADE; supporting exchange prices never replace BRTI.
+  # constituent_proxy is an explicitly unofficial PAPER-only estimate built
+  # from public CME CF constituent venues. Use official for LIVE eligibility.
+  benchmark_mode: constituent_proxy
+  # Required when benchmark_mode=official. The proxy is never labelled BRTI
+  # and can authorize PAPER decisions only.
   cf_benchmark_url: ""
   cf_benchmark_api_key: ""
   cf_benchmark_api_key_header: Authorization
   cf_benchmark_api_key_prefix: Bearer
   max_brti_age_seconds: 15
-  min_supporting_venues: 2
+  min_supporting_venues: 3
   max_supporting_dispersion: 0.003
 
 pricing:

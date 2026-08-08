@@ -11,6 +11,7 @@ from typing import Any
 
 from kalshi_bot.config import AppConfig
 from kalshi_bot.domain import (
+    BenchmarkQuote,
     ContractSide,
     DecisionAction,
     DecisionResult,
@@ -166,6 +167,7 @@ class ExecutionEngine:
         *,
         timestamp: datetime | None = None,
         intent_id: str | None = None,
+        benchmark: BenchmarkQuote | None = None,
     ) -> ExecutionReport | None:
         """Execute one already safety-gated decision with a final invariant check."""
         if decision.action in {DecisionAction.NO_TRADE, DecisionAction.HOLD}:
@@ -192,6 +194,19 @@ class ExecutionEngine:
         side_text = "yes" if side is ContractSide.YES else "no"
 
         if decision.action in {DecisionAction.BUY_UP, DecisionAction.BUY_DOWN}:
+            if not self.dry_run and (
+                benchmark is None
+                or not benchmark.primary
+                or benchmark.is_proxy
+                or benchmark.replay
+            ):
+                return ExecutionReport(
+                    False,
+                    False,
+                    "forecast",
+                    "LIVE entry requires official primary BRTI",
+                    {},
+                )
             if (
                 decision.gate_failures
                 or decision.edge is None

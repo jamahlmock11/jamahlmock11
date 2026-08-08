@@ -7,6 +7,7 @@ import pytest
 
 from kalshi_bot.config import AppConfig, ExecutionConfig, RiskConfig
 from kalshi_bot.domain import (
+    BenchmarkQuote,
     ContractSide,
     DecisionAction,
     DecisionResult,
@@ -196,3 +197,36 @@ def test_paper_execution_tracks_position_and_blocks_duplicate_position():
     )
     assert duplicate is not None
     assert not duplicate.ok
+
+
+def test_live_execution_rejects_unofficial_proxy_even_with_valid_decision():
+    cfg = AppConfig(
+        execution=ExecutionConfig(dry_run=False, max_position_usd=100),
+        risk=RiskConfig(
+            max_position_size=100,
+            max_contract_exposure=100,
+            cooldown_seconds=0,
+        ),
+    )
+    kalshi = MagicMock()
+    kalshi.authenticated = True
+    engine = ExecutionEngine(kalshi, RiskManager(cfg), cfg)
+    proxy = BenchmarkQuote(
+        price=65000,
+        timestamp=NOW,
+        source="Unofficial CME CF BRTI constituent proxy",
+        primary=False,
+        is_proxy=True,
+        constituent_count=3,
+        dispersion=0.0001,
+    )
+    report = engine.execute_decision(
+        market(),
+        buy_decision(),
+        timestamp=NOW,
+        benchmark=proxy,
+    )
+    assert report is not None
+    assert not report.ok
+    assert "official primary BRTI" in report.detail
+    kalshi.create_order.assert_not_called()

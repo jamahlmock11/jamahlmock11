@@ -59,7 +59,7 @@ class DecisionAction(str, Enum):
 
 @dataclass(frozen=True)
 class BenchmarkQuote:
-    """An official or controlled-replay BRTI observation."""
+    """An official, replay, or explicitly labelled BRTI proxy observation."""
 
     price: float
     timestamp: datetime
@@ -67,11 +67,16 @@ class BenchmarkQuote:
     primary: bool = True
     is_live: bool = True
     replay: bool = False
+    is_proxy: bool = False
+    constituent_count: int = 0
+    dispersion: float = 0.0
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "timestamp", utc_datetime(self.timestamp))
-        if not self.primary:
-            raise ValueError("a benchmark quote must be marked primary")
+        if self.is_proxy and self.primary:
+            raise ValueError("an unofficial proxy cannot be marked primary")
+        if not self.primary and not self.is_proxy:
+            raise ValueError("non-primary benchmark quotes must be explicit proxies")
         if self.replay and self.is_live:
             raise ValueError("a replay quote cannot be marked live")
 

@@ -53,6 +53,12 @@ class DecisionConfig:
     final_minimum_edge: float = 0.25
     late_confidence_increment: float = 0.10
     allow_replay_data: bool = False
+    allow_proxy_data: bool = False
+    proxy_minimum_edge: float = 0.25
+    proxy_confidence_increment: float = 0.10
+    proxy_minimum_constituents: int = 3
+    proxy_maximum_dispersion: float = 0.003
+    proxy_entry_cutoff_seconds: float = 120.0
 
     @property
     def effective_minimum_edge(self) -> Decimal:
@@ -112,15 +118,45 @@ class DecisionEngine:
             )
         source = benchmark.source.lower()
         is_brti = "brti" in source or "bitcoin real time index" in source
-        if not benchmark.primary or not is_brti:
+        official_brti = benchmark.primary and not benchmark.is_proxy and is_brti
+        permitted_proxy = benchmark.is_proxy and cfg.allow_proxy_data and is_brti
+        if not official_brti and not permitted_proxy:
             failures.append(
                 _failure(
                     "primary_brti",
-                    "forecast input is not explicitly primary BRTI",
-                    (benchmark.primary, benchmark.source),
-                    "primary CME CF BRTI",
+                    "forecast input is neither official BRTI nor an allowed PAPER proxy",
+                    (benchmark.primary, benchmark.is_proxy, benchmark.source),
+                    "official CME CF BRTI",
                 )
             )
+        if benchmark.is_proxy:
+            if benchmark.constituent_count < cfg.proxy_minimum_constituents:
+                failures.append(
+                    _failure(
+                        "proxy_constituents",
+                        "too few healthy constituent venues for proxy use",
+                        benchmark.constituent_count,
+                        cfg.proxy_minimum_constituents,
+                    )
+                )
+            if benchmark.dispersion > cfg.proxy_maximum_dispersion:
+                failures.append(
+                    _failure(
+                        "proxy_dispersion",
+                        "constituent proxy dispersion is too high",
+                        benchmark.dispersion,
+                        cfg.proxy_maximum_dispersion,
+                    )
+                )
+            if seconds <= cfg.proxy_entry_cutoff_seconds:
+                failures.append(
+                    _failure(
+                        "proxy_late_contract",
+                        "proxy entries are disabled near settlement",
+                        seconds,
+                        f">{cfg.proxy_entry_cutoff_seconds}",
+                    )
+                )
         if (not benchmark.is_live or benchmark.replay) and not cfg.allow_replay_data:
             failures.append(
                 _failure(
@@ -159,17 +195,24 @@ class DecisionEngine:
                     cfg.minimum_data_completeness,
                 )
             )
-        if forecast.confidence < cfg.minimum_confidence:
+        required_confidence = cfg.minimum_confidence + (
+            cfg.proxy_confidence_increment if benchmark.is_proxy else 0.0
+        )
+        required_confidence = min(1.0, required_confidence)
+        if forecast.confidence < required_confidence:
             failures.append(
                 _failure(
                     "confidence",
                     "ensemble confidence is below minimum",
                     forecast.confidence,
-                    cfg.minimum_confidence,
+                    required_confidence,
                 )
             )
         seconds = (market.expiration - now).total_seconds()
-        late_confidence = min(1.0, cfg.minimum_confidence + cfg.late_confidence_increment)
+        late_confidence = max(
+            required_confidence,
+            min(1.0, cfg.minimum_confidence + cfg.late_confidence_increment),
+        )
         if seconds <= cfg.late_seconds and forecast.confidence < late_confidence:
             failures.append(
                 _failure(
@@ -273,6 +316,9 @@ class DecisionEngine:
                 "time_window",
                 "primary_brti",
                 "live_data",
+                "proxy_constituents",
+                "proxy_dispersion",
+                "proxy_late_contract",
                 "benchmark_freshness",
                 "feature_freshness",
                 "data_completeness",
@@ -370,6 +416,8 @@ class DecisionEngine:
         )
         seconds_remaining = (market.expiration - observed_now).total_seconds()
         required_edge = cfg.effective_minimum_edge
+        if benchmark.is_proxy:
+            required_edge = max(required_edge, Decimal(str(cfg.proxy_minimum_edge)))
         if seconds_remaining <= cfg.late_seconds:
             required_edge = max(required_edge, Decimal(str(cfg.late_minimum_edge)))
         if seconds_remaining <= cfg.final_seconds:
