@@ -1,0 +1,22 @@
+{
+  "name": "jamahlmock11-kalshi-live",
+  "user": "ubuntu",
+  "install": "bash .cursor/install.sh",
+  "start": "bash scripts/bootstrap_env.sh",
+  "terminals": [
+    {
+      "name": "kalshi-live-bot",
+      "command": "bash scripts/run_live.sh"
+    },
+    {
+      "name": "edge-desk",
+      "command": "export PATH=\"${HOME}/.local/bin:${PATH}\" && python3 -m kalshi_bot --dashboard --host 0.0.0.0 --port 8787"
+    }
+  ],
+  "ports": [
+    {
+      "name": "edge-desk",
+      "port": 8787
+    }
+  ]
+}
