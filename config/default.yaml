@@ -1,0 +1,40 @@
+series:
+  - KXBTC15M
+  - KXBTCD
+
+# Confidence tiers calibrated for BTC 50-80% IV regime
+tiers:
+  high_pp: 15.0      # ≥15pp edge + tight book → HIGH
+  medium_pp: 10.0    # ≥10pp → MEDIUM
+  low_pp: 5.0        # 5-10pp → LOW; <5 → PASS
+  tight_spread_cents: 3.0   # max yes ask-bid for HIGH tier
+  min_book_usd: 25.0
+
+# Cross-venue arb: Kalshi UP + Polymarket DOWN (or inverse) < threshold
+cross_venue:
+  enabled: true
+  max_pair_cost: 0.99   # risk-free if combined ask < 1.00; 0.99 leaves buffer
+  min_edge_usd: 0.01
+  order_size: 5
+
+execution:
+  dry_run: true
+  max_position_usd: 50
+  max_contracts_per_trade: 100
+  poll_interval_sec: 3.0
+  only_tiers: ["HIGH", "MEDIUM"]  # skip LOW by default
+
+pricing:
+  risk_free_rate: 0.05
+  # IBIT ↔ BTC translation uses live price ratio (IBIT/BTC)
+  # Short-tenor IV is extrapolated from the nearest IBIT smile via sqrt-time
+  min_iv: 0.30
+  max_iv: 1.50
+  default_iv: 0.60   # fallback if smile unavailable (BTC high-vol regime)
+  smile_cache_sec: 60
+
+settlement:
+  # Kalshi settles on CF Benchmarks BRTI (60s average before expiry)
+  reference: BRTI
+  # Public proxy when CF Benchmarks credentials are absent
+  proxy_symbol: BTC-USD
