@@ -10,6 +10,7 @@ from rich.console import Console
 
 from kalshi_bot.config import ensure_dirs, load_settings, load_yaml_config, merge_runtime
 from kalshi_bot.bot import TradingBot
+from kalshi_bot.journal import TradeJournal
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -24,6 +25,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--once", action="store_true", help="Single scan cycle then exit")
     p.add_argument("--live", action="store_true", help="Disable dry-run (requires Kalshi keys)")
     p.add_argument("--scan-only", action="store_true", help="Scan and print; never place orders")
+    p.add_argument(
+        "--dashboard",
+        action="store_true",
+        help="Serve Edge Desk trade blotter (http://127.0.0.1:8787)",
+    )
+    p.add_argument("--host", default="0.0.0.0", help="Dashboard bind host")
+    p.add_argument("--port", type=int, default=8787, help="Dashboard port")
+    p.add_argument("--db", default="data/journal.db", help="SQLite journal path")
     p.add_argument("-v", "--verbose", action="store_true")
     return p
 
@@ -37,6 +46,16 @@ def main(argv: list[str] | None = None) -> int:
     ensure_dirs()
     settings = load_settings()
     config = merge_runtime(load_yaml_config(args.config), settings)
+    journal = TradeJournal(args.db)
+
+    if args.dashboard:
+        import uvicorn
+        from kalshi_bot.dashboard.app import create_app
+
+        console = Console()
+        console.print(f"[bold]Edge Desk[/bold] → http://{args.host}:{args.port}")
+        uvicorn.run(create_app(args.db), host=args.host, port=args.port, log_level="info")
+        return 0
 
     if args.live:
         config.execution.dry_run = False
@@ -45,12 +64,9 @@ def main(argv: list[str] | None = None) -> int:
         config.execution.dry_run = True
 
     console = Console()
-    bot = TradingBot(config, settings)
+    bot = TradingBot(config, settings, journal=journal)
 
     if args.scan_only:
-        # Zero out sizing by emptying only_tiers after we still want to see signals —
-        # actually just skip execute by temporarily raising max to 0 via only_tiers empty
-        # Better: run once but clear only_tiers so size returns 0
         config.execution.only_tiers = []
 
     try:
@@ -58,7 +74,8 @@ def main(argv: list[str] | None = None) -> int:
             bot.once()
             console.print(
                 f"Done. signals={bot.stats.signals_seen} "
-                f"trades={bot.stats.trades} arbs={bot.stats.arbs}"
+                f"trades={bot.stats.trades} arbs={bot.stats.arbs} "
+                f"journal={args.db}"
             )
             return 0
         bot.run_forever()

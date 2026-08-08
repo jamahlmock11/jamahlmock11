@@ -33,6 +33,17 @@ Secondary strategy: same 15-minute BTC window on Kalshi and Polymarket.
 
 That locked pair pays `$1.00` at settlement → risk-free residual is the edge (basis risk: BRTI vs Chainlink TWAP).
 
+## Dashboard
+
+Trade blotter UI that reads the SQLite journal (`data/journal.db`):
+
+```bash
+python -m kalshi_bot --once          # run a cycle (logs signals + fills)
+python -m kalshi_bot --dashboard     # Edge Desk on http://0.0.0.0:8787
+```
+
+Shows fills, signal tape, scan history, and notional/edge stats. Auto-refreshes every 3s.
+
 ## Quick start
 
 ```bash

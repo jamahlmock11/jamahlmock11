@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Edge Desk — Kalshi BTC bot</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Manrope:wght@400;500;600;700&family=Syne:wght@700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <main class="shell">
+    <header class="top">
+      <div>
+        <h1 class="brand">Edge <span>Desk</span></h1>
+        <p class="lede">Live blotter for Kalshi BTC mispricing fills and cross-venue arb — options edge vs the book.</p>
+      </div>
+      <aside class="status-panel">
+        <div class="status-row">
+          <span class="pulse" id="pulse"></span>
+          <span>Feed</span>
+          <span class="mode" id="mode">—</span>
+        </div>
+        <div class="meta" id="lastScan">Waiting for first scan…</div>
+      </aside>
+    </header>
+
+    <section class="stats" id="stats">
+      <article class="stat">
+        <div class="label">Trades</div>
+        <div class="value" id="statTrades">0</div>
+        <div class="hint" id="statTradeSplit">dry 0 · live 0</div>
+      </article>
+      <article class="stat">
+        <div class="label">Notional</div>
+        <div class="value" id="statNotional">$0</div>
+        <div class="hint">filled exposure</div>
+      </article>
+      <article class="stat">
+        <div class="label">Avg edge</div>
+        <div class="value" id="statEdge">0pp</div>
+        <div class="hint">on executed trades</div>
+      </article>
+      <article class="stat">
+        <div class="label">Signals</div>
+        <div class="value" id="statSignals">0</div>
+        <div class="hint" id="statSpot">BTC —</div>
+      </article>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <h2>Trade blotter</h2>
+        <div class="sub" id="tradeCount">0 fills</div>
+      </div>
+      <div class="filters" id="tradeFilters">
+        <button class="chip active" data-filter="all">All</button>
+        <button class="chip" data-filter="mispricing">Mispricing</button>
+        <button class="chip" data-filter="cross_venue_arb">Arb</button>
+        <button class="chip" data-filter="dry">Dry-run</button>
+        <button class="chip" data-filter="live">Live</button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Strategy</th>
+              <th>Ticker</th>
+              <th>Side</th>
+              <th>Size</th>
+              <th>Price</th>
+              <th>Notional</th>
+              <th>Edge</th>
+              <th>Tier</th>
+              <th>Mode</th>
+            </tr>
+          </thead>
+          <tbody id="tradesBody"></tbody>
+        </table>
+        <div class="empty" id="tradesEmpty" hidden>No trades yet. Run <code>python -m kalshi_bot --once</code> to seed the blotter.</div>
+      </div>
+    </section>
+
+    <section class="grid-2">
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Signal tape</h2>
+          <div class="sub">options vs Kalshi</div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Tier</th>
+                <th>Ticker</th>
+                <th>Side</th>
+                <th>Kalshi</th>
+                <th>Options</th>
+                <th>Edge</th>
+                <th>Hit</th>
+              </tr>
+            </thead>
+            <tbody id="signalsBody"></tbody>
+          </table>
+          <div class="empty" id="signalsEmpty" hidden>No signals logged yet.</div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Scan history</h2>
+          <div class="sub">spot · IV · markets</div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Mode</th>
+                <th>BTC</th>
+                <th>IV</th>
+                <th>Mkts</th>
+                <th>Signals</th>
+              </tr>
+            </thead>
+            <tbody id="scansBody"></tbody>
+          </table>
+          <div class="empty" id="scansEmpty" hidden>No scans yet.</div>
+        </div>
+      </section>
+    </section>
+
+    <footer>Auto-refreshes every 3s · journal: data/journal.db · dry-run until --live</footer>
+  </main>
+  <script src="/static/app.js"></script>
+</body>
+</html>

@@ -9,6 +9,8 @@ secrets/
 logs/
 data/*.json
 data/*.csv
+data/*.db
+data/*.db-*
 .DS_Store
 dist/
 build/

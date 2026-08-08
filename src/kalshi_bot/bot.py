@@ -13,6 +13,7 @@ from kalshi_bot.config import AppConfig, Settings
 from kalshi_bot.data.ibit_options import BRTIProxy, IBITOptionsProvider
 from kalshi_bot.execution.engine import ExecutionEngine, ExecutionReport
 from kalshi_bot.execution.risk import RiskManager
+from kalshi_bot.journal import TradeJournal
 from kalshi_bot.strategies.cross_venue_arb import CrossVenueArbScanner
 from kalshi_bot.strategies.mispricing import MispricingScanner
 from kalshi_bot.venues.kalshi import KalshiClient
@@ -32,9 +33,15 @@ class BotStats:
 
 
 class TradingBot:
-    def __init__(self, config: AppConfig, settings: Settings):
+    def __init__(
+        self,
+        config: AppConfig,
+        settings: Settings,
+        journal: TradeJournal | None = None,
+    ):
         self.config = config
         self.settings = settings
+        self.journal = journal or TradeJournal()
         self.kalshi = KalshiClient(
             base_url=settings.kalshi_url,
             api_key_id=settings.kalshi_api_key_id,
@@ -47,7 +54,7 @@ class TradingBot:
         )
         self.brti = BRTIProxy(self.options)
         self.risk = RiskManager(config, max_daily_loss=settings.max_daily_loss_usd)
-        self.engine = ExecutionEngine(self.kalshi, self.risk, config)
+        self.engine = ExecutionEngine(self.kalshi, self.risk, config, journal=self.journal)
         self.mispricing = MispricingScanner(self.kalshi, self.options, self.brti, config)
         self.arb = CrossVenueArbScanner(self.kalshi, self.poly, config.cross_venue)
         self.stats = BotStats()
@@ -58,13 +65,25 @@ class TradingBot:
 
     def once(self) -> BotStats:
         self.stats.loops += 1
+        mode = "DRY-RUN" if self.engine.dry_run else "LIVE"
+
         # --- Mispricing ---
         try:
             scan = self.mispricing.scan()
             self._print_mispricing(scan)
+            scan_id = self.journal.log_scan(
+                spot=scan.spot,
+                ibit=scan.ibit,
+                iv_atm=scan.iv_atm,
+                markets_scanned=scan.markets_scanned,
+                signal_count=len(scan.signals),
+                mode=mode,
+            )
             for sig in scan.signals:
                 self.stats.signals_seen += 1
                 report = self.engine.execute_mispricing(sig)
+                traded = bool(report and report.ok)
+                self.journal.log_signal(scan_id, sig, traded=traded)
                 if report:
                     self.stats.trades += 1
                     self.stats.reports.append(report)
