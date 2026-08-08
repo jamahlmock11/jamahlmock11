@@ -137,7 +137,13 @@ def validate_market(
                 raw_book
                 if isinstance(raw_book, OrderBookSnapshot)
                 else parse_orderbook_fp(
-                    {"orderbook_fp": raw_book} if raw_book is not None else {},
+                    (
+                        raw_book
+                        if isinstance(raw_book, Mapping) and "orderbook_fp" in raw_book
+                        else {"orderbook_fp": raw_book}
+                    )
+                    if raw_book is not None
+                    else {},
                     timestamp=now,
                 )
             )

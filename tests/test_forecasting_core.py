@@ -153,6 +153,30 @@ def test_discovery_selects_active_explicit_brti_contract():
     assert rejected.rejections
 
 
+def test_discovery_accepts_live_kalshi_orderbook_envelope():
+    raw = {
+        "ticker": "KXBTC15M-26AUG080815-00",
+        "status": "active",
+        "rules_primary": "CF Benchmarks' BRTI determines settlement",
+        "floor_strike": 65000,
+        "open_time": (NOW - timedelta(minutes=5)).isoformat(),
+        "close_time": (NOW + timedelta(minutes=10)).isoformat(),
+    }
+    payload = {
+        "orderbook_fp": {
+            "yes_dollars": [["0.4800", "10"]],
+            "no_dollars": [["0.5000", "10"]],
+        }
+    }
+    result = discover_current_market(
+        [raw],
+        orderbooks={raw["ticker"]: payload},
+        now=NOW,
+    )
+    assert result.market is not None
+    assert result.market.yes_ask == pytest.approx(0.50)
+
+
 def test_feature_engine_is_causal_and_detects_reversal():
     engine = FeatureEngine()
     for seconds_ago in range(300, -1, -1):
