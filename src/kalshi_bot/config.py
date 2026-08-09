@@ -96,6 +96,11 @@ class RiskConfig(BaseModel):
     opposite_edge_shift: float = Field(default=0.15, ge=0.0, le=1.0)
     thesis_reversal_margin: float = Field(default=0.10, ge=0.0, le=0.50)
     thesis_reversal_enabled: bool = False
+    opposite_edge_exit_enabled: bool = False
+    recovery_hold_enabled: bool = False
+    recovery_hold_min_probability: float = Field(default=0.58, ge=0.0, le=1.0)
+    recovery_hold_min_confidence: float = Field(default=0.58, ge=0.0, le=1.0)
+    recovery_hold_min_agreement: float = Field(default=0.58, ge=0.0, le=1.0)
     min_hold_seconds: float = Field(default=0.0, ge=0.0)
 
 

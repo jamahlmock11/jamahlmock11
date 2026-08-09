@@ -62,6 +62,23 @@ def executable_exit_price(
     return proceeds / filled
 
 
+def recovery_hold_supported(
+    position: MarketPosition,
+    forecast: ProbabilityEstimate,
+    *,
+    min_probability: float,
+    min_confidence: float,
+    min_agreement: float,
+) -> bool:
+    """True when the model still strongly expects the held side to prevail."""
+    held_prob = forecast.p_up if position.side is ContractSide.YES else forecast.p_down
+    return (
+        held_prob + 1e-12 >= min_probability
+        and forecast.confidence + 1e-12 >= min_confidence
+        and forecast.signal_agreement + 1e-12 >= min_agreement
+    )
+
+
 def thesis_reversal_triggered(
     position: MarketPosition,
     forecast: ProbabilityEstimate,
@@ -92,6 +109,11 @@ def evaluate_position_exit(
     opposite_edge_shift: float = 0.15,
     thesis_reversal_margin: float = 0.10,
     thesis_reversal_enabled: bool = False,
+    opposite_edge_exit_enabled: bool = False,
+    recovery_hold_enabled: bool = False,
+    recovery_hold_min_probability: float = 0.58,
+    recovery_hold_min_confidence: float = 0.58,
+    recovery_hold_min_agreement: float = 0.58,
     min_hold_seconds: float = 0.0,
     now: datetime | None = None,
     reliability_gates: set[str] | frozenset[str] | None = None,
@@ -152,14 +174,23 @@ def evaluate_position_exit(
         )
     )
     opposite_edge_better = False
-    if position.side is ContractSide.YES and forecast.p_down > held_prob + opposite_edge_shift:
-        opposite_edge_better = True
-    if position.side is ContractSide.NO and forecast.p_up > held_prob + opposite_edge_shift:
-        opposite_edge_better = True
+    if opposite_edge_exit_enabled:
+        if position.side is ContractSide.YES and forecast.p_down > held_prob + opposite_edge_shift:
+            opposite_edge_better = True
+        if position.side is ContractSide.NO and forecast.p_up > held_prob + opposite_edge_shift:
+            opposite_edge_better = True
     unreliable = any(failure.gate in gates for failure in failures)
 
     if thesis_reversed or opposite_edge_better or unreliable:
         if within_min_hold:
+            return None
+        if recovery_hold_enabled and recovery_hold_supported(
+            position,
+            forecast,
+            min_probability=recovery_hold_min_probability,
+            min_confidence=recovery_hold_min_confidence,
+            min_agreement=recovery_hold_min_agreement,
+        ):
             return None
         if thesis_reversed:
             reason = (

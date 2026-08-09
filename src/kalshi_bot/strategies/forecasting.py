@@ -130,6 +130,11 @@ class ForecastingScanner:
                 opposite_edge_shift=config.risk.opposite_edge_shift,
                 thesis_reversal_margin=config.risk.thesis_reversal_margin,
                 thesis_reversal_enabled=config.risk.thesis_reversal_enabled,
+                opposite_edge_exit_enabled=config.risk.opposite_edge_exit_enabled,
+                recovery_hold_enabled=config.risk.recovery_hold_enabled,
+                recovery_hold_min_probability=config.risk.recovery_hold_min_probability,
+                recovery_hold_min_confidence=config.risk.recovery_hold_min_confidence,
+                recovery_hold_min_agreement=config.risk.recovery_hold_min_agreement,
                 min_hold_seconds=config.risk.min_hold_seconds,
             )
         )
