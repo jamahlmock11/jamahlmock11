@@ -84,6 +84,29 @@ def select_nearest_strike_markets(
     return [raw for _, raw in scored[: max(count, 1)]]
 
 
+def market_seconds_remaining(raw: object, now: datetime) -> float | None:
+    close = getattr(raw, "close_time", None)
+    if close is None:
+        return None
+    return (close - now).total_seconds()
+
+
+def any_market_in_entry_window(
+    markets: list,
+    *,
+    now: datetime,
+    min_seconds_remaining: float,
+    max_seconds_remaining: float,
+) -> bool:
+    for raw in markets:
+        remaining = market_seconds_remaining(raw, now)
+        if remaining is None:
+            continue
+        if min_seconds_remaining <= remaining <= max_seconds_remaining:
+            return True
+    return False
+
+
 def discover_hour_market(
     markets: list,
     *,

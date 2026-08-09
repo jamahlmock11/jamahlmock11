@@ -343,8 +343,11 @@ def test_assess_edge_below_minimum():
     assert assessment.trade_tier is TradeTier.NONE
 
 
-def test_time_window_blocks_entries_before_last_20_minutes():
-    engine = make_engine()
+def test_time_window_blocks_entries_before_last_35_minutes():
+    hour_cfg = HourStrategyConfig(max_entry_seconds_remaining=2100)
+    engine = HourDecisionEngine(
+        HourDecisionConfig(hour=hour_cfg, edge=EDGE_CFG, allow_proxy_data=True)
+    )
     features = hour_features()
     trend = classify_trend(dict(features.changes))
     vol = analyze_volatility(
@@ -357,7 +360,7 @@ def test_time_window_blocks_entries_before_last_20_minutes():
         timestamps_span=3600,
     )
     decision = engine.decide(
-        hour_market(0.54, minutes_remaining=35),
+        hour_market(0.54, minutes_remaining=40),
         forecast(0.65),
         features,
         benchmark(),
@@ -370,6 +373,19 @@ def test_time_window_blocks_entries_before_last_20_minutes():
     assert decision.action is DecisionAction.NO_TRADE
     assert any(f.gate == "time_window" for f in decision.gate_failures)
 
+    allowed = engine.decide(
+        hour_market(0.54, minutes_remaining=30),
+        forecast(0.75),
+        features,
+        benchmark(),
+        trend,
+        vol,
+        Regime.TREND_UP,
+        0.85,
+        now=NOW,
+    )
+    assert allowed.action is DecisionAction.BUY_UP
+
 
 def test_1h_yaml_loads_without_validation_error():
     from kalshi_bot.config import load_yaml_config
@@ -377,6 +393,7 @@ def test_1h_yaml_loads_without_validation_error():
     cfg = load_yaml_config("config/1h.yaml")
     assert cfg.horizon == "1h"
     assert cfg.hour.series_ticker == "KXBTCD"
+    assert cfg.hour.max_entry_seconds_remaining == 2100
     assert cfg.strategy.target_edge >= 0.20
     assert cfg.strategy.final_min_edge >= 0.20
     assert cfg.hour_edge.preferred_edge == pytest.approx(0.12)

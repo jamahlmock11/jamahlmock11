@@ -7,8 +7,8 @@ hour:
   market_type: 1h
   contract_duration_seconds: 3600
   min_seconds_remaining: 30
-  # Enter any time in the hourly window (not just the final 30 minutes).
-  max_entry_seconds_remaining: 3600
+  # Scan and enter only in the final 35 minutes of each hourly contract.
+  max_entry_seconds_remaining: 2100
   late_window_seconds: 1800
   mid_window_seconds: 1800
   final_seconds: 60

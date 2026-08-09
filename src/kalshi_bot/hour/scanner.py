@@ -31,7 +31,13 @@ from kalshi_bot.domain import (
 )
 from kalshi_bot.features.engine import FeatureEngineConfig
 from kalshi_bot.hour.decision import HourDecisionConfig, HourDecisionEngine
-from kalshi_bot.hour.discovery import HourDiscoveryConfig, discover_hour_market
+from kalshi_bot.hour.discovery import (
+    HourDiscoveryConfig,
+    any_market_in_entry_window,
+    discover_hour_market,
+    filter_hourly_markets,
+    select_nearest_strike_markets,
+)
 from kalshi_bot.hour.feature_engine import HourFeatureBundle, HourFeatureEngine
 from kalshi_bot.hour.probability_model import HourProbabilityModel, model_stability
 from kalshi_bot.hour.regime_detector import classify_hour_regime
@@ -185,15 +191,29 @@ class HourForecastingScanner:
                 decision=self._no_trade(reason, "kalshi_api", str(exc)),
             )
 
+        hourly_markets = filter_hourly_markets(markets, config=self.discovery_config)
+        hour_cfg = self.config.hour
+        if not any_market_in_entry_window(
+            hourly_markets,
+            now=observed_at,
+            min_seconds_remaining=hour_cfg.min_seconds_remaining,
+            max_seconds_remaining=hour_cfg.max_entry_seconds_remaining,
+        ):
+            wait_minutes = hour_cfg.max_entry_seconds_remaining / 60.0
+            reason = f"waiting until ≤{wait_minutes:.0f} minutes remain before scanning"
+            return HourForecastCycle(
+                observed_at,
+                "WAITING",
+                reason,
+                decision=self._no_trade(reason, "time_window", wait_minutes),
+            )
+
         reference_price: float | None = None
         try:
             reference_price = self.benchmark.get_quote(now=observed_at).price
         except Exception:
             reference_price = None
 
-        from kalshi_bot.hour.discovery import filter_hourly_markets, select_nearest_strike_markets
-
-        hourly_markets = filter_hourly_markets(markets, config=self.discovery_config)
         candidate_markets = hourly_markets
         if reference_price is not None and hourly_markets:
             candidate_markets = select_nearest_strike_markets(

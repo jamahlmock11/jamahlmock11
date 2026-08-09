@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 from kalshi_bot.config import HourStrategyConfig
 from kalshi_bot.hour.discovery import (
     HourDiscoveryConfig,
+    any_market_in_entry_window,
     discover_hour_market,
     filter_hourly_markets,
     select_nearest_strike_markets,
@@ -90,3 +91,26 @@ def test_discover_hour_market_finds_atm_kxbtcd_contract():
     )
     assert result.market is not None
     assert result.market.ticker == "KXBTCD-ATM"
+
+
+def test_any_market_in_entry_window_respects_35_minute_cap():
+    early = FakeMarket(
+        ticker="KXBTCD-EARLY",
+        close_time=NOW + timedelta(minutes=40),
+    )
+    late = FakeMarket(
+        ticker="KXBTCD-LATE",
+        close_time=NOW + timedelta(minutes=30),
+    )
+    assert not any_market_in_entry_window(
+        [early],
+        now=NOW,
+        min_seconds_remaining=30,
+        max_seconds_remaining=2100,
+    )
+    assert any_market_in_entry_window(
+        [late],
+        now=NOW,
+        min_seconds_remaining=30,
+        max_seconds_remaining=2100,
+    )
