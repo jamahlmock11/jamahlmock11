@@ -122,6 +122,7 @@ class HourForecastingScanner:
                 proxy_maximum_dispersion=config.data.max_supporting_dispersion,
                 stop_loss_fraction=config.risk.stop_loss_fraction,
                 opposite_edge_shift=config.risk.opposite_edge_shift,
+                thesis_reversal_margin=config.risk.thesis_reversal_margin,
             )
         )
         self.position_lookup = position_lookup or (lambda _ticker: None)

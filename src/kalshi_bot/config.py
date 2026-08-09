@@ -93,6 +93,7 @@ class RiskConfig(BaseModel):
     cooldown_seconds: float = Field(default=30.0, ge=0.0)
     stop_loss_fraction: float = Field(default=0.45, ge=0.0, le=1.0)
     opposite_edge_shift: float = Field(default=0.15, ge=0.0, le=1.0)
+    thesis_reversal_margin: float = Field(default=0.10, ge=0.0, le=0.50)
 
 
 class DataConfig(BaseModel):

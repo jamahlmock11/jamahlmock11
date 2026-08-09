@@ -60,6 +60,24 @@ def executable_exit_price(
     return proceeds / filled
 
 
+def thesis_reversal_triggered(
+    position: MarketPosition,
+    forecast: ProbabilityEstimate,
+    *,
+    margin: float,
+) -> bool:
+    """True only when the opposite side leads by at least ``margin`` probability points."""
+    if margin <= 0:
+        return position.side is not (
+            ContractSide.YES if forecast.p_up >= forecast.p_down else ContractSide.NO
+        )
+    if position.side is ContractSide.YES:
+        return forecast.p_down + 1e-12 >= forecast.p_up + margin
+    if position.side is ContractSide.NO:
+        return forecast.p_up + 1e-12 >= forecast.p_down + margin
+    return False
+
+
 def evaluate_position_exit(
     *,
     market: MarketSnapshot,
@@ -70,6 +88,7 @@ def evaluate_position_exit(
     quantity: float,
     stop_loss_fraction: float,
     opposite_edge_shift: float = 0.15,
+    thesis_reversal_margin: float = 0.10,
     reliability_gates: set[str] | frozenset[str] | None = None,
 ) -> PositionExitSignal | None:
     """Return an exit signal when stop-loss or thesis protections trigger."""
@@ -113,7 +132,11 @@ def evaluate_position_exit(
             )
 
     held_prob = forecast.p_up if position.side is ContractSide.YES else forecast.p_down
-    thesis_reversed = position.side is not predicted_side
+    thesis_reversed = thesis_reversal_triggered(
+        position,
+        forecast,
+        margin=thesis_reversal_margin,
+    )
     opposite_edge_better = False
     if position.side is ContractSide.YES and forecast.p_down > held_prob + opposite_edge_shift:
         opposite_edge_better = True
@@ -123,7 +146,10 @@ def evaluate_position_exit(
 
     if thesis_reversed or opposite_edge_better or unreliable:
         if thesis_reversed:
-            reason = "forecast reversed the held thesis"
+            reason = (
+                f"forecast reversed the held thesis "
+                f"(opposite lead ≥{thesis_reversal_margin:.0%})"
+            )
             trigger = "thesis_reversal"
         elif opposite_edge_better:
             reason = "opposite side developed stronger edge"
