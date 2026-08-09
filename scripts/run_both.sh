@@ -7,6 +7,13 @@ export PATH="${HOME}/.local/bin:${PATH}"
 
 bash scripts/bootstrap_env.sh
 
+if [[ -f .env ]]; then
+  set -a
+  # shellcheck source=/dev/null
+  source .env
+  set +a
+fi
+
 if [[ -f .venv/bin/activate ]]; then
   # shellcheck source=/dev/null
   source .venv/bin/activate
