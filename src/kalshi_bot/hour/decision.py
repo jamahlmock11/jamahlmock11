@@ -49,6 +49,7 @@ class HourDecisionConfig:
     proxy_entry_cutoff_seconds: float = 300.0
     stop_loss_fraction: float = 0.45
     opposite_edge_shift: float = 0.15
+    thesis_reversal_margin: float = 0.10
 
 
 class HourDecisionEngine:
@@ -283,6 +284,7 @@ class HourDecisionEngine:
                 quantity=trade_quantity,
                 stop_loss_fraction=cfg.stop_loss_fraction,
                 opposite_edge_shift=cfg.opposite_edge_shift,
+                thesis_reversal_margin=cfg.thesis_reversal_margin,
             )
             held_prob = forecast.p_up if position.side is ContractSide.YES else forecast.p_down
             if exit_signal is not None:

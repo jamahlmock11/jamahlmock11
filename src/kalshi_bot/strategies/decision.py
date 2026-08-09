@@ -122,6 +122,7 @@ class DecisionConfig:
     proxy_entry_cutoff_seconds: float = 120.0
     stop_loss_fraction: float = 0.45
     opposite_edge_shift: float = 0.15
+    thesis_reversal_margin: float = 0.10
 
     @property
     def effective_minimum_edge(self) -> Decimal:
@@ -381,6 +382,7 @@ class DecisionEngine:
                 quantity=trade_quantity,
                 stop_loss_fraction=cfg.stop_loss_fraction,
                 opposite_edge_shift=cfg.opposite_edge_shift,
+                thesis_reversal_margin=cfg.thesis_reversal_margin,
             )
             if exit_signal is not None:
                 exit_quantity = min(position.quantity, trade_quantity)

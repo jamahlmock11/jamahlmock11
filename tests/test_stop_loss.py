@@ -15,7 +15,11 @@ from kalshi_bot.domain import (
     Regime,
     TrajectoryState,
 )
-from kalshi_bot.execution.stop_loss import evaluate_position_exit, premium_loss_fraction
+from kalshi_bot.execution.stop_loss import (
+    evaluate_position_exit,
+    premium_loss_fraction,
+    thesis_reversal_triggered,
+)
 from kalshi_bot.market.orderbook import parse_orderbook_fp
 from kalshi_bot.strategies.decision import DecisionConfig, DecisionEngine
 
@@ -114,6 +118,50 @@ def test_thesis_reversal_exits_before_stop():
     )
     assert signal is not None
     assert signal.trigger == "thesis_reversal"
+
+
+def test_minor_forecast_flip_does_not_trigger_thesis_exit():
+    """49/51 noise should not exit a YES position when margin is 10pp."""
+    market = MarketSnapshot(
+        ticker="KXBTC15M-TEST",
+        status="active",
+        rules="BRTI",
+        strike=65000,
+        expiration=NOW + timedelta(minutes=5),
+        open_time=NOW - timedelta(minutes=10),
+        reference="BRTI",
+        orderbook=book(yes_bid=0.46),
+        current_position=MarketPosition(
+            side=ContractSide.YES,
+            quantity=1,
+            average_price=0.50,
+        ),
+    )
+    forecast = ProbabilityEstimate(
+        p_up=0.49,
+        p_down=0.51,
+        confidence=0.7,
+        signal_agreement=0.8,
+        component_probabilities={"terminal": 0.49},
+        regime=Regime.TREND_UP,
+        raw_p_up=0.49,
+    )
+    assert not thesis_reversal_triggered(
+        market.current_position,
+        forecast,
+        margin=0.10,
+    )
+    signal = evaluate_position_exit(
+        market=market,
+        position=market.current_position,
+        forecast=forecast,
+        failures=(),
+        predicted_side=ContractSide.NO,
+        quantity=1,
+        stop_loss_fraction=0.45,
+        thesis_reversal_margin=0.10,
+    )
+    assert signal is None
 
 
 def test_15m_decision_engine_exits_on_stop_loss():
