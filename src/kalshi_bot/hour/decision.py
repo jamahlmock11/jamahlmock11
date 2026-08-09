@@ -50,6 +50,7 @@ class HourDecisionConfig:
     stop_loss_fraction: float = 0.45
     opposite_edge_shift: float = 0.15
     thesis_reversal_margin: float = 0.10
+    min_hold_seconds: float = 0.0
 
 
 class HourDecisionEngine:
@@ -285,6 +286,8 @@ class HourDecisionEngine:
                 stop_loss_fraction=cfg.stop_loss_fraction,
                 opposite_edge_shift=cfg.opposite_edge_shift,
                 thesis_reversal_margin=cfg.thesis_reversal_margin,
+                min_hold_seconds=cfg.min_hold_seconds,
+                now=observed_now,
             )
             held_prob = forecast.p_up if position.side is ContractSide.YES else forecast.p_down
             if exit_signal is not None:

@@ -190,6 +190,7 @@ class MarketPosition:
     side: ContractSide
     quantity: float
     average_price: float = 0.0
+    opened_at: datetime | None = None
 
 
 @dataclass(frozen=True)

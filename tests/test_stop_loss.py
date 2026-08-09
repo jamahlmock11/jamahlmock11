@@ -232,3 +232,85 @@ def test_15m_decision_engine_exits_on_stop_loss():
     )
     assert decision.action is DecisionAction.EXIT
     assert "stop loss" in decision.reason.lower()
+
+
+def test_thesis_exit_blocked_during_min_hold():
+    market = MarketSnapshot(
+        ticker="KXBTC15M-TEST",
+        status="active",
+        rules="BRTI",
+        strike=65000,
+        expiration=NOW + timedelta(minutes=5),
+        open_time=NOW - timedelta(minutes=10),
+        reference="BRTI",
+        orderbook=book(yes_bid=0.46),
+        current_position=MarketPosition(
+            side=ContractSide.NO,
+            quantity=1,
+            average_price=0.30,
+            opened_at=NOW - timedelta(seconds=10),
+        ),
+    )
+    forecast = ProbabilityEstimate(
+        p_up=0.62,
+        p_down=0.38,
+        confidence=0.7,
+        signal_agreement=0.8,
+        component_probabilities={"terminal": 0.62},
+        regime=Regime.TREND_UP,
+        raw_p_up=0.62,
+    )
+    signal = evaluate_position_exit(
+        market=market,
+        position=market.current_position,
+        forecast=forecast,
+        failures=(),
+        predicted_side=ContractSide.YES,
+        quantity=1,
+        stop_loss_fraction=0.55,
+        thesis_reversal_margin=0.20,
+        min_hold_seconds=90,
+        now=NOW,
+    )
+    assert signal is None
+
+
+def test_stop_loss_still_triggers_during_min_hold():
+    market = MarketSnapshot(
+        ticker="KXBTC15M-TEST",
+        status="active",
+        rules="BRTI",
+        strike=65000,
+        expiration=NOW + timedelta(minutes=5),
+        open_time=NOW - timedelta(minutes=10),
+        reference="BRTI",
+        orderbook=book(yes_bid=0.10),
+        current_position=MarketPosition(
+            side=ContractSide.YES,
+            quantity=1,
+            average_price=0.50,
+            opened_at=NOW - timedelta(seconds=10),
+        ),
+    )
+    forecast = ProbabilityEstimate(
+        p_up=0.55,
+        p_down=0.45,
+        confidence=0.7,
+        signal_agreement=0.8,
+        component_probabilities={"terminal": 0.55},
+        regime=Regime.TREND_UP,
+        raw_p_up=0.55,
+    )
+    signal = evaluate_position_exit(
+        market=market,
+        position=market.current_position,
+        forecast=forecast,
+        failures=(),
+        predicted_side=ContractSide.YES,
+        quantity=1,
+        stop_loss_fraction=0.55,
+        min_hold_seconds=90,
+        now=NOW,
+    )
+    assert signal is not None
+    assert signal.trigger == "stop_loss"
