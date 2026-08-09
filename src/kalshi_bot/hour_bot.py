@@ -25,6 +25,7 @@ from kalshi_bot.intelligence.orchestrator import IntelligenceOrchestrator
 from kalshi_bot.journal import TradeJournal
 from kalshi_bot.learning.signal_weights import SignalWeightTracker
 from kalshi_bot.hour.scanner import HourForecastCycle, HourForecastingScanner
+from kalshi_bot.strategies.decision import format_edge_gap
 from kalshi_bot.venues.kalshi import KalshiClient
 
 logger = logging.getLogger(__name__)
@@ -315,6 +316,7 @@ class HourTradingBot:
                 table.add_row("Edge", f"{decision.edge:.1%}")
             if decision.required_edge is not None:
                 table.add_row("Required edge", f"{decision.required_edge:.1%}")
+            table.add_row("Edge gap", format_edge_gap(decision))
             if decision.trade_tier.value != "NONE":
                 table.add_row("Trade tier", decision.trade_tier.value)
             if decision.entry_timing:

@@ -163,7 +163,10 @@ class RiskManager:
             return 0
         if decision.edge is None or decision.executable_cost is None:
             return 0
-        if decision.edge + 1e-12 < self.hard_min_edge or decision.executable_cost <= 0:
+        min_edge = self.hard_min_edge
+        if decision.required_edge is not None:
+            min_edge = max(self.hard_min_edge, float(decision.required_edge))
+        if decision.edge + 1e-12 < min_edge or decision.executable_cost <= 0:
             return 0
         daily_room = max(0.0, abs(self.max_daily_loss) + self.state.realized_pnl)
         kelly_budget = kelly_notional_usd(decision.edge, daily_room)

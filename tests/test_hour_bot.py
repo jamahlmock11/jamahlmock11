@@ -43,14 +43,14 @@ def book(yes_ask: float = 0.55):
     )
 
 
-def hour_market(yes_ask: float = 0.55):
+def hour_market(yes_ask: float = 0.55, *, minutes_remaining: float = 15.0):
     return MarketSnapshot(
         ticker="KXBTCD-26AUG081200-T65000",
         status="active",
         rules="60 second average of CF Benchmarks BRTI",
         strike=65_000,
-        expiration=NOW + timedelta(minutes=37),
-        open_time=NOW - timedelta(minutes=23),
+        expiration=NOW + timedelta(minutes=minutes_remaining),
+        open_time=NOW - timedelta(minutes=60 - minutes_remaining),
         reference="CME CF Bitcoin Real Time Index (BRTI)",
         orderbook=book(yes_ask),
     )
@@ -73,7 +73,7 @@ def hour_features():
         timestamp=NOW,
         current_price=65_020,
         strike=65_000,
-        seconds_remaining=2220,
+        seconds_remaining=900,
         changes=changes,
         velocities={5: 0.00004},
         acceleration=0.000001,
@@ -139,7 +139,7 @@ def test_model_65_price_55_buys_when_gates_pass():
     )
     engine = make_engine()
     decision = engine.decide(
-        hour_market(0.54),
+        hour_market(0.48),
         forecast(0.65),
         features,
         benchmark(),
@@ -313,6 +313,34 @@ def test_assess_edge_below_minimum():
     )
     assert assessment.up_edge == pytest.approx(0.07, abs=0.01)
     assert assessment.trade_tier is TradeTier.NONE
+
+
+def test_time_window_blocks_entries_before_last_20_minutes():
+    engine = make_engine()
+    features = hour_features()
+    trend = classify_trend(dict(features.changes))
+    vol = analyze_volatility(
+        current_price=features.current_price,
+        strike=features.strike,
+        seconds_remaining=features.seconds_remaining,
+        realized_vol=features.realized_vol,
+        changes=dict(features.changes),
+        prices=[65000, 65010, 65020],
+        timestamps_span=3600,
+    )
+    decision = engine.decide(
+        hour_market(0.54, minutes_remaining=35),
+        forecast(0.65),
+        features,
+        benchmark(),
+        trend,
+        vol,
+        Regime.TREND_UP,
+        0.8,
+        now=NOW,
+    )
+    assert decision.action is DecisionAction.NO_TRADE
+    assert any(f.gate == "time_window" for f in decision.gate_failures)
 
 
 def test_1h_yaml_loads_without_validation_error():

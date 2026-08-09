@@ -66,7 +66,34 @@
     });
   }
 
-  function renderTrades() {
+  function edgeGapText(d) {
+    if (!d) return "—";
+    let observed = d.edge != null ? Number(d.edge) * 100 : null;
+    let required = 20;
+    try {
+      const failures = JSON.parse(d.gate_failures || "[]");
+      const edgeGate = failures.find((g) => g.gate === "minimum_edge");
+      if (edgeGate) {
+        if (edgeGate.observed != null) observed = Number(edgeGate.observed) * 100;
+        if (edgeGate.required != null) required = Number(edgeGate.required) * 100;
+      } else if (d.required_edge != null) {
+        required = Number(d.required_edge) * 100;
+      }
+    } catch (_) {
+      if (d.required_edge != null) required = Number(d.required_edge) * 100;
+    }
+    if (observed == null) return "Edge unavailable";
+    const gap = Math.max(0, required - observed);
+    if (gap <= 0.05) {
+      const surplus = observed - required;
+      if (surplus > 0.05) {
+        return `Met (+${surplus.toFixed(0)}¢ above ${required.toFixed(0)}¢ min)`;
+      }
+      return `Met (${observed.toFixed(0)}¢ have · ${required.toFixed(0)}¢ need)`;
+    }
+    return `Need ${Math.ceil(gap)}¢ more (${observed.toFixed(0)}¢ have · ${required.toFixed(0)}¢ need)`;
+  }
+
     const rows = filteredTrades();
     const body = $("tradesBody");
     $("tradeCount").textContent = `${rows.length} fill${rows.length === 1 ? "" : "s"}`;
@@ -148,6 +175,7 @@
         ? `${pct(d.yes_ask, 0)} / ${pct(d.no_ask, 0)}`
         : "—";
     $("decisionEdge").textContent = pct(d.edge);
+    $("decisionEdgeGap").textContent = edgeGapText(d);
     $("decisionDirection").textContent =
       `${d.current_direction || "FLAT"} → ${d.predicted_direction || "FLAT"}`;
     $("decisionRegime").textContent = `${d.regime || "—"} / ${d.trajectory || "—"}`;
