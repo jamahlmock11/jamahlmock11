@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from kalshi_bot.strategies.mispricing import extract_strike
-from kalshi_bot.venues.kalshi import KalshiClient, KalshiMarket
+from kalshi_bot.venues.kalshi import KalshiClient, KalshiMarket, sanitize_client_order_id
 from kalshi_bot.venues.polymarket import PolymarketClient
 from datetime import datetime, timezone, timedelta
 
@@ -15,6 +15,12 @@ def kalshi():
     client = KalshiClient(base_url="https://api.elections.kalshi.com/trade-api/v2")
     yield client
     client.close()
+
+
+def test_sanitize_client_order_id_strips_dots():
+    raw = "forecast-KXBTCD-26AUG0908-T64799.99-buy_down-123"
+    assert sanitize_client_order_id(raw) == "forecast-KXBTCD-26AUG0908-T64799-99-buy-down-123"
+    assert "." not in sanitize_client_order_id(raw)
 
 
 def test_kalshi_fetches_kxbtc15m(kalshi):

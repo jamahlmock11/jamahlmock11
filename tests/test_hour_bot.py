@@ -180,6 +180,34 @@ def test_model_65_price_56_no_trade_when_required_edge_10():
     assert decision.action is DecisionAction.NO_TRADE
 
 
+def test_blocks_contrarian_no_when_forecast_strongly_up():
+    features = hour_features()
+    trend = classify_trend(dict(features.changes))
+    vol = analyze_volatility(
+        current_price=features.current_price,
+        strike=features.strike,
+        seconds_remaining=features.seconds_remaining,
+        realized_vol=features.realized_vol,
+        changes=dict(features.changes),
+        prices=[65000, 65010, 65020],
+        timestamps_span=3600,
+    )
+    engine = make_engine()
+    decision = engine.decide(
+        hour_market(0.95),
+        forecast(0.786),
+        features,
+        benchmark(),
+        trend,
+        vol,
+        Regime.TREND_UP,
+        0.85,
+        now=NOW,
+    )
+    assert decision.action is DecisionAction.NO_TRADE
+    assert any(f.gate == "forecast_alignment" for f in decision.gate_failures)
+
+
 def test_model_75_price_55_a_plus_trade():
     features = hour_features()
     trend = classify_trend(dict(features.changes))
