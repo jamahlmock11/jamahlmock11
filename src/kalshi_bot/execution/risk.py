@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import time
 from dataclasses import dataclass, field
 
@@ -181,6 +182,12 @@ class RiskManager:
         )
         affordable = int(available_usd / decision.executable_cost)
         requested = max(1, int(decision.quantity * size_mult))
+        min_notional = self.config.execution.min_trade_notional_usd
+        if min_notional > 0:
+            requested = max(
+                requested,
+                math.ceil(min_notional / decision.executable_cost),
+            )
         return max(
             0,
             min(requested, affordable, self.config.execution.max_contracts_per_trade),
