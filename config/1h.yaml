@@ -7,9 +7,9 @@ hour:
   market_type: 1h
   contract_duration_seconds: 3600
   min_seconds_remaining: 30
-  # Only enter new trades in the final 20 minutes of each hourly contract.
-  max_entry_seconds_remaining: 1200
-  late_window_seconds: 1200
+  # Only enter new trades in the final 30 minutes of each hourly contract.
+  max_entry_seconds_remaining: 1800
+  late_window_seconds: 1800
   mid_window_seconds: 1800
   final_seconds: 60
   history_seconds: 3700
@@ -62,9 +62,9 @@ risk:
   max_contract_exposure: 25
   max_position_size: 50
   max_consecutive_losses: 4
-  max_trades_per_contract: 3
-  max_flips_per_contract: 2
-  cooldown_seconds: 45
+  max_trades_per_contract: 5
+  max_flips_per_contract: 3
+  cooldown_seconds: 30
   stop_loss_fraction: 0.45
   opposite_edge_shift: 0.15
 
@@ -72,7 +72,7 @@ data:
   benchmark_mode: constituent_proxy
   cf_benchmark_url: ""
   max_brti_age_seconds: 20
-  min_supporting_venues: 3
+  min_supporting_venues: 2
   max_supporting_dispersion: 0.003
 
 pricing:

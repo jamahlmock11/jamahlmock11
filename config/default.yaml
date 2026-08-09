@@ -46,9 +46,9 @@ risk:
   max_contract_exposure: 25
   max_position_size: 50
   max_consecutive_losses: 4
-  max_trades_per_contract: 2
-  max_flips_per_contract: 1
-  cooldown_seconds: 30
+  max_trades_per_contract: 5
+  max_flips_per_contract: 2
+  cooldown_seconds: 15
   stop_loss_fraction: 0.45
   opposite_edge_shift: 0.15
 
