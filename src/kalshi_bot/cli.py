@@ -64,7 +64,8 @@ def main(argv: list[str] | None = None) -> int:
 
         console = Console()
         console.print(f"[bold]Edge Desk[/bold] → http://{args.host}:{args.port}")
-        uvicorn.run(create_app(args.db), host=args.host, port=args.port, log_level="info")
+        app_db = args.db if args.db != "data/journal.db" else None
+        uvicorn.run(create_app(app_db), host=args.host, port=args.port, log_level="info")
         return 0
 
     if args.live:

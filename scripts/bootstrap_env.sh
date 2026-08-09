@@ -11,8 +11,17 @@ if [[ -n "${KALSHI_PRIVATE_KEY:-}" ]]; then
   chmod 600 secrets/kalshi_private.key
 fi
 
+existing_api_key=""
+if [[ -f .env ]]; then
+  # shellcheck source=/dev/null
+  source .env
+  existing_api_key="${KALSHI_API_KEY_ID:-}"
+fi
+
+api_key_id="${KALSHI_API_KEY_ID:-$existing_api_key}"
+
 has_creds=false
-if [[ -n "${KALSHI_API_KEY_ID:-}" && -f secrets/kalshi_private.key ]]; then
+if [[ -n "$api_key_id" && -f secrets/kalshi_private.key ]]; then
   has_creds=true
 fi
 
@@ -24,7 +33,7 @@ if [[ "$has_creds" == true ]]; then
 fi
 
 cat > .env <<EOF
-KALSHI_API_KEY_ID=${KALSHI_API_KEY_ID:-}
+KALSHI_API_KEY_ID=${api_key_id}
 KALSHI_PRIVATE_KEY_PATH=./secrets/kalshi_private.key
 KALSHI_ENV=${KALSHI_ENV:-prod}
 CF_BENCHMARK_URL=${CF_BENCHMARK_URL:-kalshi://BRTI}

@@ -25,8 +25,15 @@
     })}`;
   }
 
+  function signedMoney(n) {
+    if (n == null) return "—";
+    const value = Number(n);
+    const prefix = value > 0 ? "+" : "";
+    return `${prefix}${money(value)}`;
+  }
+
   function pct(n, digits = 1) {
-    return n == null ? "—" : `${(Number(n) * 100).toFixed(digits)}%`;
+    return n == null ? "—" : `${Number(n).toFixed(digits)}%`;
   }
 
   function fixed(n, digits = 2) {
@@ -52,8 +59,21 @@
   function modeBadge(trade) {
     if (!trade.ok) return `<span class="badge fail">fail</span>`;
     return trade.dry_run
-      ? `<span class="badge dry">dry</span>`
+      ? `<span class="badge dry">paper</span>`
       : `<span class="badge live">live</span>`;
+  }
+
+  function horizonBadge(trade) {
+    const hz = trade.horizon || "other";
+    return `<span class="badge ${hz === "1h" ? "arb" : "high"}">${trade.horizon_label || hz}</span>`;
+  }
+
+  function pnlClass(pnl) {
+    if (pnl == null) return "mono";
+    const v = Number(pnl);
+    if (v > 0) return "mono edge-pos";
+    if (v < 0) return "mono edge-neg";
+    return "mono";
   }
 
   function filteredTrades() {
@@ -62,6 +82,8 @@
       if (f === "all") return true;
       if (f === "dry") return !!t.dry_run;
       if (f === "live") return !t.dry_run;
+      if (f === "15m" || f === "1h") return t.horizon === f;
+      if (f === "forecast" || f === "forecast_exit") return t.strategy === f;
       return t.strategy === f;
     });
   }
@@ -94,23 +116,24 @@
     return `Need ${Math.ceil(gap)}¢ more (${observed.toFixed(0)}¢ have · ${required.toFixed(0)}¢ need)`;
   }
 
+  function renderTrades() {
     const rows = filteredTrades();
     const body = $("tradesBody");
-    $("tradeCount").textContent = `${rows.length} fill${rows.length === 1 ? "" : "s"}`;
+    $("tradeCount").textContent = `${rows.length} fill${rows.length === 1 ? "" : "s"} shown`;
     $("tradesEmpty").hidden = rows.length > 0;
     body.innerHTML = rows
       .map(
         (t) => `
       <tr>
         <td class="mono">${fmtTime(t.ts)}</td>
-        <td>${t.strategy === "cross_venue_arb" ? "arb" : "mispricing"}</td>
+        <td>${horizonBadge(t)}</td>
+        <td class="summary-cell">${t.summary || t.detail || "—"}</td>
         <td class="mono">${t.ticker || "—"}</td>
         <td>${sideBadge(t.side)}</td>
         <td class="mono">${Number(t.count || 0).toFixed(0)}</td>
-        <td class="mono">${Number(t.price || 0).toFixed(2)}</td>
-        <td class="mono">${money(t.notional)}</td>
-        <td class="edge-pos mono">${Number(t.edge || 0).toFixed(1)}pp</td>
-        <td>${tierBadge(t.confidence)}</td>
+        <td class="mono">${t.price_cents != null ? `${t.price_cents}¢` : fixed(t.price)}</td>
+        <td class="${pnlClass(t.pnl_usd)}">${signedMoney(t.pnl_usd)}</td>
+        <td class="edge-pos mono">${t.edge_pct != null ? `${Number(t.edge_pct).toFixed(1)}%` : fixed(t.edge, 1)}</td>
         <td>${modeBadge(t)}</td>
       </tr>`
       )
@@ -223,23 +246,30 @@
   }
 
   function renderStats(stats) {
-    $("statTrades").textContent = String(stats.trades || 0);
-    $("statTradeSplit").textContent = `dry ${stats.dry_trades || 0} · live ${stats.live_trades || 0}`;
+    const live = stats.live_trades || 0;
+    const dry = stats.dry_trades || 0;
+    $("statTrades").textContent = String(live);
+    $("statTradeSplit").textContent = `dry ${dry} · live ${live} · ${stats.exits || 0} exits`;
     $("statNotional").textContent = money(stats.notional_usd);
-    $("statEdge").textContent = `${Number(stats.avg_edge || 0).toFixed(1)}pp`;
-    $("statSignals").textContent = String(stats.decisions || 0);
+    $("statEdge").textContent = `${Number(stats.avg_edge_pct || stats.avg_edge || 0).toFixed(1)}%`;
+    const pnl = stats.closed_pnl_usd || 0;
+    $("statPnl").textContent = signedMoney(pnl);
+    $("statPnl").className = `value ${pnl > 0 ? "edge-pos" : pnl < 0 ? "edge-neg" : ""}`;
+    $("statWinLoss").textContent = `${stats.wins || 0} wins · ${stats.losses || 0} losses`;
 
     const decision = stats.last_decision;
     const scan = stats.last_scan;
     if (decision || scan) {
       $("mode").textContent = decision ? (decision.dry_run ? "PAPER" : "LIVE") : (scan.mode || "—");
-      $("statSpot").textContent = decision ? `REF ${money(decision.brti_price)}` : `BTC ${money(scan.spot)}`;
+      $("statSpot").textContent = decision
+        ? `${decision.horizon || "bot"} · ${decision.action}`
+        : "15m + 1h bots";
       $("lastScan").textContent = decision
         ? `Last decision ${fmtTime(decision.ts)} · ${decision.action} · ${decision.data_health}`
         : `Last scan ${fmtTime(scan.ts)} · ${scan.markets_scanned} mkts`;
       $("pulse").classList.remove("off");
     } else {
-      $("mode").textContent = "IDLE";
+      $("mode").textContent = live > 0 ? "LIVE" : "IDLE";
       $("pulse").classList.add("off");
     }
   }
@@ -248,7 +278,7 @@
     try {
       const [stats, trades, decisions, signals, scans] = await Promise.all([
         fetch("/api/stats").then((r) => r.json()),
-        fetch("/api/trades?limit=150").then((r) => r.json()),
+        fetch("/api/trades?limit=300").then((r) => r.json()),
         fetch("/api/decisions?limit=100").then((r) => r.json()),
         fetch("/api/signals?limit=100").then((r) => r.json()),
         fetch("/api/scans?limit=40").then((r) => r.json()),

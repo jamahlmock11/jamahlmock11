@@ -10,8 +10,75 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from kalshi_bot.dashboard.trade_summary import aggregate_trade_stats, summarize_trade
+
 
 DEFAULT_DB = Path("data/journal.db")
+
+
+def infer_horizon_from_path(path: Path) -> str:
+    name = path.name.lower()
+    if "1h" in name:
+        return "1h"
+    if "15m" in name:
+        return "15m"
+    return "15m"
+
+
+class CombinedTradeJournal:
+    """Merge multiple bot journals (15m + 1h) for the dashboard."""
+
+    def __init__(self, paths: list[Path] | None = None) -> None:
+        default_paths = [
+            Path("data/journal.db"),
+            Path("data/journal_1h.db"),
+        ]
+        self.paths = [Path(p) for p in (paths or default_paths)]
+        self.journals: list[tuple[str, TradeJournal]] = []
+        for path in self.paths:
+            if path.exists():
+                self.journals.append((infer_horizon_from_path(path), TradeJournal(path)))
+
+    def enriched_trades(self, limit: int = 500) -> list[dict[str, Any]]:
+        merged: list[dict[str, Any]] = []
+        for horizon, journal in self.journals:
+            merged.extend(journal.enriched_trades(limit=limit, horizon=horizon))
+        merged.sort(key=lambda row: float(row.get("ts") or 0), reverse=True)
+        return merged[:limit]
+
+    def stats(self) -> dict[str, Any]:
+        trades = self.enriched_trades(limit=5000)
+        trade_stats = aggregate_trade_stats(trades)
+        decisions = 0
+        last_decision = None
+        last_scan = None
+        for _, journal in self.journals:
+            stats = journal.stats()
+            decisions += int(stats.get("decisions") or 0)
+            if stats.get("last_decision"):
+                candidate = stats["last_decision"]
+                if not last_decision or candidate.get("ts", 0) > last_decision.get("ts", 0):
+                    last_decision = candidate
+            if stats.get("last_scan"):
+                candidate = stats["last_scan"]
+                if not last_scan or candidate.get("ts", 0) > last_scan.get("ts", 0):
+                    last_scan = candidate
+        trade_stats["decisions"] = decisions
+        trade_stats["last_decision"] = last_decision
+        trade_stats["last_scan"] = last_scan
+        trade_stats["last_trade_ts"] = trades[0]["ts"] if trades else None
+        trade_stats["journals"] = [str(j.path) for _, j in self.journals]
+        return trade_stats
+
+    def recent_decisions(self, limit: int = 100) -> list[dict[str, Any]]:
+        merged: list[dict[str, Any]] = []
+        for horizon, journal in self.journals:
+            for row in journal.recent_decisions(limit):
+                item = dict(row)
+                item["horizon"] = horizon
+                merged.append(item)
+        merged.sort(key=lambda row: float(row.get("ts") or 0), reverse=True)
+        return merged[:limit]
 
 
 class TradeJournal:
@@ -378,6 +445,11 @@ class TradeJournal:
                 "SELECT * FROM decisions ORDER BY ts DESC LIMIT ?", (limit,)
             ).fetchall()
         return [dict(r) for r in rows]
+
+    def enriched_trades(self, limit: int = 200, *, horizon: str | None = None) -> list[dict[str, Any]]:
+        rows = self.recent_trades(limit)
+        hz = horizon or infer_horizon_from_path(self.path)
+        return [summarize_trade(dict(r), horizon=hz) for r in rows]
 
     def stats(self) -> dict[str, Any]:
         with self._lock, self._connect() as conn:

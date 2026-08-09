@@ -54,9 +54,14 @@
 
     <section class="stats" id="stats">
       <article class="stat">
-        <div class="label">Trades</div>
+        <div class="label">Live fills</div>
         <div class="value" id="statTrades">0</div>
         <div class="hint" id="statTradeSplit">dry 0 · live 0</div>
+      </article>
+      <article class="stat">
+        <div class="label">Closed P/L</div>
+        <div class="value" id="statPnl">$0.00</div>
+        <div class="hint" id="statWinLoss">0 wins · 0 losses</div>
       </article>
       <article class="stat">
         <div class="label">Notional</div>
@@ -64,48 +69,45 @@
         <div class="hint">filled exposure</div>
       </article>
       <article class="stat">
-        <div class="label">Avg edge</div>
-        <div class="value" id="statEdge">0pp</div>
-        <div class="hint">on executed trades</div>
-      </article>
-      <article class="stat">
-        <div class="label">Decisions</div>
-        <div class="value" id="statSignals">0</div>
-        <div class="hint" id="statSpot">BTC —</div>
+        <div class="label">Avg entry edge</div>
+        <div class="value" id="statEdge">0%</div>
+        <div class="hint" id="statSpot">15m + 1h bots</div>
       </article>
     </section>
 
     <section class="panel">
       <div class="panel-head">
-        <h2>Trade blotter</h2>
-        <div class="sub" id="tradeCount">0 fills</div>
+        <h2>All trades</h2>
+        <div class="sub" id="tradeCount">0 fills · live summary</div>
       </div>
       <div class="filters" id="tradeFilters">
         <button class="chip active" data-filter="all">All</button>
-        <button class="chip" data-filter="mispricing">Mispricing</button>
-        <button class="chip" data-filter="cross_venue_arb">Arb</button>
-        <button class="chip" data-filter="dry">Dry-run</button>
         <button class="chip" data-filter="live">Live</button>
+        <button class="chip" data-filter="dry">Paper</button>
+        <button class="chip" data-filter="15m">15m</button>
+        <button class="chip" data-filter="1h">1h</button>
+        <button class="chip" data-filter="forecast">Entries</button>
+        <button class="chip" data-filter="forecast_exit">Exits</button>
       </div>
       <div class="table-wrap">
         <table>
           <thead>
             <tr>
               <th>Time</th>
-              <th>Strategy</th>
+              <th>Bot</th>
+              <th>Summary</th>
               <th>Ticker</th>
               <th>Side</th>
               <th>Size</th>
               <th>Price</th>
-              <th>Notional</th>
+              <th>P/L</th>
               <th>Edge</th>
-              <th>Tier</th>
               <th>Mode</th>
             </tr>
           </thead>
           <tbody id="tradesBody"></tbody>
         </table>
-        <div class="empty" id="tradesEmpty" hidden>No trades yet. Run <code>python -m kalshi_bot --once</code> to seed the blotter.</div>
+        <div class="empty" id="tradesEmpty" hidden>No trades yet. Live fills appear here automatically.</div>
       </div>
     </section>
 
@@ -186,7 +188,7 @@
       </section>
     </section>
 
-    <footer>Auto-refreshes every 3s · official BRTI required · PAPER by default</footer>
+    <footer>Auto-refreshes every 3s · 15m + 1h journals · port 8787</footer>
   </main>
   <script src="/static/app.js"></script>
 </body>

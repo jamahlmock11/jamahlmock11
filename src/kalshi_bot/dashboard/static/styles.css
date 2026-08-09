@@ -348,6 +348,14 @@ tbody tr:hover {
 .badge.no { color: var(--no); }
 
 .edge-pos { color: var(--lime); font-weight: 600; }
+.edge-neg { color: var(--danger); font-weight: 600; }
+
+.summary-cell {
+  max-width: 28rem;
+  font-size: 0.88rem;
+  line-height: 1.35;
+  color: rgba(239, 230, 214, 0.92);
+}
 .empty {
   padding: 2rem 1.1rem;
   color: var(--muted);
