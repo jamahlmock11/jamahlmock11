@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import logging
+import re
 import subprocess
 import tempfile
 import time
@@ -19,6 +20,18 @@ from cryptography.hazmat.primitives.asymmetric import padding
 from tenacity import retry, stop_after_attempt, wait_exponential_jitter
 
 logger = logging.getLogger(__name__)
+
+_CLIENT_ORDER_ID_RE = re.compile(r"[^A-Za-z0-9-]+")
+
+
+def sanitize_client_order_id(client_order_id: str) -> str:
+    """Kalshi allows only [A-Za-z0-9-] in client_order_id (no dots in KXBTCD tickers)."""
+    cleaned = _CLIENT_ORDER_ID_RE.sub("-", client_order_id).strip("-")
+    if not cleaned:
+        import uuid as _uuid
+
+        return str(_uuid.uuid4())
+    return cleaned
 
 
 def _sign_pss_openssl(private_key_path: str, message: bytes) -> bytes:
@@ -304,7 +317,9 @@ class KalshiClient:
             "price": f"{price:.4f}",
             "time_in_force": time_in_force,
             "self_trade_prevention_type": "taker_at_cross",
-            "client_order_id": client_order_id or str(_uuid.uuid4()),
+            "client_order_id": sanitize_client_order_id(
+                client_order_id or str(_uuid.uuid4())
+            ),
             "exchange_index": -1,
         }
         return self.post("/portfolio/events/orders", json=body)

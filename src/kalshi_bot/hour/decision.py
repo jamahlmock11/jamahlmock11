@@ -430,6 +430,24 @@ class HourDecisionEngine:
         selected_execution = executions[selected_side]
         required = edge_assessment.required_edge
 
+        dominant_side = (
+            ContractSide.YES if forecast.p_up >= forecast.p_down else ContractSide.NO
+        )
+        dominant_prob = max(forecast.p_up, forecast.p_down)
+        if (
+            hour.require_forecast_alignment
+            and dominant_prob + 1e-12 >= hour.forecast_alignment_min_probability
+            and selected_side is not dominant_side
+        ):
+            failures.append(
+                _failure(
+                    "forecast_alignment",
+                    "best edge side conflicts with dominant forecast direction",
+                    selected_side.value,
+                    dominant_side.value,
+                )
+            )
+
         if edge_assessment.trade_tier is TradeTier.NONE:
             failures.append(
                 _failure(

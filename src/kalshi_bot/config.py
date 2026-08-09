@@ -68,6 +68,8 @@ class HourStrategyConfig(BaseModel):
     order_quantity: float = Field(default=1.0, gt=0.0)
     poll_interval_sec: float = Field(default=5.0, gt=0.0)
     model_version: str = "hour-v1.0.0"
+    require_forecast_alignment: bool = True
+    forecast_alignment_min_probability: float = Field(default=0.65, ge=0.0, le=1.0)
 
 
 class StrategyConfig(BaseModel):
