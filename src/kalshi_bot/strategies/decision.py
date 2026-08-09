@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -27,6 +28,65 @@ from kalshi_bot.market.orderbook import (
 
 ABSOLUTE_MINIMUM_EDGE = Decimal("0.20")
 EDGE_TOLERANCE = Decimal("0.000000000001")
+DEFAULT_MINIMUM_EDGE = float(ABSOLUTE_MINIMUM_EDGE)
+
+
+def edge_gap_details(decision: DecisionResult | None) -> dict[str, float | None]:
+    """Return observed, required, and shortfall edge in Kalshi cents (pp)."""
+    if decision is None:
+        return {"observed_cents": None, "required_cents": None, "gap_cents": None}
+
+    observed = decision.edge
+    required = decision.required_edge
+    for failure in decision.gate_failures:
+        if failure.gate != "minimum_edge":
+            continue
+        if failure.observed is not None:
+            observed = float(failure.observed)
+        if failure.required is not None:
+            required = float(failure.required)
+        break
+
+    if required is None:
+        required = DEFAULT_MINIMUM_EDGE
+    if observed is None:
+        return {
+            "observed_cents": None,
+            "required_cents": required * 100.0,
+            "gap_cents": None,
+        }
+
+    observed_cents = observed * 100.0
+    required_cents = required * 100.0
+    gap_cents = max(0.0, required_cents - observed_cents)
+    return {
+        "observed_cents": observed_cents,
+        "required_cents": required_cents,
+        "gap_cents": gap_cents,
+    }
+
+
+def format_edge_gap(decision: DecisionResult | None) -> str:
+    """Human-readable Kalshi edge gap, e.g. 'Need 11¢ more (9¢ have · 20¢ need)'."""
+    details = edge_gap_details(decision)
+    observed = details["observed_cents"]
+    required = details["required_cents"]
+    gap = details["gap_cents"]
+    if observed is None or required is None:
+        return "Edge unavailable (no executable quote)"
+
+    def cents(value: float) -> str:
+        if abs(value) < 1.0:
+            return f"{value:.1f}"
+        return f"{value:.0f}"
+
+    if gap is None or gap <= 0.05:
+        surplus = observed - required
+        if surplus > 0.05:
+            return f"Met (+{cents(surplus)}¢ above {cents(required)}¢ minimum)"
+        return f"Met ({cents(observed)}¢ have · {cents(required)}¢ need)"
+    shortfall = math.ceil(gap - 1e-9)
+    return f"Need {shortfall:.0f}¢ more ({cents(observed)}¢ have · {cents(required)}¢ need)"
 
 
 @dataclass(frozen=True)

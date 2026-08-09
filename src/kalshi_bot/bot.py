@@ -24,6 +24,7 @@ from kalshi_bot.intelligence.orchestrator import IntelligenceOrchestrator
 from kalshi_bot.journal import TradeJournal
 from kalshi_bot.learning.signal_weights import SignalWeightTracker
 from kalshi_bot.strategies.forecasting import ForecastCycle, ForecastingScanner
+from kalshi_bot.strategies.decision import format_edge_gap
 from kalshi_bot.venues.kalshi import KalshiClient
 
 logger = logging.getLogger(__name__)
@@ -339,6 +340,7 @@ class TradingBot:
             table.add_row("Decision", decision.action.value)
             if decision.edge is not None:
                 table.add_row("All-in edge", f"{decision.edge:.1%}")
+            table.add_row("Edge gap", format_edge_gap(decision))
             table.add_row("Why", cycle.reason)
         if cycle.intelligence and cycle.intelligence.explainability:
             console.print(cycle.intelligence.explainability.format_report())
