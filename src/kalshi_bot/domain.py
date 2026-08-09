@@ -47,6 +47,32 @@ class Regime(str, Enum):
     REVERSAL_UP = "REVERSAL_UP"
     REVERSAL_DOWN = "REVERSAL_DOWN"
     CHAOTIC_UNSTABLE = "CHAOTIC_UNSTABLE"
+    CHOPPY = "CHOPPY"
+    UNCERTAIN = "UNCERTAIN"
+
+
+class TrendClassification(str, Enum):
+    STRONG_UP = "STRONG_UP"
+    UP = "UP"
+    WEAK_UP = "WEAK_UP"
+    NEUTRAL = "NEUTRAL"
+    WEAK_DOWN = "WEAK_DOWN"
+    DOWN = "DOWN"
+    STRONG_DOWN = "STRONG_DOWN"
+
+
+class TradeTier(str, Enum):
+    A_PLUS = "A+"
+    A = "A"
+    B = "B"
+    NONE = "NONE"
+
+
+class EntryTiming(str, Enum):
+    EARLY = "EARLY"
+    DEVELOPING = "DEVELOPING"
+    CONFIRMED = "CONFIRMED"
+    LATE = "LATE"
 
 
 class DecisionAction(str, Enum):
@@ -316,5 +342,9 @@ class DecisionResult:
     executable_cost: float | None = None
     edge: float | None = None
     target_edge: float = 0.25
+    required_edge: float | None = None
+    trade_tier: TradeTier = TradeTier.NONE
+    entry_timing: EntryTiming | None = None
+    size_multiplier: float = 1.0
     quantity: float = 0.0
     execution: ExecutionEstimate | None = None
