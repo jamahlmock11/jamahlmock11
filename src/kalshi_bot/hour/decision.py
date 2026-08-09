@@ -81,13 +81,13 @@ class HourDecisionEngine:
         if market.status.lower() not in {"open", "active"}:
             failures.append(_failure("market_status", "market is not open", market.status, "open/active"))
         seconds = (market.expiration - now).total_seconds()
-        if seconds < hour.min_seconds_remaining or seconds > hour.contract_duration_seconds:
+        if seconds < hour.min_seconds_remaining or seconds > hour.max_entry_seconds_remaining:
             failures.append(
                 _failure(
                     "time_window",
                     "contract is outside the safe entry window",
                     seconds,
-                    (hour.min_seconds_remaining, hour.contract_duration_seconds),
+                    (hour.min_seconds_remaining, hour.max_entry_seconds_remaining),
                 )
             )
         source = benchmark.source.lower()

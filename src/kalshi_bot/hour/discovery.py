@@ -71,7 +71,7 @@ def discover_hour_market(
     discovery_cfg = DiscoveryConfig(
         series_ticker=hour_cfg.series_ticker,
         minimum_seconds_remaining=hour_cfg.min_seconds_remaining,
-        maximum_seconds_remaining=hour_cfg.contract_duration_seconds,
+        maximum_seconds_remaining=hour_cfg.max_entry_seconds_remaining,
         minimum_depth=config.minimum_depth,
         maximum_spread=config.maximum_spread,
     )

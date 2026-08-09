@@ -59,6 +59,13 @@ class ExecutionEngine:
     def dry_run(self) -> bool:
         return self.config.execution.dry_run or not self.kalshi.authenticated
 
+    def _required_entry_edge(self, decision: DecisionResult) -> float:
+        """Minimum edge for live entry; hour bot can use tiered required_edge."""
+        floor = self.risk.hard_min_edge
+        if decision.required_edge is not None:
+            return max(floor, float(decision.required_edge))
+        return floor
+
     def _persist_trade(self, **kwargs: Any) -> str | None:
         if not self.journal:
             return None
@@ -210,7 +217,7 @@ class ExecutionEngine:
             if (
                 decision.gate_failures
                 or decision.edge is None
-                or decision.edge + 1e-12 < 0.20
+                or decision.edge + 1e-12 < self._required_entry_edge(decision)
                 or decision.execution is None
                 or not decision.execution.fully_filled
             ):

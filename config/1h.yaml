@@ -7,7 +7,9 @@ hour:
   market_type: 1h
   contract_duration_seconds: 3600
   min_seconds_remaining: 30
-  late_window_seconds: 900
+  # Only enter new trades in the final 20 minutes of each hourly contract.
+  max_entry_seconds_remaining: 1200
+  late_window_seconds: 1200
   mid_window_seconds: 1800
   final_seconds: 60
   history_seconds: 3700
