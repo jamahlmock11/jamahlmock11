@@ -19,6 +19,7 @@ from kalshi_bot.domain import (
     ProbabilityEstimate,
     utc_datetime,
 )
+from kalshi_bot.execution.stop_loss import evaluate_position_exit
 from kalshi_bot.market.orderbook import (
     InsufficientDepthError,
     depth,
@@ -119,6 +120,8 @@ class DecisionConfig:
     proxy_minimum_constituents: int = 3
     proxy_maximum_dispersion: float = 0.003
     proxy_entry_cutoff_seconds: float = 120.0
+    stop_loss_fraction: float = 0.45
+    opposite_edge_shift: float = 0.15
 
     @property
     def effective_minimum_edge(self) -> Decimal:
@@ -367,34 +370,24 @@ class DecisionEngine:
             duplicate_entry=duplicate_entry,
         )
 
-        # A held thesis that reverses or loses trustworthy data exits to flat;
-        # lack of executable bids forces HOLD rather than pretending an exit.
+        # Stop-loss, thesis reversal, or data loss exits to flat before new entries.
         if position is not None and position.quantity > 0:
-            reliability_gates = {
-                "market_validity",
-                "market_status",
-                "time_window",
-                "primary_brti",
-                "live_data",
-                "proxy_constituents",
-                "proxy_dispersion",
-                "proxy_late_contract",
-                "benchmark_freshness",
-                "feature_freshness",
-                "data_completeness",
-                "confidence",
-                "agreement",
-                "risk_lock",
-            }
-            thesis_reversed = position.side is not predicted_side
-            unreliable = any(failure.gate in reliability_gates for failure in failures)
-            if thesis_reversed or unreliable:
-                reason = "forecast reversed the held thesis" if thesis_reversed else "held thesis lost reliable data"
+            exit_signal = evaluate_position_exit(
+                market=market,
+                position=position,
+                forecast=forecast,
+                failures=failures,
+                predicted_side=predicted_side,
+                quantity=trade_quantity,
+                stop_loss_fraction=cfg.stop_loss_fraction,
+                opposite_edge_shift=cfg.opposite_edge_shift,
+            )
+            if exit_signal is not None:
                 exit_quantity = min(position.quantity, trade_quantity)
                 if self._can_exit(market, position.side, exit_quantity):
                     return DecisionResult(
                         action=DecisionAction.EXIT,
-                        reason=f"{reason}; exit before any opposite entry",
+                        reason=exit_signal.reason,
                         gate_failures=tuple(failures),
                         current_direction=current_direction,
                         predicted_direction=predicted_direction,
@@ -406,7 +399,7 @@ class DecisionEngine:
                     )
                 return DecisionResult(
                     action=DecisionAction.HOLD,
-                    reason=f"{reason}, but exit liquidity is unavailable",
+                    reason=f"{exit_signal.reason}, but exit liquidity is unavailable",
                     gate_failures=tuple(failures),
                     current_direction=current_direction,
                     predicted_direction=predicted_direction,

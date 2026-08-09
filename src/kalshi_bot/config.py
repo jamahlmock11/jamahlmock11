@@ -91,6 +91,8 @@ class RiskConfig(BaseModel):
     max_trades_per_contract: int = Field(default=2, gt=0)
     max_flips_per_contract: int = Field(default=1, ge=0)
     cooldown_seconds: float = Field(default=30.0, ge=0.0)
+    stop_loss_fraction: float = Field(default=0.45, ge=0.0, le=1.0)
+    opposite_edge_shift: float = Field(default=0.15, ge=0.0, le=1.0)
 
 
 class DataConfig(BaseModel):

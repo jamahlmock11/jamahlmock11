@@ -22,6 +22,7 @@ from kalshi_bot.domain import (
 from kalshi_bot.hour.edge_engine import assess_edge, EdgeAssessment
 from kalshi_bot.hour.trend_engine import TrendSnapshot
 from kalshi_bot.hour.volatility_model import VolatilitySnapshot
+from kalshi_bot.execution.stop_loss import evaluate_position_exit
 from kalshi_bot.market.orderbook import (
     InsufficientDepthError,
     depth,
@@ -46,6 +47,8 @@ class HourDecisionConfig:
     proxy_minimum_constituents: int = 3
     proxy_maximum_dispersion: float = 0.003
     proxy_entry_cutoff_seconds: float = 300.0
+    stop_loss_fraction: float = 0.45
+    opposite_edge_shift: float = 0.15
 
 
 class HourDecisionEngine:
@@ -271,44 +274,23 @@ class HourDecisionEngine:
         )
 
         if position is not None and position.quantity > 0:
-            reliability_gates = {
-                "market_validity",
-                "market_status",
-                "time_window",
-                "primary_brti",
-                "live_data",
-                "proxy_constituents",
-                "proxy_dispersion",
-                "proxy_late_contract",
-                "benchmark_freshness",
-                "feature_freshness",
-                "data_completeness",
-                "confidence",
-                "agreement",
-                "risk_lock",
-            }
-            thesis_reversed = position.side is not predicted_side
-            unreliable = any(failure.gate in reliability_gates for failure in failures)
+            exit_signal = evaluate_position_exit(
+                market=market,
+                position=position,
+                forecast=forecast,
+                failures=failures,
+                predicted_side=predicted_side,
+                quantity=trade_quantity,
+                stop_loss_fraction=cfg.stop_loss_fraction,
+                opposite_edge_shift=cfg.opposite_edge_shift,
+            )
             held_prob = forecast.p_up if position.side is ContractSide.YES else forecast.p_down
-            opposite_edge_better = False
-            if position.side is ContractSide.YES and forecast.p_down > held_prob + 0.15:
-                opposite_edge_better = True
-            if position.side is ContractSide.NO and forecast.p_up > held_prob + 0.15:
-                opposite_edge_better = True
-
-            if thesis_reversed or unreliable or opposite_edge_better:
-                reason = (
-                    "forecast reversed the held thesis"
-                    if thesis_reversed
-                    else "opposite side developed stronger edge"
-                    if opposite_edge_better
-                    else "held thesis lost reliable data"
-                )
+            if exit_signal is not None:
                 exit_quantity = min(position.quantity, trade_quantity)
                 if self._can_exit(market, position.side, exit_quantity):
                     return DecisionResult(
                         action=DecisionAction.EXIT,
-                        reason=f"{reason}; exit before any opposite entry",
+                        reason=exit_signal.reason,
                         gate_failures=tuple(failures),
                         current_direction=current_direction,
                         predicted_direction=predicted_direction,
@@ -320,7 +302,7 @@ class HourDecisionEngine:
                     )
                 return DecisionResult(
                     action=DecisionAction.HOLD,
-                    reason=f"{reason}, but exit liquidity is unavailable",
+                    reason=f"{exit_signal.reason}, but exit liquidity is unavailable",
                     gate_failures=tuple(failures),
                     current_direction=current_direction,
                     predicted_direction=predicted_direction,

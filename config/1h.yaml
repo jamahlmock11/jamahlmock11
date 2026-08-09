@@ -65,6 +65,8 @@ risk:
   max_trades_per_contract: 3
   max_flips_per_contract: 2
   cooldown_seconds: 45
+  stop_loss_fraction: 0.45
+  opposite_edge_shift: 0.15
 
 data:
   benchmark_mode: constituent_proxy

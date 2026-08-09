@@ -126,6 +126,8 @@ class ForecastingScanner:
                 ),
                 proxy_minimum_constituents=config.data.min_supporting_venues,
                 proxy_maximum_dispersion=config.data.max_supporting_dispersion,
+                stop_loss_fraction=config.risk.stop_loss_fraction,
+                opposite_edge_shift=config.risk.opposite_edge_shift,
             )
         )
         self.position_lookup = position_lookup or (lambda _ticker: None)
