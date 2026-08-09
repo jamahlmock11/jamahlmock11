@@ -53,10 +53,14 @@ PID_15M=$!
 run_with_restart "1h-bot" logs/1h.log "${LIVE_FLAG[@]}" --1h --config "$CONFIG_1H" &
 PID_1H=$!
 
+nohup bash scripts/run_dashboard.sh >> logs/dashboard.log 2>&1 &
+PID_DASH=$!
+
 echo "15-minute bot pid=${PID_15M} config=${CONFIG_15M} log=logs/15m.log"
 echo "1-hour bot pid=${PID_1H} config=${CONFIG_1H} log=logs/1h.log"
-echo "Tail logs: tail -f logs/15m.log logs/1h.log"
-echo "Press Ctrl+C to stop both."
+echo "Edge Desk dashboard pid=${PID_DASH} url=http://127.0.0.1:8787"
+echo "Tail logs: tail -f logs/15m.log logs/1h.log logs/dashboard.log"
+echo "Press Ctrl+C to stop bots (dashboard keeps running in background)."
 
 trap 'kill "$PID_15M" "$PID_1H" 2>/dev/null; wait; exit 0' INT TERM
 
