@@ -11,9 +11,9 @@
   --yes: #6fbf8a;
   --no: #d48a5a;
   --shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
-  --font-display: "Syne", sans-serif;
-  --font-body: "Manrope", sans-serif;
-  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+  --font-display: "Syne", "Segoe UI", system-ui, sans-serif;
+  --font-body: "Manrope", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "Cascadia Code", monospace;
 }
 
 * { box-sizing: border-box; }
@@ -385,6 +385,21 @@ footer {
   0% { box-shadow: 0 0 0 0 rgba(159, 191, 58, 0.55); }
   70% { box-shadow: 0 0 0 10px rgba(159, 191, 58, 0); }
   100% { box-shadow: 0 0 0 0 rgba(159, 191, 58, 0); }
+}
+
+.offline-banner {
+  position: fixed;
+  left: 1rem;
+  right: 1rem;
+  bottom: 1rem;
+  z-index: 20;
+  padding: 0.9rem 1rem;
+  border-radius: 12px;
+  border: 1px solid rgba(212, 90, 58, 0.45);
+  background: rgba(28, 24, 20, 0.96);
+  color: var(--paper);
+  box-shadow: var(--shadow);
+  text-align: center;
 }
 
 @media (max-width: 900px) {

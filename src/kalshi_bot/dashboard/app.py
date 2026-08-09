@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from fastapi import FastAPI, Query, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -22,6 +23,12 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
         store = CombinedTradeJournal()
 
     app = FastAPI(title="Edge Desk", docs_url=None, redoc_url=None)
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_methods=["GET"],
+        allow_headers=["*"],
+    )
     app.mount("/static", StaticFiles(directory=str(BASE / "static")), name="static")
 
     def _enriched_trades(limit: int) -> list[dict]:
@@ -98,6 +105,10 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
                 "journals": store.stats().get("journals", []),
             }
         return {"ok": True, "db": str(store.path)}
+
+    @app.get("/api/status")
+    def status() -> dict:
+        return health()
 
     return app
 
