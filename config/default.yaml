@@ -32,8 +32,8 @@ execution:
 strategy:
   min_edge: 0.20       # cannot be configured below 0.20
   target_edge: 0.25
-  min_confidence: 0.65
-  min_signal_agreement: 0.65
+  min_confidence: 0.58
+  min_signal_agreement: 0.58
   min_data_completeness: 0.75
   max_spread: 0.12
   min_seconds_remaining: 30
@@ -50,11 +50,15 @@ risk:
   max_trades_per_contract: 1
   max_flips_per_contract: 0
   cooldown_seconds: 300
-  min_hold_seconds: 240
+  min_hold_seconds: 0
   stop_loss_fraction: 0.55
   opposite_edge_shift: 0.25
-  thesis_reversal_enabled: false
-  opposite_edge_exit_enabled: false
+  thesis_reversal_enabled: true
+  opposite_edge_exit_enabled: true
+  recovery_hold_enabled: true
+  recovery_hold_min_probability: 0.58
+  recovery_hold_min_confidence: 0.58
+  recovery_hold_min_agreement: 0.58
 
 data:
   # constituent_proxy is an explicitly unofficial PAPER-only estimate built

@@ -52,6 +52,10 @@ class HourDecisionConfig:
     thesis_reversal_margin: float = 0.10
     thesis_reversal_enabled: bool = False
     opposite_edge_exit_enabled: bool = False
+    recovery_hold_enabled: bool = False
+    recovery_hold_min_probability: float = 0.58
+    recovery_hold_min_confidence: float = 0.58
+    recovery_hold_min_agreement: float = 0.58
     min_hold_seconds: float = 0.0
 
 
@@ -290,6 +294,10 @@ class HourDecisionEngine:
                 thesis_reversal_margin=cfg.thesis_reversal_margin,
                 thesis_reversal_enabled=cfg.thesis_reversal_enabled,
                 opposite_edge_exit_enabled=cfg.opposite_edge_exit_enabled,
+                recovery_hold_enabled=cfg.recovery_hold_enabled,
+                recovery_hold_min_probability=cfg.recovery_hold_min_probability,
+                recovery_hold_min_confidence=cfg.recovery_hold_min_confidence,
+                recovery_hold_min_agreement=cfg.recovery_hold_min_agreement,
                 min_hold_seconds=cfg.min_hold_seconds,
                 now=observed_now,
             )

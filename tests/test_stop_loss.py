@@ -18,6 +18,7 @@ from kalshi_bot.domain import (
 from kalshi_bot.execution.stop_loss import (
     evaluate_position_exit,
     premium_loss_fraction,
+    recovery_hold_supported,
     thesis_reversal_triggered,
 )
 from kalshi_bot.market.orderbook import parse_orderbook_fp
@@ -324,6 +325,99 @@ def test_thesis_exit_blocked_during_min_hold():
         now=NOW,
     )
     assert signal is None
+
+
+def test_recovery_hold_blocks_thesis_exit_when_forecast_still_strong():
+    market = MarketSnapshot(
+        ticker="KXBTC15M-TEST",
+        status="active",
+        rules="BRTI",
+        strike=65000,
+        expiration=NOW + timedelta(minutes=5),
+        open_time=NOW - timedelta(minutes=10),
+        reference="BRTI",
+        orderbook=book(yes_bid=0.46),
+        current_position=MarketPosition(
+            side=ContractSide.YES,
+            quantity=1,
+            average_price=0.50,
+        ),
+    )
+    forecast = ProbabilityEstimate(
+        p_up=0.60,
+        p_down=0.40,
+        confidence=0.70,
+        signal_agreement=0.75,
+        component_probabilities={"terminal": 0.60},
+        regime=Regime.TREND_UP,
+        raw_p_up=0.60,
+    )
+    assert recovery_hold_supported(
+        market.current_position,
+        forecast,
+        min_probability=0.58,
+        min_confidence=0.58,
+        min_agreement=0.58,
+    )
+    signal = evaluate_position_exit(
+        market=market,
+        position=market.current_position,
+        forecast=forecast,
+        failures=(),
+        predicted_side=ContractSide.YES,
+        quantity=1,
+        stop_loss_fraction=0.55,
+        thesis_reversal_enabled=True,
+        opposite_edge_exit_enabled=True,
+        recovery_hold_enabled=True,
+        recovery_hold_min_probability=0.58,
+        recovery_hold_min_confidence=0.58,
+        recovery_hold_min_agreement=0.58,
+    )
+    assert signal is None
+
+
+def test_recovery_hold_allows_exit_when_forecast_weak():
+    market = MarketSnapshot(
+        ticker="KXBTC15M-TEST",
+        status="active",
+        rules="BRTI",
+        strike=65000,
+        expiration=NOW + timedelta(minutes=5),
+        open_time=NOW - timedelta(minutes=10),
+        reference="BRTI",
+        orderbook=book(yes_bid=0.46),
+        current_position=MarketPosition(
+            side=ContractSide.YES,
+            quantity=1,
+            average_price=0.50,
+        ),
+    )
+    forecast = ProbabilityEstimate(
+        p_up=0.40,
+        p_down=0.60,
+        confidence=0.70,
+        signal_agreement=0.75,
+        component_probabilities={"terminal": 0.40},
+        regime=Regime.TREND_UP,
+        raw_p_up=0.40,
+    )
+    signal = evaluate_position_exit(
+        market=market,
+        position=market.current_position,
+        forecast=forecast,
+        failures=(),
+        predicted_side=ContractSide.NO,
+        quantity=1,
+        stop_loss_fraction=0.55,
+        thesis_reversal_enabled=True,
+        recovery_hold_enabled=True,
+        recovery_hold_min_probability=0.58,
+        recovery_hold_min_confidence=0.58,
+        recovery_hold_min_agreement=0.58,
+    )
+    assert signal is not None
+    assert signal.trigger == "thesis_reversal"
 
 
 def test_opposite_edge_exit_disabled_by_default():
