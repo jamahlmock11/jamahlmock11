@@ -277,12 +277,22 @@
   async function refresh() {
     try {
       const [stats, trades, decisions, signals, scans] = await Promise.all([
-        fetch("/api/stats").then((r) => r.json()),
-        fetch("/api/trades?limit=300").then((r) => r.json()),
-        fetch("/api/decisions?limit=100").then((r) => r.json()),
-        fetch("/api/signals?limit=100").then((r) => r.json()),
-        fetch("/api/scans?limit=40").then((r) => r.json()),
+        fetch("/api/stats").then((r) => {
+          if (!r.ok) throw new Error(`stats HTTP ${r.status}`);
+          return r.json();
+        }),
+        fetch("/api/trades?limit=300").then((r) => {
+          if (!r.ok) throw new Error(`trades HTTP ${r.status}`);
+          return r.json();
+        }),
+        fetch("/api/decisions?limit=100").then((r) => {
+          if (!r.ok) throw new Error(`decisions HTTP ${r.status}`);
+          return r.json();
+        }),
+        fetch("/api/signals?limit=100").then((r) => r.ok ? r.json() : { signals: [] }),
+        fetch("/api/scans?limit=40").then((r) => r.ok ? r.json() : { scans: [] }),
       ]);
+      $("offlineBanner").hidden = true;
       state.trades = trades.trades || [];
       renderStats(stats);
       renderTrades();
@@ -293,6 +303,9 @@
     } catch (err) {
       $("pulse").classList.add("off");
       $("mode").textContent = "OFFLINE";
+      $("offlineBanner").hidden = false;
+      $("decisionReason").textContent =
+        "Cannot reach the dashboard API. Open port 8787 from the Cursor Ports tab.";
       console.error(err);
     }
   }

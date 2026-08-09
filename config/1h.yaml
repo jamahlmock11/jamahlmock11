@@ -70,7 +70,7 @@ risk:
   thesis_reversal_margin: 0.10
 
 data:
-  benchmark_mode: constituent_proxy
+  benchmark_mode: kalshi_passthrough
   cf_benchmark_url: ""
   max_brti_age_seconds: 20
   min_supporting_venues: 2
