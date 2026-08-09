@@ -1,0 +1,86 @@
+horizon: 1h
+series:
+  - KXBTCD
+
+hour:
+  series_ticker: KXBTCD
+  market_type: 1h
+  contract_duration_seconds: 3600
+  min_seconds_remaining: 30
+  # Only enter new trades in the final 30 minutes of each hourly contract.
+  max_entry_seconds_remaining: 1800
+  late_window_seconds: 1800
+  mid_window_seconds: 1800
+  final_seconds: 60
+  history_seconds: 3700
+  min_confidence: 0.55
+  min_signal_agreement: 0.55
+  tier_b_min_confidence: 0.65
+  tier_b_min_agreement: 0.65
+  min_data_completeness: 0.65
+  max_spread: 0.14
+  order_quantity: 1
+  poll_interval_sec: 5
+  model_version: hour-v1.0.0
+
+hour_edge:
+  minimum_edge: 0.10
+  preferred_edge: 0.15
+  strong_edge: 0.20
+  tier_b_size_mult: 0.5
+  tier_a_size_mult: 0.75
+  tier_a_plus_size_mult: 1.0
+  disable_tier_b: false
+
+execution:
+  dry_run: true
+  orders_enabled: true
+  max_position_usd: 50
+  max_contracts_per_trade: 25
+  poll_interval_sec: 5.0
+  fee_rate: 0.0
+  fee_per_contract: 0.0
+  slippage_bps: 5.0
+  slippage_per_contract: 0.0
+
+strategy:
+  min_edge: 0.20
+  # Shared StrategyConfig floor (ge=0.20). Hourly entries use hour_edge.* instead.
+  target_edge: 0.20
+  min_confidence: 0.55
+  min_signal_agreement: 0.55
+  min_data_completeness: 0.65
+  max_spread: 0.14
+  min_seconds_remaining: 30
+  late_seconds: 900
+  final_seconds: 60
+  final_min_edge: 0.20
+  order_quantity: 1
+
+risk:
+  max_daily_loss: 100
+  max_contract_exposure: 25
+  max_position_size: 50
+  max_consecutive_losses: 4
+  max_trades_per_contract: 5
+  max_flips_per_contract: 3
+  cooldown_seconds: 30
+  stop_loss_fraction: 0.45
+  opposite_edge_shift: 0.15
+
+data:
+  benchmark_mode: constituent_proxy
+  cf_benchmark_url: ""
+  max_brti_age_seconds: 20
+  min_supporting_venues: 2
+  max_supporting_dispersion: 0.003
+
+pricing:
+  risk_free_rate: 0.05
+  min_iv: 0.30
+  max_iv: 1.50
+  default_iv: 0.60
+  smile_cache_sec: 60
+
+settlement:
+  reference: BRTI
