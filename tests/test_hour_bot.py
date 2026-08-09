@@ -313,3 +313,14 @@ def test_assess_edge_below_minimum():
     )
     assert assessment.up_edge == pytest.approx(0.07, abs=0.01)
     assert assessment.trade_tier is TradeTier.NONE
+
+
+def test_1h_yaml_loads_without_validation_error():
+    from kalshi_bot.config import load_yaml_config
+
+    cfg = load_yaml_config("config/1h.yaml")
+    assert cfg.horizon == "1h"
+    assert cfg.hour.series_ticker == "KXBTCD"
+    assert cfg.strategy.target_edge >= 0.20
+    assert cfg.strategy.final_min_edge >= 0.20
+    assert cfg.hour_edge.preferred_edge == pytest.approx(0.15)
