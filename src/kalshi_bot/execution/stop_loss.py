@@ -92,6 +92,7 @@ def evaluate_position_exit(
     opposite_edge_shift: float = 0.15,
     thesis_reversal_margin: float = 0.10,
     thesis_reversal_enabled: bool = False,
+    opposite_edge_exit_enabled: bool = False,
     min_hold_seconds: float = 0.0,
     now: datetime | None = None,
     reliability_gates: set[str] | frozenset[str] | None = None,
@@ -152,10 +153,11 @@ def evaluate_position_exit(
         )
     )
     opposite_edge_better = False
-    if position.side is ContractSide.YES and forecast.p_down > held_prob + opposite_edge_shift:
-        opposite_edge_better = True
-    if position.side is ContractSide.NO and forecast.p_up > held_prob + opposite_edge_shift:
-        opposite_edge_better = True
+    if opposite_edge_exit_enabled:
+        if position.side is ContractSide.YES and forecast.p_down > held_prob + opposite_edge_shift:
+            opposite_edge_better = True
+        if position.side is ContractSide.NO and forecast.p_up > held_prob + opposite_edge_shift:
+            opposite_edge_better = True
     unreliable = any(failure.gate in gates for failure in failures)
 
     if thesis_reversed or opposite_edge_better or unreliable:

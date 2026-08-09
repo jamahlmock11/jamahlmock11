@@ -124,6 +124,7 @@ class HourForecastingScanner:
                 opposite_edge_shift=config.risk.opposite_edge_shift,
                 thesis_reversal_margin=config.risk.thesis_reversal_margin,
                 thesis_reversal_enabled=config.risk.thesis_reversal_enabled,
+                opposite_edge_exit_enabled=config.risk.opposite_edge_exit_enabled,
                 min_hold_seconds=config.risk.min_hold_seconds,
             )
         )

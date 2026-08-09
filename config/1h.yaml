@@ -69,6 +69,7 @@ risk:
   stop_loss_fraction: 0.55
   opposite_edge_shift: 0.25
   thesis_reversal_enabled: false
+  opposite_edge_exit_enabled: false
 
 data:
   benchmark_mode: kalshi_passthrough

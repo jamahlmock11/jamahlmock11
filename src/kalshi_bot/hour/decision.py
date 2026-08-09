@@ -51,6 +51,7 @@ class HourDecisionConfig:
     opposite_edge_shift: float = 0.15
     thesis_reversal_margin: float = 0.10
     thesis_reversal_enabled: bool = False
+    opposite_edge_exit_enabled: bool = False
     min_hold_seconds: float = 0.0
 
 
@@ -288,6 +289,7 @@ class HourDecisionEngine:
                 opposite_edge_shift=cfg.opposite_edge_shift,
                 thesis_reversal_margin=cfg.thesis_reversal_margin,
                 thesis_reversal_enabled=cfg.thesis_reversal_enabled,
+                opposite_edge_exit_enabled=cfg.opposite_edge_exit_enabled,
                 min_hold_seconds=cfg.min_hold_seconds,
                 now=observed_now,
             )

@@ -326,6 +326,58 @@ def test_thesis_exit_blocked_during_min_hold():
     assert signal is None
 
 
+def test_opposite_edge_exit_disabled_by_default():
+    market = MarketSnapshot(
+        ticker="KXBTC15M-TEST",
+        status="active",
+        rules="BRTI",
+        strike=65000,
+        expiration=NOW + timedelta(minutes=5),
+        open_time=NOW - timedelta(minutes=10),
+        reference="BRTI",
+        orderbook=book(yes_bid=0.46),
+        current_position=MarketPosition(
+            side=ContractSide.YES,
+            quantity=1,
+            average_price=0.50,
+        ),
+    )
+    forecast = ProbabilityEstimate(
+        p_up=0.30,
+        p_down=0.70,
+        confidence=0.7,
+        signal_agreement=0.8,
+        component_probabilities={"terminal": 0.30},
+        regime=Regime.TREND_UP,
+        raw_p_up=0.30,
+    )
+    enabled = evaluate_position_exit(
+        market=market,
+        position=market.current_position,
+        forecast=forecast,
+        failures=(),
+        predicted_side=ContractSide.NO,
+        quantity=1,
+        stop_loss_fraction=0.55,
+        opposite_edge_shift=0.25,
+        opposite_edge_exit_enabled=True,
+    )
+    assert enabled is not None
+    assert enabled.trigger == "opposite_edge"
+
+    disabled = evaluate_position_exit(
+        market=market,
+        position=market.current_position,
+        forecast=forecast,
+        failures=(),
+        predicted_side=ContractSide.NO,
+        quantity=1,
+        stop_loss_fraction=0.55,
+        opposite_edge_shift=0.25,
+    )
+    assert disabled is None
+
+
 def test_stop_loss_still_triggers_during_min_hold():
     market = MarketSnapshot(
         ticker="KXBTC15M-TEST",
