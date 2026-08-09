@@ -1,0 +1,26 @@
+{
+  "name": "jamahlmock11-kalshi-live",
+  "user": "ubuntu",
+  "install": "bash .cursor/install.sh",
+  "start": "bash scripts/bootstrap_env.sh",
+  "terminals": [
+    {
+      "name": "kalshi-15m-bot",
+      "command": "export PATH=\"${HOME}/.local/bin:${PATH}\" && bash scripts/run_15m.sh"
+    },
+    {
+      "name": "kalshi-1h-bot",
+      "command": "export PATH=\"${HOME}/.local/bin:${PATH}\" && bash scripts/run_1h.sh"
+    },
+    {
+      "name": "edge-desk",
+      "command": "export PATH=\"${HOME}/.local/bin:${PATH}\" && python3 -m kalshi_bot --dashboard --host 0.0.0.0 --port 8787"
+    }
+  ],
+  "ports": [
+    {
+      "name": "edge-desk",
+      "port": 8787
+    }
+  ]
+}

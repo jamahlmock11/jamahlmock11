@@ -7,6 +7,13 @@ export PATH="${HOME}/.local/bin:${PATH}"
 
 bash scripts/bootstrap_env.sh
 
+if [[ -f .env ]]; then
+  set -a
+  # shellcheck source=/dev/null
+  source .env
+  set +a
+fi
+
 if [[ -f .venv/bin/activate ]]; then
   # shellcheck source=/dev/null
   source .venv/bin/activate
@@ -15,14 +22,10 @@ fi
 LIVE_FLAG=()
 if [[ "${1:-}" == "--live" ]]; then
   LIVE_FLAG=(--live)
-  if [[ -z "${KALSHI_API_KEY_ID:-}" ]]; then
-    echo "ERROR: KALSHI_API_KEY_ID is not set. Add Kalshi API credentials to environment secrets."
-    exit 1
-  fi
-  if [[ ! -f secrets/kalshi_private.key ]]; then
-    echo "ERROR: secrets/kalshi_private.key missing. Set KALSHI_PRIVATE_KEY in environment secrets."
-    exit 1
-  fi
+fi
+# Auto-live when credentials are present (e.g. from environment secrets).
+if [[ -z "${LIVE_FLAG[*]:-}" && -n "${KALSHI_API_KEY_ID:-}" && -f secrets/kalshi_private.key ]]; then
+  LIVE_FLAG=(--live)
 fi
 
 CONFIG_15M="${CONFIG_15M:-config/default.yaml}"
