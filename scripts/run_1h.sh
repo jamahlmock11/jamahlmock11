@@ -26,6 +26,16 @@ if [[ -n "${KALSHI_API_KEY_ID:-}" && -f secrets/kalshi_private.key ]]; then
 fi
 
 while true; do
+  if [[ -f .env ]]; then
+    set -a
+    # shellcheck source=/dev/null
+    source .env
+    set +a
+  fi
+  LIVE_FLAG=()
+  if [[ -n "${KALSHI_API_KEY_ID:-}" && -f secrets/kalshi_private.key ]]; then
+    LIVE_FLAG=(--live)
+  fi
   echo "[$(date -Is)] starting 1h-bot mode=${LIVE_FLAG[*]:-PAPER}"
   python3 -m kalshi_bot "${LIVE_FLAG[@]}" --1h --config "$CONFIG" || true
   echo "[$(date -Is)] 1h-bot exited; restarting in 5s"

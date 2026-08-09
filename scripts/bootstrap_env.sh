@@ -13,9 +13,7 @@ fi
 
 existing_api_key=""
 if [[ -f .env ]]; then
-  # shellcheck source=/dev/null
-  source .env
-  existing_api_key="${KALSHI_API_KEY_ID:-}"
+  existing_api_key="$(grep -E '^KALSHI_API_KEY_ID=' .env | head -n1 | cut -d= -f2- || true)"
 fi
 
 api_key_id="${KALSHI_API_KEY_ID:-$existing_api_key}"

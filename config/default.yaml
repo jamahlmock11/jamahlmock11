@@ -56,7 +56,7 @@ risk:
 data:
   # constituent_proxy is an explicitly unofficial PAPER-only estimate built
   # from public CME CF constituent venues. Use official for LIVE eligibility.
-  benchmark_mode: constituent_proxy
+  benchmark_mode: kalshi_passthrough
   # Required when benchmark_mode=official. The proxy is never labelled BRTI
   # and can authorize PAPER decisions only.
   cf_benchmark_url: ""
