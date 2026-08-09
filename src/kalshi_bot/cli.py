@@ -22,6 +22,12 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     p.add_argument("--config", default="config/default.yaml", help="YAML config path")
+    p.add_argument(
+        "--1h",
+        action="store_true",
+        dest="one_hour",
+        help="Run the 1-hour KXBTCD bot (uses config/1h.yaml by default)",
+    )
     p.add_argument("--once", action="store_true", help="Single scan cycle then exit")
     p.add_argument("--live", action="store_true", help="Disable dry-run (requires Kalshi keys)")
     p.add_argument("--scan-only", action="store_true", help="Scan and print; never place orders")
@@ -45,8 +51,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     ensure_dirs()
     settings = load_settings()
-    config = merge_runtime(load_yaml_config(args.config), settings)
-    journal = TradeJournal(args.db)
+    config_path = args.config
+    if args.one_hour and config_path == "config/default.yaml":
+        config_path = "config/1h.yaml"
+    config = merge_runtime(load_yaml_config(config_path), settings)
+    journal_path = "data/journal_1h.db" if args.one_hour else args.db
+    journal = TradeJournal(journal_path)
 
     if args.dashboard:
         import uvicorn
@@ -65,7 +75,12 @@ def main(argv: list[str] | None = None) -> int:
         config.execution.orders_enabled = False
 
     console = Console()
-    bot = TradingBot(config, settings, journal=journal)
+    if args.one_hour:
+        from kalshi_bot.hour_bot import HourTradingBot
+
+        bot = HourTradingBot(config, settings, journal=journal)
+    else:
+        bot = TradingBot(config, settings, journal=journal)
 
     try:
         if args.once or args.scan_only:
@@ -73,7 +88,7 @@ def main(argv: list[str] | None = None) -> int:
             console.print(
                 f"Done. decisions={bot.stats.decisions} "
                 f"trades={bot.stats.trades} no_trades={bot.stats.no_trades} "
-                f"journal={args.db}"
+                f"journal={journal_path}"
             )
             return 0
         bot.run_forever()

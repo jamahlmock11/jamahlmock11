@@ -31,8 +31,8 @@ execution:
 strategy:
   min_edge: 0.20       # cannot be configured below 0.20
   target_edge: 0.25
-  min_confidence: 0.60
-  min_signal_agreement: 0.60
+  min_confidence: 0.55
+  min_signal_agreement: 0.55
   min_data_completeness: 0.75
   max_spread: 0.12
   min_seconds_remaining: 30
@@ -46,9 +46,11 @@ risk:
   max_contract_exposure: 25
   max_position_size: 50
   max_consecutive_losses: 4
-  max_trades_per_contract: 2
-  max_flips_per_contract: 1
-  cooldown_seconds: 30
+  max_trades_per_contract: 5
+  max_flips_per_contract: 2
+  cooldown_seconds: 15
+  stop_loss_fraction: 0.45
+  opposite_edge_shift: 0.15
 
 data:
   # constituent_proxy is an explicitly unofficial PAPER-only estimate built
@@ -61,7 +63,7 @@ data:
   cf_benchmark_api_key_header: Authorization
   cf_benchmark_api_key_prefix: Bearer
   max_brti_age_seconds: 15
-  min_supporting_venues: 3
+  min_supporting_venues: 2
   max_supporting_dispersion: 0.003
 
 pricing:

@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
 
 import pytest
 
-from kalshi_bot.config import AppConfig, ExecutionConfig, RiskConfig
+from kalshi_bot.config import AppConfig, ExecutionConfig, HourEdgeConfig, RiskConfig
 from kalshi_bot.domain import (
     BenchmarkQuote,
     ContractSide,
@@ -14,6 +15,7 @@ from kalshi_bot.domain import (
     Direction,
     ExecutionEstimate,
     MarketSnapshot,
+    TradeTier,
 )
 from kalshi_bot.execution.engine import ExecutionEngine
 from kalshi_bot.execution.position_manager import (
@@ -230,3 +232,41 @@ def test_live_execution_rejects_unofficial_proxy_even_with_valid_decision():
     assert not report.ok
     assert "official primary BRTI" in report.detail
     kalshi.create_order.assert_not_called()
+
+
+def test_live_hour_execution_allows_tier_edge_below_global_20_percent():
+    cfg = AppConfig(
+        horizon="1h",
+        execution=ExecutionConfig(dry_run=False, max_position_usd=100),
+        risk=RiskConfig(
+            max_position_size=100,
+            max_contract_exposure=100,
+            cooldown_seconds=0,
+        ),
+        hour_edge=HourEdgeConfig(minimum_edge=0.10, preferred_edge=0.15),
+    )
+    kalshi = MagicMock()
+    kalshi.authenticated = True
+    kalshi.create_order.return_value = {"order_id": "hour-1"}
+    risk = RiskManager(cfg, hard_min_edge=0.10)
+    engine = ExecutionEngine(kalshi, risk, cfg)
+    decision = replace(
+        buy_decision(edge=0.16),
+        required_edge=0.15,
+        trade_tier=TradeTier.A,
+    )
+    report = engine.execute_decision(
+        market(),
+        decision,
+        timestamp=NOW,
+        benchmark=BenchmarkQuote(
+            price=65000,
+            timestamp=NOW,
+            source="CME CF Bitcoin Real Time Index (BRTI)",
+            primary=True,
+            is_live=True,
+        ),
+    )
+    assert report is not None
+    assert report.ok
+    kalshi.create_order.assert_called_once()

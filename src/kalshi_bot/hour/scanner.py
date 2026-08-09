@@ -1,7 +1,4 @@
-"""End-to-end active-market forecasting pipeline.
-
-This module coordinates data and pure model components. It never places orders.
-"""
+"""End-to-end 1-hour forecasting pipeline."""
 
 from __future__ import annotations
 
@@ -32,38 +29,48 @@ from kalshi_bot.domain import (
     Regime,
     SupportingAggregate,
 )
-from kalshi_bot.features.engine import FeatureEngine, FeatureEngineConfig
+from kalshi_bot.features.engine import FeatureEngineConfig
+from kalshi_bot.hour.decision import HourDecisionConfig, HourDecisionEngine
+from kalshi_bot.hour.discovery import HourDiscoveryConfig, discover_hour_market
+from kalshi_bot.hour.feature_engine import HourFeatureBundle, HourFeatureEngine
+from kalshi_bot.hour.probability_model import HourProbabilityModel, model_stability
+from kalshi_bot.hour.regime_detector import classify_hour_regime
+from kalshi_bot.hour.trajectory_model import TrajectoryForecast, forecast_trajectory
+from kalshi_bot.hour.trend_engine import TrendSnapshot
 from kalshi_bot.intelligence.orchestrator import IntelligenceOrchestrator, IntelligenceReport
-from kalshi_bot.market.discovery import DiscoveryConfig, MarketDiscovery
-from kalshi_bot.models.ensemble import EnsembleProbabilityModel
-from kalshi_bot.models.regime import classify_regime
-from kalshi_bot.strategies.decision import DecisionConfig, DecisionEngine
 from kalshi_bot.venues.kalshi import KalshiClient
 
 
 @dataclass(frozen=True)
-class ForecastCycle:
+class HourForecastCycle:
     timestamp: datetime
     data_health: str
     reason: str
     market: MarketSnapshot | None = None
     benchmark: BenchmarkQuote | None = None
     supporting: SupportingAggregate | None = None
-    features: FeatureSnapshot | None = None
+    bundle: HourFeatureBundle | None = None
+    trend: TrendSnapshot | None = None
+    trajectory: TrajectoryForecast | None = None
     regime: Regime | None = None
     forecast: ProbabilityEstimate | None = None
     decision: DecisionResult | None = None
     options_volatility: float | None = None
     market_rejections: dict[str, tuple[str, ...]] | None = None
     intelligence: IntelligenceReport | None = None
+    model_stability: float | None = None
+
+    @property
+    def features(self) -> FeatureSnapshot | None:
+        return self.bundle.features if self.bundle else None
 
 
 PositionLookup = Callable[[str], MarketPosition | None]
 OrdersLookup = Callable[[str], tuple[OpenOrder, ...]]
 
 
-class ForecastingScanner:
-    """Build one causal decision for the currently active KXBTC15M market."""
+class HourForecastingScanner:
+    """Build one causal decision for the active 1-hour KXBTCD contract."""
 
     def __init__(
         self,
@@ -73,9 +80,9 @@ class ForecastingScanner:
         supporting: SupportingFeeds,
         options: IBITOptionsProvider,
         config: AppConfig,
-        features: FeatureEngine | None = None,
-        model: EnsembleProbabilityModel | None = None,
-        decision_engine: DecisionEngine | None = None,
+        features: HourFeatureEngine | None = None,
+        model: HourProbabilityModel | None = None,
+        decision_engine: HourDecisionEngine | None = None,
         intelligence: IntelligenceOrchestrator | None = None,
         position_lookup: PositionLookup | None = None,
         orders_lookup: OrdersLookup | None = None,
@@ -85,41 +92,28 @@ class ForecastingScanner:
         self.supporting = supporting
         self.options = options
         self.config = config
-        self.features = features or FeatureEngine(
+        hour_cfg = config.hour
+        self.features = features or HourFeatureEngine(
             FeatureEngineConfig(
-                allow_proxy=config.data.benchmark_mode == "constituent_proxy"
+                history_seconds=hour_cfg.history_seconds,
+                allow_proxy=config.data.benchmark_mode == "constituent_proxy",
             )
         )
-        self.model = model or EnsembleProbabilityModel()
-        self.discovery = MarketDiscovery(
-            DiscoveryConfig(
-                series_ticker="KXBTC15M",
-                minimum_seconds_remaining=config.strategy.min_seconds_remaining,
-                maximum_seconds_remaining=15 * 60,
-                minimum_depth=config.strategy.order_quantity,
-                maximum_spread=config.strategy.max_spread,
-            )
+        self.model = model or HourProbabilityModel(model_version=hour_cfg.model_version)
+        self.discovery_config = HourDiscoveryConfig(
+            hour=hour_cfg,
+            minimum_depth=hour_cfg.order_quantity,
+            maximum_spread=hour_cfg.max_spread,
         )
-        self.decision_engine = decision_engine or DecisionEngine(
-            DecisionConfig(
-                minimum_edge=config.strategy.min_edge,
-                target_edge=config.strategy.target_edge,
-                quantity=config.strategy.order_quantity,
+        self.decision_engine = decision_engine or HourDecisionEngine(
+            HourDecisionConfig(
+                hour=hour_cfg,
+                edge=config.hour_edge,
                 maximum_benchmark_age=config.data.max_brti_age_seconds,
-                minimum_seconds_remaining=config.strategy.min_seconds_remaining,
-                minimum_confidence=config.strategy.min_confidence,
-                minimum_agreement=config.strategy.min_signal_agreement,
-                minimum_data_completeness=config.strategy.min_data_completeness,
-                minimum_depth=config.strategy.order_quantity,
-                maximum_spread=config.strategy.max_spread,
                 fee_rate=config.execution.fee_rate,
                 fee_per_contract=config.execution.fee_per_contract,
                 slippage_bps=config.execution.slippage_bps,
                 slippage_per_contract=config.execution.slippage_per_contract,
-                late_seconds=config.strategy.late_seconds,
-                late_minimum_edge=config.strategy.target_edge,
-                final_seconds=config.strategy.final_seconds,
-                final_minimum_edge=config.strategy.final_min_edge,
                 allow_proxy_data=(
                     config.execution.dry_run
                     and config.data.benchmark_mode == "constituent_proxy"
@@ -133,7 +127,7 @@ class ForecastingScanner:
         self.position_lookup = position_lookup or (lambda _ticker: None)
         self.orders_lookup = orders_lookup or (lambda _ticker: ())
         self.intelligence = intelligence or IntelligenceOrchestrator(
-            confidence_threshold=config.strategy.min_confidence,
+            confidence_threshold=hour_cfg.min_confidence,
         )
 
     @staticmethod
@@ -155,7 +149,6 @@ class ForecastingScanner:
         )
 
     def _option_volatility(self, seconds_remaining: float) -> float | None:
-        """Return an optional volatility prior; failures reduce evidence, never safety."""
         try:
             smile = self.options.nearest_smile(
                 max(seconds_remaining, 1.0) / (365.25 * 24 * 3600)
@@ -170,13 +163,14 @@ class ForecastingScanner:
         now: datetime | None = None,
         risk_locked: bool = False,
         duplicate_entry: bool = False,
-    ) -> ForecastCycle:
+    ) -> HourForecastCycle:
         observed_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+        series = self.config.hour.series_ticker
         try:
-            markets = self.kalshi.get_markets("KXBTC15M", status="open", limit=20)
+            markets = self.kalshi.get_markets(series, status="open", limit=40)
         except Exception as exc:
             reason = f"Kalshi market retrieval failed: {exc}"
-            return ForecastCycle(
+            return HourForecastCycle(
                 observed_at,
                 "FAILED",
                 reason,
@@ -192,14 +186,18 @@ class ForecastingScanner:
             try:
                 orderbooks[market.ticker] = self.kalshi.get_orderbook(market.ticker, depth=50)
             except Exception:
-                # Discovery records the missing/malformed book and fails closed.
                 continue
 
-        discovered = self.discovery.select(markets, orderbooks=orderbooks, now=observed_at)
+        discovered = discover_hour_market(
+            markets,
+            orderbooks=orderbooks,
+            now=observed_at,
+            config=self.discovery_config,
+        )
         market = discovered.market
         if market is None:
-            reason = "no valid active KXBTC15M BRTI contract"
-            return ForecastCycle(
+            reason = f"no valid active {series} 1-hour BRTI contract"
+            return HourForecastCycle(
                 observed_at,
                 "FAILED",
                 reason,
@@ -216,7 +214,7 @@ class ForecastingScanner:
             benchmark = self.benchmark.get_quote(now=observed_at)
         except (BenchmarkDataError, SupportingFeedError) as exc:
             reason = f"primary BRTI unavailable: {exc}"
-            return ForecastCycle(
+            return HourForecastCycle(
                 observed_at,
                 "FAILED",
                 reason,
@@ -242,10 +240,12 @@ class ForecastingScanner:
                 supporting_reason = str(exc)
 
         try:
-            features = self.features.compute(market, now=observed_at, supporting=supporting)
+            bundle = self.features.compute_bundle(
+                market, now=observed_at, supporting=supporting
+            )
         except ValueError as exc:
             reason = f"feature calculation failed: {exc}"
-            return ForecastCycle(
+            return HourForecastCycle(
                 observed_at,
                 "FAILED",
                 reason,
@@ -255,7 +255,19 @@ class ForecastingScanner:
                 decision=self._no_trade(reason, "features", str(exc)),
             )
 
-        regime = classify_regime(features)
+        features = bundle.features
+        trend = bundle.trend
+        vol = bundle.volatility
+        regime = classify_hour_regime(features, trend, vol)
+        trajectory = forecast_trajectory(
+            current_price=features.current_price,
+            strike=features.strike,
+            seconds_remaining=features.seconds_remaining,
+            trend=trend,
+            realized_vol=features.realized_vol,
+            trajectory=features.trajectory,
+            z_distance=features.z_distance_to_strike,
+        )
         options_vol = self._option_volatility(features.seconds_remaining)
         market_prior = (
             (market.yes_bid + market.yes_ask) / 2
@@ -265,24 +277,24 @@ class ForecastingScanner:
         forecast = self.model.estimate(
             features,
             regime,
+            trend,
+            vol,
             options_volatility=options_vol,
             market_prior=market_prior,
         )
         if benchmark.is_proxy:
-            # Basis uncertainty is represented by shrinking both probability
-            # and confidence before any edge comparison.
             proxy_p_up = 0.5 + (forecast.p_up - 0.5) * 0.80
             forecast = replace(
                 forecast,
                 p_up=proxy_p_up,
                 p_down=1.0 - proxy_p_up,
                 confidence=forecast.confidence * 0.80,
-                notes=forecast.notes
-                + (
+                notes=forecast.notes + (
                     "unofficial constituent proxy: probability/confidence shrunk",
                 ),
             )
 
+        stability = model_stability(forecast)
         intel_report = self.intelligence.enrich(
             forecast,
             features,
@@ -297,6 +309,10 @@ class ForecastingScanner:
             trade_forecast,
             features,
             benchmark,
+            trend,
+            vol,
+            regime,
+            stability,
             now=observed_at,
             risk_locked=risk_locked or intel_report.skip_trade,
             duplicate_entry=duplicate_entry,
@@ -314,20 +330,11 @@ class ForecastingScanner:
                         gate="intelligence",
                         reason=intel_report.skip_reason,
                         observed=trade_forecast.confidence,
-                        required=self.config.strategy.min_confidence,
+                        required=self.config.hour.min_confidence,
                     ),
                 ),
             )
 
-        intel_report = self.intelligence.enrich(
-            trade_forecast,
-            features,
-            market,
-            regime,
-            decision_action=decision.action.value,
-            decision_edge=decision.edge,
-            supporting=supporting,
-        )
         health = (
             "PROXY"
             if benchmark.is_proxy
@@ -342,18 +349,22 @@ class ForecastingScanner:
             reason = f"{reason}; supporting feeds: {supporting_reason}"
         if intel_report.skip_trade:
             reason = f"{reason}; {intel_report.skip_reason}"
-        return ForecastCycle(
+
+        return HourForecastCycle(
             timestamp=observed_at,
             data_health=health,
             reason=reason,
             market=market,
             benchmark=benchmark,
             supporting=supporting,
-            features=features,
+            bundle=bundle,
+            trend=trend,
+            trajectory=trajectory,
             regime=regime,
             forecast=trade_forecast,
             decision=decision,
             options_volatility=options_vol,
             market_rejections=dict(discovered.rejections),
             intelligence=intel_report,
+            model_stability=stability,
         )

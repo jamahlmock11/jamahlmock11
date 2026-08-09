@@ -15,6 +15,8 @@ from kalshi_bot.domain import (
     BenchmarkQuote,
     ContractSide,
     DecisionAction,
+    DecisionResult,
+    Direction,
     FeatureSnapshot,
     MarketPosition,
     MarketSnapshot,
@@ -125,6 +127,58 @@ def test_brti_parser_requires_explicit_fresh_provenance():
             now=NOW,
             max_age=timedelta(seconds=15),
         )
+
+
+def test_kalshi_cfbenchmarks_values_parser():
+    from kalshi_bot.data.cf_benchmark import parse_kalshi_cfbenchmarks_values_payload
+
+    payload = {
+        "serverTime": NOW.isoformat(),
+        "payload": [
+            {"value": "65020.1", "time": int((NOW - timedelta(seconds=2)).timestamp() * 1000)},
+            {"value": "65021.5", "time": int((NOW - timedelta(seconds=1)).timestamp() * 1000)},
+        ],
+    }
+    quote = parse_kalshi_cfbenchmarks_values_payload(
+        payload,
+        now=NOW,
+        max_age=timedelta(seconds=15),
+    )
+    assert quote.primary and quote.price == pytest.approx(65021.5)
+
+
+def test_format_edge_gap_in_kalshi_cents():
+    from kalshi_bot.domain import GateFailure
+    from kalshi_bot.strategies.decision import format_edge_gap
+
+    blocked = DecisionResult(
+        action=DecisionAction.NO_TRADE,
+        reason="blocked",
+        gate_failures=(
+            GateFailure(
+                gate="minimum_edge",
+                reason="below minimum",
+                observed=0.094,
+                required=0.20,
+            ),
+        ),
+        current_direction=Direction.FLAT,
+        predicted_direction=Direction.UP,
+        trade_direction=Direction.FLAT,
+        edge=0.094,
+    )
+    assert format_edge_gap(blocked) == "Need 11¢ more (9¢ have · 20¢ need)"
+
+    cleared = DecisionResult(
+        action=DecisionAction.BUY_UP,
+        reason="ok",
+        gate_failures=(),
+        current_direction=Direction.FLAT,
+        predicted_direction=Direction.UP,
+        trade_direction=Direction.UP,
+        edge=0.24,
+    )
+    assert format_edge_gap(cleared) == "Met (+4¢ above 20¢ minimum)"
 
 
 def test_constituent_proxy_is_robust_and_never_primary():

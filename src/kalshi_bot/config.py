@@ -38,6 +38,37 @@ class ExecutionConfig(BaseModel):
     slippage_per_contract: float = 0.0
 
 
+class HourEdgeConfig(BaseModel):
+    minimum_edge: float = Field(default=0.10, ge=0.10, le=0.20)
+    preferred_edge: float = Field(default=0.15, ge=0.10)
+    strong_edge: float = Field(default=0.20, ge=0.15)
+    tier_b_size_mult: float = Field(default=0.5, gt=0.0, le=1.0)
+    tier_a_size_mult: float = Field(default=0.75, gt=0.0, le=1.0)
+    tier_a_plus_size_mult: float = Field(default=1.0, gt=0.0, le=1.0)
+    disable_tier_b: bool = False
+
+
+class HourStrategyConfig(BaseModel):
+    series_ticker: str = "KXBTCD"
+    market_type: str = "1h"
+    contract_duration_seconds: float = Field(default=3600.0, gt=0.0)
+    min_seconds_remaining: float = Field(default=30.0, ge=0.0)
+    max_entry_seconds_remaining: float = Field(default=1200.0, ge=0.0)
+    late_window_seconds: float = Field(default=900.0, ge=0.0)
+    mid_window_seconds: float = Field(default=1800.0, ge=0.0)
+    final_seconds: float = Field(default=60.0, ge=0.0)
+    history_seconds: float = Field(default=3700.0, gt=0.0)
+    min_confidence: float = Field(default=0.55, ge=0.0, le=1.0)
+    min_signal_agreement: float = Field(default=0.55, ge=0.0, le=1.0)
+    tier_b_min_confidence: float = Field(default=0.65, ge=0.0, le=1.0)
+    tier_b_min_agreement: float = Field(default=0.65, ge=0.0, le=1.0)
+    min_data_completeness: float = Field(default=0.65, ge=0.0, le=1.0)
+    max_spread: float = Field(default=0.14, ge=0.0, le=1.0)
+    order_quantity: float = Field(default=1.0, gt=0.0)
+    poll_interval_sec: float = Field(default=5.0, gt=0.0)
+    model_version: str = "hour-v1.0.0"
+
+
 class StrategyConfig(BaseModel):
     min_edge: float = Field(default=0.20, ge=0.20)
     target_edge: float = Field(default=0.25, ge=0.20)
@@ -60,10 +91,12 @@ class RiskConfig(BaseModel):
     max_trades_per_contract: int = Field(default=2, gt=0)
     max_flips_per_contract: int = Field(default=1, ge=0)
     cooldown_seconds: float = Field(default=30.0, ge=0.0)
+    stop_loss_fraction: float = Field(default=0.45, ge=0.0, le=1.0)
+    opposite_edge_shift: float = Field(default=0.15, ge=0.0, le=1.0)
 
 
 class DataConfig(BaseModel):
-    benchmark_mode: Literal["official", "constituent_proxy"] = "constituent_proxy"
+    benchmark_mode: Literal["official", "constituent_proxy", "kalshi_passthrough"] = "constituent_proxy"
     cf_benchmark_url: str = ""
     cf_benchmark_api_key: str = ""
     cf_benchmark_api_key_header: str = "Authorization"
@@ -88,6 +121,9 @@ class SettlementConfig(BaseModel):
 
 class AppConfig(BaseModel):
     series: list[str] = Field(default_factory=lambda: ["KXBTC15M"])
+    horizon: Literal["15m", "1h"] = "15m"
+    hour: HourStrategyConfig = Field(default_factory=HourStrategyConfig)
+    hour_edge: HourEdgeConfig = Field(default_factory=HourEdgeConfig)
     tiers: TierConfig = Field(default_factory=TierConfig)
     cross_venue: CrossVenueConfig = Field(default_factory=CrossVenueConfig)
     execution: ExecutionConfig = Field(default_factory=ExecutionConfig)
@@ -120,7 +156,7 @@ class Settings(BaseSettings):
     cf_benchmark_api_key: str = ""
     cf_benchmark_api_key_header: str = "Authorization"
     cf_benchmark_api_key_prefix: str = "Bearer"
-    benchmark_mode: Literal["official", "constituent_proxy"] | None = None
+    benchmark_mode: Literal["official", "constituent_proxy", "kalshi_passthrough"] | None = None
 
     @property
     def kalshi_url(self) -> str:

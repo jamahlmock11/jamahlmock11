@@ -1,24 +1,27 @@
-"""Safety-gated trading decisions using executable, all-in contract costs."""
+"""Safety-gated 1-hour decisions with dynamic edge and trade tiers."""
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from decimal import Decimal
-
+from kalshi_bot.strategies.decision import _direction_for_side, _failure
 from kalshi_bot.domain import (
     BenchmarkQuote,
     ContractSide,
     DecisionAction,
     DecisionResult,
     Direction,
+    EntryTiming,
     FeatureSnapshot,
     GateFailure,
     MarketSnapshot,
     ProbabilityEstimate,
+    TradeTier,
     utc_datetime,
 )
+from kalshi_bot.hour.edge_engine import assess_edge, EdgeAssessment
+from kalshi_bot.hour.trend_engine import TrendSnapshot
+from kalshi_bot.hour.volatility_model import VolatilitySnapshot
 from kalshi_bot.execution.stop_loss import evaluate_position_exit
 from kalshi_bot.market.orderbook import (
     InsufficientDepthError,
@@ -26,124 +29,34 @@ from kalshi_bot.market.orderbook import (
     estimate_buy_execution,
     spread,
 )
-
-ABSOLUTE_MINIMUM_EDGE = Decimal("0.20")
-EDGE_TOLERANCE = Decimal("0.000000000001")
-DEFAULT_MINIMUM_EDGE = float(ABSOLUTE_MINIMUM_EDGE)
-
-
-def edge_gap_details(decision: DecisionResult | None) -> dict[str, float | None]:
-    """Return observed, required, and shortfall edge in Kalshi cents (pp)."""
-    if decision is None:
-        return {"observed_cents": None, "required_cents": None, "gap_cents": None}
-
-    observed = decision.edge
-    required = decision.required_edge
-    for failure in decision.gate_failures:
-        if failure.gate != "minimum_edge":
-            continue
-        if failure.observed is not None:
-            observed = float(failure.observed)
-        if failure.required is not None:
-            required = float(failure.required)
-        break
-
-    if required is None:
-        required = DEFAULT_MINIMUM_EDGE
-    if observed is None:
-        return {
-            "observed_cents": None,
-            "required_cents": required * 100.0,
-            "gap_cents": None,
-        }
-
-    observed_cents = observed * 100.0
-    required_cents = required * 100.0
-    gap_cents = max(0.0, required_cents - observed_cents)
-    return {
-        "observed_cents": observed_cents,
-        "required_cents": required_cents,
-        "gap_cents": gap_cents,
-    }
-
-
-def format_edge_gap(decision: DecisionResult | None) -> str:
-    """Human-readable Kalshi edge gap, e.g. 'Need 11¢ more (9¢ have · 20¢ need)'."""
-    details = edge_gap_details(decision)
-    observed = details["observed_cents"]
-    required = details["required_cents"]
-    gap = details["gap_cents"]
-    if observed is None or required is None:
-        return "Edge unavailable (no executable quote)"
-
-    def cents(value: float) -> str:
-        if abs(value) < 1.0:
-            return f"{value:.1f}"
-        return f"{value:.0f}"
-
-    if gap is None or gap <= 0.05:
-        surplus = observed - required
-        if surplus > 0.05:
-            return f"Met (+{cents(surplus)}¢ above {cents(required)}¢ minimum)"
-        return f"Met ({cents(observed)}¢ have · {cents(required)}¢ need)"
-    shortfall = math.ceil(gap - 1e-9)
-    return f"Need {shortfall:.0f}¢ more ({cents(observed)}¢ have · {cents(required)}¢ need)"
+from kalshi_bot.config import HourEdgeConfig, HourStrategyConfig
 
 
 @dataclass(frozen=True)
-class DecisionConfig:
-    minimum_edge: float = 0.20
-    target_edge: float = 0.25
-    quantity: float = 1.0
-    maximum_benchmark_age: float = 15.0
-    maximum_feature_age: float = 10.0
-    minimum_seconds_remaining: float = 30.0
-    maximum_seconds_remaining: float = 15 * 60.0
-    minimum_confidence: float = 0.60
-    minimum_agreement: float = 0.60
-    minimum_data_completeness: float = 0.75
-    minimum_depth: float = 1.0
-    maximum_spread: float = 0.12
+class HourDecisionConfig:
+    hour: HourStrategyConfig
+    edge: HourEdgeConfig
+    maximum_benchmark_age: float = 20.0
+    maximum_feature_age: float = 15.0
     fee_rate: float = 0.0
     fee_per_contract: float = 0.0
-    slippage_bps: float = 0.0
+    slippage_bps: float = 5.0
     slippage_per_contract: float = 0.0
-    late_seconds: float = 120.0
-    late_minimum_edge: float = 0.25
-    final_seconds: float = 60.0
-    final_minimum_edge: float = 0.25
-    late_confidence_increment: float = 0.10
     allow_replay_data: bool = False
     allow_proxy_data: bool = False
-    proxy_minimum_edge: float = 0.25
-    proxy_confidence_increment: float = 0.10
     proxy_minimum_constituents: int = 3
     proxy_maximum_dispersion: float = 0.003
-    proxy_entry_cutoff_seconds: float = 120.0
+    proxy_entry_cutoff_seconds: float = 300.0
     stop_loss_fraction: float = 0.45
     opposite_edge_shift: float = 0.15
 
-    @property
-    def effective_minimum_edge(self) -> Decimal:
-        """The configured threshold can tighten, but never weaken, 20 points."""
-        return max(ABSOLUTE_MINIMUM_EDGE, Decimal(str(self.minimum_edge)))
 
-
-def _direction_for_side(side: ContractSide | None) -> Direction:
-    if side is ContractSide.YES:
-        return Direction.UP
-    if side is ContractSide.NO:
-        return Direction.DOWN
-    return Direction.FLAT
-
-
-def _failure(gate: str, reason: str, observed: object, required: object) -> GateFailure:
-    return GateFailure(gate=gate, reason=reason, observed=observed, required=required)
-
-
-class DecisionEngine:
-    def __init__(self, config: DecisionConfig | None = None) -> None:
-        self.config = config or DecisionConfig()
+class HourDecisionEngine:
+    def __init__(self, config: HourDecisionConfig | None = None) -> None:
+        self.config = config or HourDecisionConfig(
+            hour=HourStrategyConfig(),
+            edge=HourEdgeConfig(),
+        )
 
     def _common_gates(
         self,
@@ -157,6 +70,7 @@ class DecisionEngine:
         duplicate_entry: bool,
     ) -> list[GateFailure]:
         cfg = self.config
+        hour = cfg.hour
         failures: list[GateFailure] = []
         if not market.valid or market.rejection_reasons:
             failures.append(
@@ -170,13 +84,13 @@ class DecisionEngine:
         if market.status.lower() not in {"open", "active"}:
             failures.append(_failure("market_status", "market is not open", market.status, "open/active"))
         seconds = (market.expiration - now).total_seconds()
-        if seconds < cfg.minimum_seconds_remaining or seconds > cfg.maximum_seconds_remaining:
+        if seconds < hour.min_seconds_remaining or seconds > hour.max_entry_seconds_remaining:
             failures.append(
                 _failure(
                     "time_window",
                     "contract is outside the safe entry window",
                     seconds,
-                    (cfg.minimum_seconds_remaining, cfg.maximum_seconds_remaining),
+                    (hour.min_seconds_remaining, hour.max_entry_seconds_remaining),
                 )
             )
         source = benchmark.source.lower()
@@ -249,70 +163,55 @@ class DecisionEngine:
                     cfg.maximum_feature_age,
                 )
             )
-        if features.data_completeness < cfg.minimum_data_completeness:
+        if features.data_completeness < hour.min_data_completeness:
             failures.append(
                 _failure(
                     "data_completeness",
                     "insufficient causal BRTI history",
                     features.data_completeness,
-                    cfg.minimum_data_completeness,
+                    hour.min_data_completeness,
                 )
             )
-        required_confidence = cfg.minimum_confidence + (
-            cfg.proxy_confidence_increment if benchmark.is_proxy else 0.0
+        required_confidence = hour.min_confidence + (
+            0.08 if benchmark.is_proxy else 0.0
         )
-        required_confidence = min(1.0, required_confidence)
         if forecast.confidence < required_confidence:
             failures.append(
                 _failure(
                     "confidence",
-                    "ensemble confidence is below minimum",
+                    "model confidence is below minimum",
                     forecast.confidence,
                     required_confidence,
                 )
             )
-        seconds = (market.expiration - now).total_seconds()
-        late_confidence = max(
-            required_confidence,
-            min(1.0, cfg.minimum_confidence + cfg.late_confidence_increment),
-        )
-        if seconds <= cfg.late_seconds and forecast.confidence < late_confidence:
-            failures.append(
-                _failure(
-                    "late_confidence",
-                    "late-contract confidence is below the conservative minimum",
-                    forecast.confidence,
-                    late_confidence,
-                )
-            )
-        if forecast.signal_agreement < cfg.minimum_agreement:
+        if forecast.signal_agreement < hour.min_signal_agreement:
             failures.append(
                 _failure(
                     "agreement",
-                    "ensemble components do not agree",
+                    "signals do not agree sufficiently",
                     forecast.signal_agreement,
-                    cfg.minimum_agreement,
+                    hour.min_signal_agreement,
                 )
             )
         for side in (ContractSide.YES, ContractSide.NO):
             side_spread = spread(market.orderbook, side)
-            if side_spread is None or side_spread > cfg.maximum_spread:
+            if side_spread is None or side_spread > hour.max_spread:
                 failures.append(
                     _failure(
                         f"{side.value.lower()}_spread",
                         f"{side.value} spread is missing or too wide",
                         side_spread,
-                        cfg.maximum_spread,
+                        hour.max_spread,
                     )
                 )
             side_depth = depth(market.orderbook, side, asks=True)
-            if side_depth < max(cfg.minimum_depth, cfg.quantity):
+            if side_depth < max(hour.order_quantity, 1.0):
                 failures.append(
                     _failure(
                         f"{side.value.lower()}_liquidity",
                         f"{side.value} executable depth is insufficient",
                         side_depth,
-                        max(cfg.minimum_depth, cfg.quantity),
+                        hour.order_quantity,
                     )
                 )
         if risk_locked:
@@ -345,6 +244,10 @@ class DecisionEngine:
         forecast: ProbabilityEstimate,
         features: FeatureSnapshot,
         benchmark: BenchmarkQuote,
+        trend: TrendSnapshot,
+        vol: VolatilitySnapshot,
+        regime,
+        model_stability: float,
         *,
         now: datetime | None = None,
         risk_locked: bool = False,
@@ -353,9 +256,9 @@ class DecisionEngine:
     ) -> DecisionResult:
         observed_now = utc_datetime(now or datetime.now(timezone.utc))
         cfg = self.config
-        trade_quantity = quantity if quantity is not None else cfg.quantity
-        if trade_quantity <= 0:
-            raise ValueError("quantity must be positive")
+        hour = cfg.hour
+        edge_cfg = cfg.edge
+        trade_quantity = quantity if quantity is not None else hour.order_quantity
         predicted_side = ContractSide.YES if forecast.p_up >= forecast.p_down else ContractSide.NO
         predicted_direction = _direction_for_side(predicted_side)
         position = market.current_position
@@ -370,7 +273,6 @@ class DecisionEngine:
             duplicate_entry=duplicate_entry,
         )
 
-        # Stop-loss, thesis reversal, or data loss exits to flat before new entries.
         if position is not None and position.quantity > 0:
             exit_signal = evaluate_position_exit(
                 market=market,
@@ -382,6 +284,7 @@ class DecisionEngine:
                 stop_loss_fraction=cfg.stop_loss_fraction,
                 opposite_edge_shift=cfg.opposite_edge_shift,
             )
+            held_prob = forecast.p_up if position.side is ContractSide.YES else forecast.p_down
             if exit_signal is not None:
                 exit_quantity = min(position.quantity, trade_quantity)
                 if self._can_exit(market, position.side, exit_quantity):
@@ -393,9 +296,9 @@ class DecisionEngine:
                         predicted_direction=predicted_direction,
                         trade_direction=Direction.FLAT,
                         selected_side=position.side,
-                        predicted_probability=forecast.p_up if position.side is ContractSide.YES else forecast.p_down,
+                        predicted_probability=held_prob,
                         quantity=exit_quantity,
-                        target_edge=cfg.target_edge,
+                        target_edge=edge_cfg.preferred_edge,
                     )
                 return DecisionResult(
                     action=DecisionAction.HOLD,
@@ -406,19 +309,19 @@ class DecisionEngine:
                     trade_direction=Direction.FLAT,
                     selected_side=position.side,
                     quantity=position.quantity,
-                    target_edge=cfg.target_edge,
+                    target_edge=edge_cfg.preferred_edge,
                 )
             return DecisionResult(
                 action=DecisionAction.HOLD,
-                reason="existing same-side position; pyramiding is not allowed",
+                reason="thesis remains valid; holding to expiration or profit target",
                 gate_failures=tuple(failures),
                 current_direction=current_direction,
                 predicted_direction=predicted_direction,
                 trade_direction=Direction.FLAT,
                 selected_side=position.side,
-                predicted_probability=forecast.p_up if position.side is ContractSide.YES else forecast.p_down,
+                predicted_probability=held_prob,
                 quantity=position.quantity,
-                target_edge=cfg.target_edge,
+                target_edge=edge_cfg.preferred_edge,
             )
 
         executions = {}
@@ -455,40 +358,75 @@ class DecisionEngine:
                 current_direction=current_direction,
                 predicted_direction=predicted_direction,
                 trade_direction=Direction.FLAT,
-                target_edge=cfg.target_edge,
+                target_edge=edge_cfg.preferred_edge,
             )
-        edges = {
-            side: side_probabilities[side] - execution.executable_cost
-            for side, execution in executions.items()
-        }
-        selected_side = max(edges, key=lambda side: (edges[side], side.value))
-        selected_execution = executions[selected_side]
-        selected_edge = edges[selected_side]
-        edge_decimal = Decimal(str(side_probabilities[selected_side])) - Decimal(
-            str(selected_execution.executable_cost)
+
+        yes_spread = spread(market.orderbook, ContractSide.YES) or 1.0
+        no_spread = spread(market.orderbook, ContractSide.NO) or 1.0
+        yes_depth = depth(market.orderbook, ContractSide.YES, asks=True)
+        no_depth = depth(market.orderbook, ContractSide.NO, asks=True)
+
+        edge_assessment = assess_edge(
+            up_probability=forecast.p_up,
+            down_probability=forecast.p_down,
+            up_executable=executions.get(ContractSide.YES).executable_cost if ContractSide.YES in executions else None,
+            down_executable=executions.get(ContractSide.NO).executable_cost if ContractSide.NO in executions else None,
+            seconds_remaining=features.seconds_remaining,
+            volatility=vol,
+            yes_spread=yes_spread,
+            no_spread=no_spread,
+            yes_depth=yes_depth,
+            no_depth=no_depth,
+            confidence=forecast.confidence,
+            agreement=forecast.signal_agreement,
+            regime=regime,
+            z_distance=features.z_distance_to_strike,
+            trend=trend,
+            model_stability=model_stability,
+            hour_cfg=hour,
+            edge_cfg=edge_cfg,
+            is_proxy=benchmark.is_proxy,
         )
-        seconds_remaining = (market.expiration - observed_now).total_seconds()
-        required_edge = cfg.effective_minimum_edge
-        if benchmark.is_proxy:
-            required_edge = max(required_edge, Decimal(str(cfg.proxy_minimum_edge)))
-        if seconds_remaining <= cfg.late_seconds:
-            required_edge = max(required_edge, Decimal(str(cfg.late_minimum_edge)))
-        if seconds_remaining <= cfg.final_seconds:
-            required_edge = max(required_edge, Decimal(str(cfg.final_minimum_edge)))
-        if edge_decimal + EDGE_TOLERANCE < required_edge:
+
+        edges = {
+            ContractSide.YES: edge_assessment.up_edge,
+            ContractSide.NO: edge_assessment.down_edge,
+        }
+        valid_edges = {k: v for k, v in edges.items() if v is not None}
+        if not valid_edges:
+            failures.append(_failure("edge", "no executable edge available", None, "positive edge"))
+            return DecisionResult(
+                action=DecisionAction.NO_TRADE,
+                reason="no executable edge",
+                gate_failures=tuple(failures),
+                current_direction=current_direction,
+                predicted_direction=predicted_direction,
+                trade_direction=Direction.FLAT,
+                target_edge=edge_cfg.preferred_edge,
+                required_edge=edge_assessment.required_edge,
+                trade_tier=TradeTier.NONE,
+                entry_timing=edge_assessment.entry_timing,
+            )
+
+        selected_side = max(valid_edges, key=lambda side: (valid_edges[side], side.value))
+        selected_edge = valid_edges[selected_side]
+        selected_execution = executions[selected_side]
+        required = edge_assessment.required_edge
+
+        if edge_assessment.trade_tier is TradeTier.NONE:
             failures.append(
                 _failure(
                     "minimum_edge",
-                    "best all-in edge is below the applicable hard minimum",
+                    "edge below required threshold or tier requirements not met",
                     selected_edge,
-                    float(required_edge),
+                    required,
                 )
             )
 
         if failures:
             return DecisionResult(
                 action=DecisionAction.NO_TRADE,
-                reason="entry blocked by safety gates",
+                reason="entry blocked by safety gates or insufficient edge",
                 gate_failures=tuple(failures),
                 current_direction=current_direction,
                 predicted_direction=predicted_direction,
@@ -497,23 +435,23 @@ class DecisionEngine:
                 predicted_probability=side_probabilities[selected_side],
                 executable_cost=selected_execution.executable_cost,
                 edge=selected_edge,
-                target_edge=cfg.target_edge,
+                target_edge=edge_cfg.preferred_edge,
+                required_edge=required,
+                trade_tier=edge_assessment.trade_tier,
+                entry_timing=edge_assessment.entry_timing,
                 quantity=trade_quantity,
                 execution=selected_execution,
             )
+
         action = (
             DecisionAction.BUY_UP
             if selected_side is ContractSide.YES
             else DecisionAction.BUY_DOWN
         )
-        target_text = (
-            "meets target edge"
-            if selected_edge + float(EDGE_TOLERANCE) >= cfg.target_edge
-            else "meets hard minimum edge but is below target"
-        )
+        tier_label = edge_assessment.trade_tier.value
         return DecisionResult(
             action=action,
-            reason=f"{selected_side.value} {target_text}",
+            reason=f"{tier_label} trade: {selected_side.value} edge {selected_edge:.1%} >= required {required:.1%}",
             gate_failures=(),
             current_direction=current_direction,
             predicted_direction=predicted_direction,
@@ -522,17 +460,11 @@ class DecisionEngine:
             predicted_probability=side_probabilities[selected_side],
             executable_cost=selected_execution.executable_cost,
             edge=selected_edge,
-            target_edge=cfg.target_edge,
+            target_edge=edge_cfg.preferred_edge,
+            required_edge=required,
+            trade_tier=edge_assessment.trade_tier,
+            entry_timing=edge_assessment.entry_timing,
+            size_multiplier=edge_assessment.size_multiplier,
             quantity=trade_quantity,
             execution=selected_execution,
         )
-
-
-def make_decision(
-    market: MarketSnapshot,
-    forecast: ProbabilityEstimate,
-    features: FeatureSnapshot,
-    benchmark: BenchmarkQuote,
-    **kwargs: object,
-) -> DecisionResult:
-    return DecisionEngine().decide(market, forecast, features, benchmark, **kwargs)

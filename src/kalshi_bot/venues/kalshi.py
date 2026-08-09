@@ -71,6 +71,7 @@ class KalshiMarket:
     rules_primary: str
     strike_type: str
     volume: float
+    market_type: str = ""
 
     @property
     def seconds_to_close(self) -> float:
@@ -353,4 +354,5 @@ class KalshiClient:
             rules_primary=str(raw.get("rules_primary") or ""),
             strike_type=str(raw.get("strike_type") or ""),
             volume=_f(raw.get("volume_fp") or raw.get("volume")),
+            market_type=str(raw.get("market_type") or raw.get("type") or ""),
         )

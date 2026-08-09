@@ -56,8 +56,12 @@ class RiskManager:
         cooldown_sec: float | None = None,
         max_trades_per_cycle: int = 1,
         max_per_ticker_usd: float | None = None,
+        hard_min_edge: float | None = None,
     ):
         self.config = config
+        self.hard_min_edge = (
+            hard_min_edge if hard_min_edge is not None else HARD_MIN_EDGE
+        )
         self.max_daily_loss = max_daily_loss or config.risk.max_daily_loss
         self.cooldown_sec = (
             config.risk.cooldown_seconds if cooldown_sec is None else cooldown_sec
@@ -85,7 +89,7 @@ class RiskManager:
         if self.state.halted:
             return 0
         # Legacy strategy cannot bypass the system-wide hard edge invariant.
-        if signal.edge_fraction + 1e-12 < HARD_MIN_EDGE:
+        if signal.edge_fraction + 1e-12 < self.hard_min_edge:
             return 0
         if signal.confidence is Confidence.PASS:
             return 0
@@ -134,8 +138,8 @@ class RiskManager:
         notional: float,
         intent_id: str,
     ) -> tuple[bool, str]:
-        if edge + 1e-12 < HARD_MIN_EDGE:
-            return False, "edge below non-overridable 20-point minimum"
+        if edge + 1e-12 < self.hard_min_edge:
+            return False, f"edge below non-overridable {self.hard_min_edge:.0%} minimum"
         if self.state.halted:
             return False, self.state.halt_reason or "risk lock active"
         if intent_id in self.state.intent_ids:
@@ -159,10 +163,14 @@ class RiskManager:
             return 0
         if decision.edge is None or decision.executable_cost is None:
             return 0
-        if decision.edge + 1e-12 < HARD_MIN_EDGE or decision.executable_cost <= 0:
+        min_edge = self.hard_min_edge
+        if decision.required_edge is not None:
+            min_edge = max(self.hard_min_edge, float(decision.required_edge))
+        if decision.edge + 1e-12 < min_edge or decision.executable_cost <= 0:
             return 0
         daily_room = max(0.0, abs(self.max_daily_loss) + self.state.realized_pnl)
         kelly_budget = kelly_notional_usd(decision.edge, daily_room)
+        size_mult = max(0.0, min(1.0, decision.size_multiplier))
         available_usd = max(
             0.0,
             min(
@@ -172,7 +180,7 @@ class RiskManager:
             ),
         )
         affordable = int(available_usd / decision.executable_cost)
-        requested = max(1, int(decision.quantity))
+        requested = max(1, int(decision.quantity * size_mult))
         return max(
             0,
             min(requested, affordable, self.config.execution.max_contracts_per_trade),
