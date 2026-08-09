@@ -351,4 +351,4 @@ def test_1h_yaml_loads_without_validation_error():
     assert cfg.hour.series_ticker == "KXBTCD"
     assert cfg.strategy.target_edge >= 0.20
     assert cfg.strategy.final_min_edge >= 0.20
-    assert cfg.hour_edge.preferred_edge == pytest.approx(0.15)
+    assert cfg.hour_edge.preferred_edge == pytest.approx(0.12)
