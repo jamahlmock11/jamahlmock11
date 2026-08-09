@@ -37,6 +37,7 @@ strategy:
   min_data_completeness: 0.75
   max_spread: 0.12
   min_seconds_remaining: 30
+  max_entry_seconds_remaining: 540
   late_seconds: 120
   final_seconds: 60
   final_min_edge: 0.25

@@ -331,6 +331,33 @@ def test_final_minute_uses_locked_brti_average():
     assert snapshot.settlement_effective_strike < snapshot.strike
 
 
+def test_entry_window_blocks_trades_before_last_nine_minutes():
+    early = replace(market(0.52), expiration=NOW + timedelta(minutes=12))
+    result = DecisionEngine(
+        DecisionConfig(maximum_seconds_remaining=540, minimum_seconds_remaining=30)
+    ).decide(
+        early,
+        forecast(0.78),
+        features(),
+        benchmark(),
+        now=NOW,
+    )
+    assert result.action is DecisionAction.NO_TRADE
+    assert any(f.gate == "time_window" for f in result.gate_failures)
+
+    late = replace(market(0.52), expiration=NOW + timedelta(minutes=8))
+    allowed = DecisionEngine(
+        DecisionConfig(maximum_seconds_remaining=540, minimum_seconds_remaining=30)
+    ).decide(
+        late,
+        forecast(0.78),
+        features(),
+        benchmark(),
+        now=NOW,
+    )
+    assert allowed.action is DecisionAction.BUY_UP
+
+
 @pytest.mark.parametrize(
     ("probability", "yes_ask", "expected"),
     [
