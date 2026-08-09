@@ -21,6 +21,7 @@ execution:
   orders_enabled: true
   max_position_usd: 50
   max_contracts_per_trade: 25
+  min_trade_notional_usd: 2.0
   poll_interval_sec: 5.0
   only_tiers: ["HIGH", "MEDIUM"]
   fee_rate: 0.0
@@ -48,10 +49,11 @@ risk:
   max_consecutive_losses: 4
   max_trades_per_contract: 1
   max_flips_per_contract: 0
-  cooldown_seconds: 120
-  stop_loss_fraction: 0.45
-  opposite_edge_shift: 0.15
-  thesis_reversal_margin: 0.10
+  cooldown_seconds: 300
+  min_hold_seconds: 90
+  stop_loss_fraction: 0.55
+  opposite_edge_shift: 0.25
+  thesis_reversal_enabled: false
 
 data:
   # constituent_proxy is an explicitly unofficial PAPER-only estimate built

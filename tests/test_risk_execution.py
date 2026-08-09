@@ -100,6 +100,20 @@ def buy_decision(edge: float = 0.26) -> DecisionResult:
     )
 
 
+def test_size_decision_honors_min_trade_notional():
+    cfg = AppConfig(
+        execution=ExecutionConfig(
+            max_position_usd=100,
+            max_contracts_per_trade=25,
+            min_trade_notional_usd=2.0,
+        ),
+        risk=RiskConfig(max_position_size=100, max_contract_exposure=100),
+    )
+    decision = replace(buy_decision(), executable_cost=0.30, quantity=1)
+    size = RiskManager(cfg, max_per_ticker_usd=100).size_decision(decision)
+    assert size == 7
+
+
 def test_legacy_path_cannot_bypass_hard_edge():
     cfg = AppConfig(
         execution=ExecutionConfig(

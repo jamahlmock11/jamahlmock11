@@ -123,6 +123,8 @@ class HourForecastingScanner:
                 stop_loss_fraction=config.risk.stop_loss_fraction,
                 opposite_edge_shift=config.risk.opposite_edge_shift,
                 thesis_reversal_margin=config.risk.thesis_reversal_margin,
+                thesis_reversal_enabled=config.risk.thesis_reversal_enabled,
+                min_hold_seconds=config.risk.min_hold_seconds,
             )
         )
         self.position_lookup = position_lookup or (lambda _ticker: None)
@@ -168,7 +170,7 @@ class HourForecastingScanner:
         observed_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
         series = self.config.hour.series_ticker
         try:
-            markets = self.kalshi.get_markets(series, status="open", limit=40)
+            markets = self.kalshi.get_markets(series, status="open", limit=200)
         except Exception as exc:
             reason = f"Kalshi market retrieval failed: {exc}"
             return HourForecastCycle(
@@ -178,8 +180,25 @@ class HourForecastingScanner:
                 decision=self._no_trade(reason, "kalshi_api", str(exc)),
             )
 
+        reference_price: float | None = None
+        try:
+            reference_price = self.benchmark.get_quote(now=observed_at).price
+        except Exception:
+            reference_price = None
+
+        from kalshi_bot.hour.discovery import filter_hourly_markets, select_nearest_strike_markets
+
+        hourly_markets = filter_hourly_markets(markets, config=self.discovery_config)
+        candidate_markets = hourly_markets
+        if reference_price is not None and hourly_markets:
+            candidate_markets = select_nearest_strike_markets(
+                hourly_markets,
+                reference_price,
+                count=10,
+            )
+
         orderbooks: dict[str, dict] = {}
-        for market in markets:
+        for market in candidate_markets:
             if market.status.lower() not in {"open", "active"}:
                 continue
             if market.open_time and market.open_time > observed_at:
@@ -190,10 +209,11 @@ class HourForecastingScanner:
                 continue
 
         discovered = discover_hour_market(
-            markets,
+            candidate_markets,
             orderbooks=orderbooks,
             now=observed_at,
             config=self.discovery_config,
+            reference_price=reference_price,
         )
         market = discovered.market
         if market is None:

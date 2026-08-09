@@ -37,10 +37,11 @@ def filter_hourly_markets(
     *,
     config: HourDiscoveryConfig,
 ) -> list:
+    series = config.hour.series_ticker.upper()
     filtered = []
     for raw in markets:
         market_type = _market_type(raw)
-        if market_type and market_type not in {"1h", "hourly", "hour"}:
+        if market_type and market_type not in {"1h", "hourly", "hour", "binary"}:
             continue
 
         open_time = getattr(raw, "open_time", None)
@@ -56,8 +57,31 @@ def filter_hourly_markets(
                 if market_type not in {"1h", "hourly", "hour"}:
                     continue
 
+        ticker = str(getattr(raw, "ticker", "") or "")
+        if not ticker.startswith(f"{series}-"):
+            continue
+
         filtered.append(raw)
     return filtered
+
+
+def select_nearest_strike_markets(
+    markets: list,
+    reference_price: float,
+    *,
+    count: int = 8,
+) -> list:
+    """Keep the strikes closest to spot so discovery checks tradable ATM books."""
+    from kalshi_bot.market.discovery import _positive_strike
+
+    scored: list[tuple[float, object]] = []
+    for raw in markets:
+        strike = _positive_strike(raw)
+        if strike is None:
+            continue
+        scored.append((abs(strike - reference_price), raw))
+    scored.sort(key=lambda item: (item[0], str(getattr(item[1], "ticker", ""))))
+    return [raw for _, raw in scored[: max(count, 1)]]
 
 
 def discover_hour_market(
@@ -66,6 +90,7 @@ def discover_hour_market(
     orderbooks: dict | None = None,
     now: datetime,
     config: HourDiscoveryConfig,
+    reference_price: float | None = None,
 ) -> DiscoveryResult:
     hour_cfg = config.hour
     discovery_cfg = DiscoveryConfig(
@@ -76,6 +101,8 @@ def discover_hour_market(
         maximum_spread=config.maximum_spread,
     )
     hourly = filter_hourly_markets(markets, config=config)
+    if reference_price is not None and hourly:
+        hourly = select_nearest_strike_markets(hourly, reference_price)
     return discover_current_market(
         hourly,
         orderbooks=orderbooks,

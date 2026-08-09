@@ -30,6 +30,7 @@ class ExecutionConfig(BaseModel):
     orders_enabled: bool = True
     max_position_usd: float = 50.0
     max_contracts_per_trade: int = 100
+    min_trade_notional_usd: float = Field(default=0.0, ge=0.0)
     poll_interval_sec: float = 3.0
     only_tiers: list[str] = Field(default_factory=lambda: ["HIGH", "MEDIUM"])
     fee_rate: float = 0.0
@@ -94,6 +95,8 @@ class RiskConfig(BaseModel):
     stop_loss_fraction: float = Field(default=0.45, ge=0.0, le=1.0)
     opposite_edge_shift: float = Field(default=0.15, ge=0.0, le=1.0)
     thesis_reversal_margin: float = Field(default=0.10, ge=0.0, le=0.50)
+    thesis_reversal_enabled: bool = False
+    min_hold_seconds: float = Field(default=0.0, ge=0.0)
 
 
 class DataConfig(BaseModel):

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 from kalshi_bot.domain import (
     ContractSide,
@@ -12,6 +13,7 @@ from kalshi_bot.domain import (
     MarketSnapshot,
     OrderBookSnapshot,
     ProbabilityEstimate,
+    utc_datetime,
 )
 from kalshi_bot.market.orderbook import depth
 
@@ -89,11 +91,20 @@ def evaluate_position_exit(
     stop_loss_fraction: float,
     opposite_edge_shift: float = 0.15,
     thesis_reversal_margin: float = 0.10,
+    thesis_reversal_enabled: bool = False,
+    min_hold_seconds: float = 0.0,
+    now: datetime | None = None,
     reliability_gates: set[str] | frozenset[str] | None = None,
 ) -> PositionExitSignal | None:
     """Return an exit signal when stop-loss or thesis protections trigger."""
     if position.quantity <= 0:
         return None
+
+    observed_now = utc_datetime(now or datetime.now(timezone.utc))
+    within_min_hold = False
+    if min_hold_seconds > 0 and position.opened_at is not None:
+        held_seconds = (observed_now - utc_datetime(position.opened_at)).total_seconds()
+        within_min_hold = held_seconds + 1e-9 < min_hold_seconds
 
     gates = reliability_gates or frozenset(
         {
@@ -132,10 +143,13 @@ def evaluate_position_exit(
             )
 
     held_prob = forecast.p_up if position.side is ContractSide.YES else forecast.p_down
-    thesis_reversed = thesis_reversal_triggered(
-        position,
-        forecast,
-        margin=thesis_reversal_margin,
+    thesis_reversed = (
+        thesis_reversal_enabled
+        and thesis_reversal_triggered(
+            position,
+            forecast,
+            margin=thesis_reversal_margin,
+        )
     )
     opposite_edge_better = False
     if position.side is ContractSide.YES and forecast.p_down > held_prob + opposite_edge_shift:
@@ -145,6 +159,8 @@ def evaluate_position_exit(
     unreliable = any(failure.gate in gates for failure in failures)
 
     if thesis_reversed or opposite_edge_better or unreliable:
+        if within_min_hold:
+            return None
         if thesis_reversed:
             reason = (
                 f"forecast reversed the held thesis "

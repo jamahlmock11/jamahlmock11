@@ -140,6 +140,7 @@ class HourTradingBot:
             side=position.side,
             quantity=position.quantity,
             average_price=position.entry_price,
+            opened_at=position.opened_at,
         )
 
     def _orders_lookup(self, ticker: str) -> tuple[OpenOrder, ...]:

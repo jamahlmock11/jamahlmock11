@@ -123,6 +123,8 @@ class DecisionConfig:
     stop_loss_fraction: float = 0.45
     opposite_edge_shift: float = 0.15
     thesis_reversal_margin: float = 0.10
+    thesis_reversal_enabled: bool = False
+    min_hold_seconds: float = 0.0
 
     @property
     def effective_minimum_edge(self) -> Decimal:
@@ -383,6 +385,9 @@ class DecisionEngine:
                 stop_loss_fraction=cfg.stop_loss_fraction,
                 opposite_edge_shift=cfg.opposite_edge_shift,
                 thesis_reversal_margin=cfg.thesis_reversal_margin,
+                thesis_reversal_enabled=cfg.thesis_reversal_enabled,
+                min_hold_seconds=cfg.min_hold_seconds,
+                now=observed_now,
             )
             if exit_signal is not None:
                 exit_quantity = min(position.quantity, trade_quantity)
