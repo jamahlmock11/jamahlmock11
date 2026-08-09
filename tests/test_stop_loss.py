@@ -115,6 +115,7 @@ def test_thesis_reversal_exits_before_stop():
         predicted_side=ContractSide.NO,
         quantity=1,
         stop_loss_fraction=0.45,
+        thesis_reversal_enabled=True,
     )
     assert signal is not None
     assert signal.trigger == "thesis_reversal"
@@ -162,6 +163,56 @@ def test_minor_forecast_flip_does_not_trigger_thesis_exit():
         thesis_reversal_margin=0.10,
     )
     assert signal is None
+
+
+def test_thesis_reversal_disabled_by_default():
+    market = MarketSnapshot(
+        ticker="KXBTC15M-TEST",
+        status="active",
+        rules="BRTI",
+        strike=65000,
+        expiration=NOW + timedelta(minutes=5),
+        open_time=NOW - timedelta(minutes=10),
+        reference="BRTI",
+        orderbook=book(yes_bid=0.46),
+        current_position=MarketPosition(
+            side=ContractSide.YES,
+            quantity=1,
+            average_price=0.50,
+        ),
+    )
+    forecast = ProbabilityEstimate(
+        p_up=0.44,
+        p_down=0.56,
+        confidence=0.7,
+        signal_agreement=0.8,
+        component_probabilities={"terminal": 0.44},
+        regime=Regime.TREND_UP,
+        raw_p_up=0.44,
+    )
+    signal = evaluate_position_exit(
+        market=market,
+        position=market.current_position,
+        forecast=forecast,
+        failures=(),
+        predicted_side=ContractSide.NO,
+        quantity=1,
+        stop_loss_fraction=0.55,
+        thesis_reversal_enabled=True,
+    )
+    assert signal is not None
+    assert signal.trigger == "thesis_reversal"
+
+    disabled = evaluate_position_exit(
+        market=market,
+        position=market.current_position,
+        forecast=forecast,
+        failures=(),
+        predicted_side=ContractSide.NO,
+        quantity=1,
+        stop_loss_fraction=0.55,
+    )
+    assert disabled is None
 
 
 def test_15m_decision_engine_exits_on_stop_loss():

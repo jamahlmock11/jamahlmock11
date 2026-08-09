@@ -91,6 +91,7 @@ def evaluate_position_exit(
     stop_loss_fraction: float,
     opposite_edge_shift: float = 0.15,
     thesis_reversal_margin: float = 0.10,
+    thesis_reversal_enabled: bool = False,
     min_hold_seconds: float = 0.0,
     now: datetime | None = None,
     reliability_gates: set[str] | frozenset[str] | None = None,
@@ -142,10 +143,13 @@ def evaluate_position_exit(
             )
 
     held_prob = forecast.p_up if position.side is ContractSide.YES else forecast.p_down
-    thesis_reversed = thesis_reversal_triggered(
-        position,
-        forecast,
-        margin=thesis_reversal_margin,
+    thesis_reversed = (
+        thesis_reversal_enabled
+        and thesis_reversal_triggered(
+            position,
+            forecast,
+            margin=thesis_reversal_margin,
+        )
     )
     opposite_edge_better = False
     if position.side is ContractSide.YES and forecast.p_down > held_prob + opposite_edge_shift:

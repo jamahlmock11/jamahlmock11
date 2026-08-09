@@ -52,7 +52,7 @@ risk:
   min_hold_seconds: 90
   stop_loss_fraction: 0.55
   opposite_edge_shift: 0.25
-  thesis_reversal_margin: 0.20
+  thesis_reversal_enabled: false
 
 data:
   # constituent_proxy is an explicitly unofficial PAPER-only estimate built
