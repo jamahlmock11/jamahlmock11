@@ -93,7 +93,7 @@ class RiskConfig(BaseModel):
 
 
 class DataConfig(BaseModel):
-    benchmark_mode: Literal["official", "constituent_proxy"] = "constituent_proxy"
+    benchmark_mode: Literal["official", "constituent_proxy", "kalshi_passthrough"] = "constituent_proxy"
     cf_benchmark_url: str = ""
     cf_benchmark_api_key: str = ""
     cf_benchmark_api_key_header: str = "Authorization"
@@ -153,7 +153,7 @@ class Settings(BaseSettings):
     cf_benchmark_api_key: str = ""
     cf_benchmark_api_key_header: str = "Authorization"
     cf_benchmark_api_key_prefix: str = "Bearer"
-    benchmark_mode: Literal["official", "constituent_proxy"] | None = None
+    benchmark_mode: Literal["official", "constituent_proxy", "kalshi_passthrough"] | None = None
 
     @property
     def kalshi_url(self) -> str:

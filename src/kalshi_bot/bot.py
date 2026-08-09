@@ -12,9 +12,9 @@ from rich.console import Console
 from rich.table import Table
 
 from kalshi_bot.config import AppConfig, Settings
-from kalshi_bot.data.cf_benchmark import CFBenchmarkClient
+from kalshi_bot.data.cf_benchmark import create_benchmark_feed
 from kalshi_bot.data.ibit_options import IBITOptionsProvider
-from kalshi_bot.data.supporting_feeds import ConstituentBRTIProxy, SupportingFeeds
+from kalshi_bot.data.supporting_feeds import SupportingFeeds
 from kalshi_bot.domain import ContractSide, MarketPosition, OpenOrder
 from kalshi_bot.execution.engine import ExecutionEngine, ExecutionReport
 from kalshi_bot.execution.position_manager import PositionManager, PositionManagerConfig
@@ -74,20 +74,11 @@ class TradingBot:
         self.supporting = SupportingFeeds(
             minimum_venues=config.data.min_supporting_venues
         )
-        if config.data.benchmark_mode == "constituent_proxy":
-            self.benchmark = ConstituentBRTIProxy(
-                self.supporting,
-                minimum_venues=config.data.min_supporting_venues,
-                max_dispersion=config.data.max_supporting_dispersion,
-            )
-        else:
-            self.benchmark = CFBenchmarkClient(
-                config.data.cf_benchmark_url,
-                api_key=config.data.cf_benchmark_api_key or None,
-                api_key_header=config.data.cf_benchmark_api_key_header,
-                api_key_prefix=config.data.cf_benchmark_api_key_prefix,
-                max_age_seconds=config.data.max_brti_age_seconds,
-            )
+        self.benchmark = create_benchmark_feed(
+            config=config,
+            kalshi=self.kalshi,
+            supporting=self.supporting,
+        )
         self.positions = PositionManager(
             PositionManagerConfig(
                 max_flips_per_contract=config.risk.max_flips_per_contract,

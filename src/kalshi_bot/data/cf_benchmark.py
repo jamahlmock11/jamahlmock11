@@ -179,6 +179,142 @@ def parse_brti_payload(
     )
 
 
+def parse_kalshi_cfbenchmarks_values_payload(
+    payload: Any,
+    *,
+    index_id: str = "BRTI",
+    now: datetime,
+    max_age: timedelta,
+    future_tolerance: timedelta = timedelta(seconds=5),
+) -> BenchmarkQuote:
+    """Parse Kalshi /cfbenchmarks/values passthrough for official BRTI."""
+    if not isinstance(payload, Mapping):
+        raise BenchmarkPayloadError("Kalshi CF Benchmarks response must be a JSON object")
+    points = payload.get("payload")
+    if not isinstance(points, list) or not points:
+        raise BenchmarkPayloadError("Kalshi CF Benchmarks payload is empty")
+
+    latest: Mapping[str, Any] | None = None
+    latest_time = -1
+    for point in points:
+        if not isinstance(point, Mapping):
+            continue
+        time_value = point.get("time")
+        if time_value is None:
+            continue
+        try:
+            time_key = int(time_value)
+        except (TypeError, ValueError) as exc:
+            raise BenchmarkPayloadError("Kalshi CF Benchmarks time is malformed") from exc
+        if time_key > latest_time:
+            latest_time = time_key
+            latest = point
+    if latest is None:
+        raise BenchmarkPayloadError("Kalshi CF Benchmarks payload has no usable observations")
+
+    try:
+        price = float(latest.get("value"))
+    except (TypeError, ValueError) as exc:
+        raise BenchmarkPayloadError("Kalshi CF Benchmarks price is missing or malformed") from exc
+    if not math.isfinite(price) or price <= 0:
+        raise BenchmarkPayloadError(f"BRTI price must be positive and finite, got {price!r}")
+
+    timestamp = _parse_timestamp(latest_time)
+    now = utc_datetime(now)
+    age = now - timestamp
+    if age > max_age:
+        raise StaleBenchmarkError(f"BRTI quote is stale by {age.total_seconds():.3f}s")
+    if age < -future_tolerance:
+        raise BenchmarkPayloadError(
+            f"BRTI quote is {abs(age.total_seconds()):.3f}s in the future"
+        )
+    return BenchmarkQuote(
+        price=price,
+        timestamp=timestamp,
+        source=BRTI_SOURCE,
+        primary=True,
+        is_live=True,
+        replay=False,
+    )
+
+
+class KalshiCFBenchmarkClient:
+    """Official BRTI via Kalshi Trade API /cfbenchmarks passthrough."""
+
+    def __init__(
+        self,
+        kalshi: Any,
+        *,
+        index_id: str = "BRTI",
+        max_age_seconds: float = 15.0,
+        clock: Callable[[], datetime] | None = None,
+    ) -> None:
+        self.kalshi = kalshi
+        self.index_id = index_id
+        self.max_age = timedelta(seconds=max_age_seconds)
+        self._clock = clock or (lambda: datetime.now(timezone.utc))
+
+    def get_quote(self, *, now: datetime | None = None) -> BenchmarkQuote:
+        if not getattr(self.kalshi, "authenticated", False):
+            raise BenchmarkConfigurationError("Kalshi credentials required for BRTI passthrough")
+        data = self.kalshi.get("/cfbenchmarks/values", params={"id": self.index_id})
+        envelope = data.get("data", data) if isinstance(data, Mapping) else data
+        return parse_kalshi_cfbenchmarks_values_payload(
+            envelope,
+            index_id=self.index_id,
+            now=now or self._clock(),
+            max_age=self.max_age,
+        )
+
+    def close(self) -> None:
+        return None
+
+    quote = get_quote
+
+
+def create_benchmark_feed(
+    *,
+    config: Any,
+    kalshi: Any | None = None,
+    supporting: Any | None = None,
+):
+    """Build the configured primary benchmark feed."""
+    from kalshi_bot.data.supporting_feeds import ConstituentBRTIProxy
+
+    mode = config.data.benchmark_mode
+    if mode == "constituent_proxy":
+        if supporting is None:
+            raise BenchmarkConfigurationError("supporting feeds required for constituent proxy")
+        return ConstituentBRTIProxy(
+            supporting,
+            minimum_venues=config.data.min_supporting_venues,
+            max_dispersion=config.data.max_supporting_dispersion,
+        )
+    if mode == "kalshi_passthrough":
+        if kalshi is None:
+            raise BenchmarkConfigurationError("Kalshi client required for BRTI passthrough")
+        return KalshiCFBenchmarkClient(
+            kalshi,
+            index_id=_kalshi_index_id(config.data.cf_benchmark_url),
+            max_age_seconds=config.data.max_brti_age_seconds,
+        )
+    return CFBenchmarkClient(
+        config.data.cf_benchmark_url,
+        api_key=config.data.cf_benchmark_api_key or None,
+        api_key_header=config.data.cf_benchmark_api_key_header,
+        api_key_prefix=config.data.cf_benchmark_api_key_prefix,
+        max_age_seconds=config.data.max_brti_age_seconds,
+    )
+
+
+def _kalshi_index_id(cf_benchmark_url: str) -> str:
+    url = (cf_benchmark_url or "").strip()
+    if url.lower().startswith("kalshi://"):
+        index_id = url[len("kalshi://") :].strip() or "BRTI"
+        return index_id.upper()
+    return "BRTI"
+
+
 class CFBenchmarkClient:
     """Fetch BRTI without ever falling back to a proxy venue."""
 

@@ -127,6 +127,24 @@ def test_brti_parser_requires_explicit_fresh_provenance():
         )
 
 
+def test_kalshi_cfbenchmarks_values_parser():
+    from kalshi_bot.data.cf_benchmark import parse_kalshi_cfbenchmarks_values_payload
+
+    payload = {
+        "serverTime": NOW.isoformat(),
+        "payload": [
+            {"value": "65020.1", "time": int((NOW - timedelta(seconds=2)).timestamp() * 1000)},
+            {"value": "65021.5", "time": int((NOW - timedelta(seconds=1)).timestamp() * 1000)},
+        ],
+    }
+    quote = parse_kalshi_cfbenchmarks_values_payload(
+        payload,
+        now=NOW,
+        max_age=timedelta(seconds=15),
+    )
+    assert quote.primary and quote.price == pytest.approx(65021.5)
+
+
 def test_constituent_proxy_is_robust_and_never_primary():
     class StubFeeds:
         def get_quotes(self, *, now=None):
