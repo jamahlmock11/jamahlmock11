@@ -94,8 +94,9 @@ class HourForecastingScanner:
         self.config = config
         hour_cfg = config.hour
         ls = config.longshot
+        decision_hour_cfg = hour_cfg
         if ls.enabled:
-            hour_cfg = hour_cfg.model_copy(
+            decision_hour_cfg = hour_cfg.model_copy(
                 update={
                     "max_entry_seconds_remaining": ls.entry_window_seconds,
                     "min_confidence": ls.min_confidence,
@@ -117,7 +118,7 @@ class HourForecastingScanner:
         )
         self.decision_engine = decision_engine or HourDecisionEngine(
             HourDecisionConfig(
-                hour=hour_cfg,
+                hour=decision_hour_cfg,
                 edge=config.hour_edge,
                 poll=config.poll,
                 longshot=config.longshot,

@@ -70,6 +70,33 @@ def test_select_nearest_strike_markets_prefers_atm():
     assert [m.ticker for m in selected] == ["KXBTCD-B", "KXBTCD-C"]
 
 
+def test_discover_hour_market_finds_contract_outside_entry_window():
+    hour_cfg = HourStrategyConfig(
+        series_ticker="KXBTCD",
+        max_entry_seconds_remaining=1200,
+        contract_duration_seconds=3600,
+    )
+    config = HourDiscoveryConfig(hour=hour_cfg)
+    markets = [
+        FakeMarket(
+            ticker="KXBTCD-26AUG0907",
+            floor_strike=64800,
+            open_time=NOW - timedelta(minutes=30),
+            close_time=NOW + timedelta(minutes=30),
+        ),
+    ]
+    orderbooks = {"KXBTCD-26AUG0907": _book()}
+    result = discover_hour_market(
+        markets,
+        orderbooks=orderbooks,
+        now=NOW,
+        config=config,
+        reference_price=64790,
+    )
+    assert result.market is not None
+    assert result.market.ticker == "KXBTCD-26AUG0907"
+
+
 def test_discover_hour_market_finds_atm_kxbtcd_contract():
     hour_cfg = HourStrategyConfig(series_ticker="KXBTCD", max_entry_seconds_remaining=3600)
     config = HourDiscoveryConfig(hour=hour_cfg)
