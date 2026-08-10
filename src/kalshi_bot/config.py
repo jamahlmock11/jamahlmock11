@@ -49,12 +49,24 @@ class HourEdgeConfig(BaseModel):
     disable_tier_b: bool = False
 
 
+class PollConfig(BaseModel):
+    favorable_min: float = Field(default=0.85, ge=0.0, le=1.0)
+    favorable_max: float = Field(default=0.90, ge=0.0, le=1.0)
+    low_poll_threshold: float = Field(default=0.85, ge=0.0, le=1.0)
+    counter_evidence_min_probability: float = Field(default=0.70, ge=0.0, le=1.0)
+    counter_evidence_min_confidence: float = Field(default=0.65, ge=0.0, le=1.0)
+    counter_evidence_min_agreement: float = Field(default=0.65, ge=0.0, le=1.0)
+    low_poll_min_probability: float = Field(default=0.72, ge=0.0, le=1.0)
+    low_poll_min_confidence: float = Field(default=0.68, ge=0.0, le=1.0)
+    low_poll_min_agreement: float = Field(default=0.68, ge=0.0, le=1.0)
+
+
 class HourStrategyConfig(BaseModel):
     series_ticker: str = "KXBTCD"
     market_type: str = "1h"
     contract_duration_seconds: float = Field(default=3600.0, gt=0.0)
     min_seconds_remaining: float = Field(default=30.0, ge=0.0)
-    max_entry_seconds_remaining: float = Field(default=1200.0, ge=0.0)
+    max_entry_seconds_remaining: float = Field(default=900.0, ge=0.0)
     late_window_seconds: float = Field(default=900.0, ge=0.0)
     mid_window_seconds: float = Field(default=1800.0, ge=0.0)
     final_seconds: float = Field(default=60.0, ge=0.0)
@@ -80,6 +92,7 @@ class StrategyConfig(BaseModel):
     min_data_completeness: float = Field(default=0.75, ge=0.0, le=1.0)
     max_spread: float = Field(default=0.12, ge=0.0, le=1.0)
     min_seconds_remaining: float = Field(default=30.0, ge=0.0)
+    max_entry_seconds_remaining: float = Field(default=600.0, ge=0.0)
     late_seconds: float = Field(default=120.0, ge=0.0)
     final_seconds: float = Field(default=60.0, ge=0.0)
     final_min_edge: float = Field(default=0.25, ge=0.20)
@@ -138,6 +151,7 @@ class SettlementConfig(BaseModel):
 class AppConfig(BaseModel):
     series: list[str] = Field(default_factory=lambda: ["KXBTC15M"])
     horizon: Literal["15m", "1h"] = "15m"
+    poll: PollConfig = Field(default_factory=PollConfig)
     hour: HourStrategyConfig = Field(default_factory=HourStrategyConfig)
     hour_edge: HourEdgeConfig = Field(default_factory=HourEdgeConfig)
     tiers: TierConfig = Field(default_factory=TierConfig)

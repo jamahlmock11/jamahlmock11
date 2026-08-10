@@ -104,7 +104,7 @@ class ForecastingScanner:
             DiscoveryConfig(
                 series_ticker="KXBTC15M",
                 minimum_seconds_remaining=config.strategy.min_seconds_remaining,
-                maximum_seconds_remaining=15 * 60,
+                maximum_seconds_remaining=config.strategy.max_entry_seconds_remaining,
                 minimum_depth=config.strategy.order_quantity,
                 maximum_spread=config.strategy.max_spread,
             )
@@ -116,6 +116,7 @@ class ForecastingScanner:
                 quantity=config.strategy.order_quantity,
                 maximum_benchmark_age=config.data.max_brti_age_seconds,
                 minimum_seconds_remaining=config.strategy.min_seconds_remaining,
+                maximum_seconds_remaining=config.strategy.max_entry_seconds_remaining,
                 minimum_confidence=config.strategy.min_confidence,
                 minimum_agreement=config.strategy.min_signal_agreement,
                 minimum_data_completeness=config.strategy.min_data_completeness,
@@ -145,6 +146,7 @@ class ForecastingScanner:
                 recovery_hold_min_confidence=config.risk.recovery_hold_min_confidence,
                 recovery_hold_min_agreement=config.risk.recovery_hold_min_agreement,
                 min_hold_seconds=config.risk.min_hold_seconds,
+                poll=config.poll,
             )
         )
         self.position_lookup = position_lookup or (lambda _ticker: None)

@@ -115,6 +115,19 @@ def forecast(p_up: float):
     )
 
 
+def strong_forecast(p_up: float):
+    """Forecast with enough conviction to pass low-poll gates in tests."""
+    return ProbabilityEstimate(
+        p_up=p_up,
+        p_down=1 - p_up,
+        confidence=0.75,
+        signal_agreement=0.82,
+        component_probabilities={"terminal": p_up},
+        regime=Regime.TREND_UP,
+        raw_p_up=p_up,
+    )
+
+
 def make_engine(allow_proxy: bool = True) -> HourDecisionEngine:
     return HourDecisionEngine(
         HourDecisionConfig(
@@ -140,7 +153,7 @@ def test_model_65_price_55_buys_when_gates_pass():
     engine = make_engine()
     decision = engine.decide(
         hour_market(0.48),
-        forecast(0.65),
+        strong_forecast(0.72),
         features,
         benchmark(),
         trend,

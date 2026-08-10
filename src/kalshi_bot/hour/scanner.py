@@ -109,6 +109,7 @@ class HourForecastingScanner:
             HourDecisionConfig(
                 hour=hour_cfg,
                 edge=config.hour_edge,
+                poll=config.poll,
                 maximum_benchmark_age=config.data.max_brti_age_seconds,
                 fee_rate=config.execution.fee_rate,
                 fee_per_contract=config.execution.fee_per_contract,

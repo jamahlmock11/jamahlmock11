@@ -7,9 +7,9 @@ hour:
   market_type: 1h
   contract_duration_seconds: 3600
   min_seconds_remaining: 30
-  # Enter any time in the hourly window (not just the final 30 minutes).
-  max_entry_seconds_remaining: 3600
-  late_window_seconds: 1800
+  # Only enter in the final 15 minutes of each hourly contract.
+  max_entry_seconds_remaining: 900
+  late_window_seconds: 900
   mid_window_seconds: 1800
   final_seconds: 60
   history_seconds: 3700
@@ -24,6 +24,17 @@ hour:
   model_version: hour-v1.0.0
   require_forecast_alignment: true
   forecast_alignment_min_probability: 0.65
+
+poll:
+  favorable_min: 0.85
+  favorable_max: 0.90
+  low_poll_threshold: 0.85
+  counter_evidence_min_probability: 0.70
+  counter_evidence_min_confidence: 0.65
+  counter_evidence_min_agreement: 0.65
+  low_poll_min_probability: 0.72
+  low_poll_min_confidence: 0.68
+  low_poll_min_agreement: 0.68
 
 hour_edge:
   minimum_edge: 0.10

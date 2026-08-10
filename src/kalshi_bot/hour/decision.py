@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from kalshi_bot.strategies.decision import _direction_for_side, _failure
 from kalshi_bot.domain import (
@@ -29,13 +29,19 @@ from kalshi_bot.market.orderbook import (
     estimate_buy_execution,
     spread,
 )
-from kalshi_bot.config import HourEdgeConfig, HourStrategyConfig
+from kalshi_bot.market.poll_alignment import (
+    PollConfig as PollAlignmentConfig,
+    evaluate_poll_alignment,
+    market_poll_snapshot,
+)
+from kalshi_bot.config import HourEdgeConfig, HourStrategyConfig, PollConfig
 
 
 @dataclass(frozen=True)
 class HourDecisionConfig:
     hour: HourStrategyConfig
     edge: HourEdgeConfig
+    poll: PollConfig = field(default_factory=PollConfig)
     maximum_benchmark_age: float = 20.0
     maximum_feature_age: float = 15.0
     fee_rate: float = 0.0
@@ -457,6 +463,25 @@ class HourDecisionEngine:
                     required,
                 )
             )
+
+        poll_failure = evaluate_poll_alignment(
+            selected_side=selected_side,
+            forecast=forecast,
+            poll=market_poll_snapshot(market.orderbook),
+            cfg=PollAlignmentConfig(
+                favorable_min=cfg.poll.favorable_min,
+                favorable_max=cfg.poll.favorable_max,
+                low_poll_threshold=cfg.poll.low_poll_threshold,
+                counter_evidence_min_probability=cfg.poll.counter_evidence_min_probability,
+                counter_evidence_min_confidence=cfg.poll.counter_evidence_min_confidence,
+                counter_evidence_min_agreement=cfg.poll.counter_evidence_min_agreement,
+                low_poll_min_probability=cfg.poll.low_poll_min_probability,
+                low_poll_min_confidence=cfg.poll.low_poll_min_confidence,
+                low_poll_min_agreement=cfg.poll.low_poll_min_agreement,
+            ),
+        )
+        if poll_failure is not None:
+            failures.append(poll_failure)
 
         if failures:
             return DecisionResult(
