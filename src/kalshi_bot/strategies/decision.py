@@ -569,7 +569,12 @@ class DecisionEngine:
                 )
 
         poll_active = (not cfg.longshot.enabled) or cfg.longshot.poll_enabled
-        if poll_active and not (entry_ctx is not None and entry_ctx.extreme_poll_active):
+        bypass_poll = (
+            entry_ctx is not None
+            and entry_ctx.extreme_poll_active
+            and not cfg.longshot.perfect_entry_only
+        )
+        if poll_active and not bypass_poll:
             poll_cfg = poll_gate_config_from_model(cfg.poll)
             if cfg.longshot.enabled and poll_cfg.mode == "legacy":
                 poll_cfg = PollAlignmentConfig(

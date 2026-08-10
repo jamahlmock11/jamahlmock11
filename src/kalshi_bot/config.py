@@ -94,6 +94,10 @@ class LongshotConfig(BaseModel):
         default=False,
         description="Plan B: only enter when poll >= extreme_poll_threshold (follow favorite).",
     )
+    perfect_entry_only: bool = Field(
+        default=False,
+        description="Require full edge, model, and poll gates; no crowd edge waiver.",
+    )
 
 
 class HourStrategyConfig(BaseModel):

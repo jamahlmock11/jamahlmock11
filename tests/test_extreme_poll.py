@@ -93,6 +93,23 @@ def test_favorite_only_blocks_entries_when_poll_below_threshold():
     assert not ctx.executions
 
 
+def test_perfect_entry_requires_edge_and_model_direction():
+    book_obj = book(0.03)
+    executions = {
+        ContractSide.YES: estimate_buy_execution(book_obj, ContractSide.YES, 1),
+        ContractSide.NO: estimate_buy_execution(book_obj, ContractSide.NO, 1),
+    }
+    ctx = resolve_longshot_entries(
+        executions,
+        poll=market_poll_snapshot(book_obj),
+        forecast=forecast(0.80),
+        seconds_remaining=120,
+        cfg=LongshotConfig(enabled=True, perfect_entry_only=True),
+    )
+    assert ctx.min_edge_override != -1.0
+    assert any(f.gate == "favorite_poll_model" for f in ctx.failures)
+
+
 def test_allows_expensive_no_favorite_when_poll_is_99_late():
     book_obj = book(0.03)
     executions = {

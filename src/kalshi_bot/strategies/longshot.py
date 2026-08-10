@@ -145,15 +145,32 @@ def resolve_longshot_entries(
             cost = executions[dominant].executable_cost
             remaining_upside = max(0.0, 1.0 - cost)
             min_edge_override = min(cfg.min_edge, max(0.01, remaining_upside * 0.5))
-        if poll.dominant_poll is not None and poll.dominant_poll + 1e-12 >= cfg.extreme_poll_threshold:
+        waive_edge = (
+            not cfg.perfect_entry_only
+            and poll.dominant_poll is not None
+            and poll.dominant_poll + 1e-12 >= cfg.extreme_poll_threshold
+        )
+        if waive_edge:
             min_edge_override = -1.0
-        elif dominant_prob + 1e-12 < cfg.extreme_poll_min_model_prob:
+        if dominant_prob + 1e-12 < cfg.extreme_poll_min_model_prob:
             failures.append(
                 _failure(
                     "favorite_poll_model",
                     "model does not support the market favorite",
                     dominant_prob,
                     cfg.extreme_poll_min_model_prob,
+                )
+            )
+        model_side = (
+            ContractSide.YES if forecast.p_up >= forecast.p_down else ContractSide.NO
+        )
+        if model_side is not dominant:
+            failures.append(
+                _failure(
+                    "favorite_poll_model",
+                    "model direction does not match the market favorite",
+                    model_side.value,
+                    dominant.value,
                 )
             )
     else:
