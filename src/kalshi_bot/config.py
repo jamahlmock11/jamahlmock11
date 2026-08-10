@@ -50,6 +50,8 @@ class HourEdgeConfig(BaseModel):
 
 
 class PollConfig(BaseModel):
+    mode: Literal["legacy", "confirm_aligned", "disabled"] = "legacy"
+    confirm_threshold: float = Field(default=0.75, ge=0.0, le=1.0)
     favorable_min: float = Field(default=0.85, ge=0.0, le=1.0)
     favorable_max: float = Field(default=0.90, ge=0.0, le=1.0)
     low_poll_threshold: float = Field(default=0.85, ge=0.0, le=1.0)
@@ -64,19 +66,30 @@ class PollConfig(BaseModel):
 class LongshotConfig(BaseModel):
     enabled: bool = False
     max_entry_price: float = Field(default=0.45, gt=0.0, le=1.0)
-    min_edge: float = Field(default=0.10, ge=0.10, le=0.20)
-    min_confidence: float = Field(default=0.50, ge=0.0, le=1.0)
+    min_edge: float = Field(default=0.06, ge=0.05, le=0.20)
+    min_confidence: float = Field(default=0.52, ge=0.0, le=1.0)
     min_signal_agreement: float = Field(default=0.50, ge=0.0, le=1.0)
-    poll_enabled: bool = False
+    poll_enabled: bool = True
     require_forecast_alignment: bool = False
     position_size_mult: float = Field(default=0.5, gt=0.0, le=1.0)
-    take_profit_cents: float = Field(default=0.10, gt=0.0, le=1.0)
+    take_profit_cents: float = Field(default=0.06, gt=0.0, le=1.0)
+    take_profit_pct: float = Field(default=0.10, ge=0.0, le=1.0)
     take_profit_price: float = Field(default=0.55, gt=0.0, le=1.0)
-    stop_loss_cents: float = Field(default=0.08, gt=0.0, le=1.0)
-    time_stop_seconds: float = Field(default=1200.0, ge=0.0)
+    stop_loss_cents: float = Field(default=0.07, gt=0.0, le=1.0)
+    stop_loss_pct: float = Field(default=0.10, ge=0.0, le=1.0)
+    time_stop_seconds: float = Field(default=900.0, ge=0.0)
     reversal_cents: float = Field(default=0.05, gt=0.0, le=1.0)
     reversal_window_seconds: float = Field(default=120.0, ge=0.0)
     entry_window_seconds: float = Field(default=1200.0, ge=0.0)
+    follow_extreme_poll: bool = True
+    extreme_poll_threshold: float = Field(default=0.85, ge=0.0, le=1.0)
+    extreme_poll_late_seconds: float = Field(
+        default=0.0,
+        ge=0.0,
+        description="Deprecated: 0 means favorite-follow applies whenever poll >= threshold.",
+    )
+    extreme_favorite_max_price: float = Field(default=0.99, gt=0.0, le=1.0)
+    extreme_poll_min_model_prob: float = Field(default=0.50, ge=0.0, le=1.0)
 
 
 class HourStrategyConfig(BaseModel):

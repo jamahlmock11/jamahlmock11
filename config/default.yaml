@@ -32,29 +32,36 @@ execution:
 longshot:
   enabled: true
   max_entry_price: 0.45
-  min_edge: 0.10
-  min_confidence: 0.50
+  min_edge: 0.06
+  min_confidence: 0.52
   min_signal_agreement: 0.50
-  poll_enabled: false
+  poll_enabled: true
   require_forecast_alignment: false
   position_size_mult: 0.5
-  take_profit_cents: 0.10
+  take_profit_cents: 0.06
+  take_profit_pct: 0.10
   take_profit_price: 0.55
-  stop_loss_cents: 0.08
-  time_stop_seconds: 600
+  stop_loss_cents: 0.07
+  stop_loss_pct: 0.10
+  time_stop_seconds: 900
   reversal_cents: 0.05
   reversal_window_seconds: 120
-  entry_window_seconds: 600
+  entry_window_seconds: 900
+  follow_extreme_poll: true
+  extreme_poll_threshold: 0.85
+  extreme_poll_late_seconds: 0
+  extreme_favorite_max_price: 0.99
+  extreme_poll_min_model_prob: 0.50
 
 strategy:
   min_edge: 0.20
   target_edge: 0.20
-  min_confidence: 0.50
+  min_confidence: 0.52
   min_signal_agreement: 0.50
   min_data_completeness: 0.75
   max_spread: 0.12
   min_seconds_remaining: 30
-  max_entry_seconds_remaining: 600
+  max_entry_seconds_remaining: 900
   late_seconds: 120
   final_seconds: 60
   final_min_edge: 0.20
@@ -66,6 +73,8 @@ strategy:
   external_data_enabled: false
 
 poll:
+  mode: confirm_aligned
+  confirm_threshold: 0.75
   favorable_min: 0.85
   favorable_max: 0.90
   low_poll_threshold: 0.85

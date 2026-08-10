@@ -16,14 +16,17 @@ from kalshi_bot.domain import (
     utc_datetime,
 )
 from kalshi_bot.execution.stop_loss import executable_exit_price
+from kalshi_bot.market.poll_alignment import PollSnapshot, market_poll_snapshot
 
 
 @dataclass(frozen=True)
 class LongshotExitConfig:
-    take_profit_cents: float = 0.10
+    take_profit_cents: float = 0.06
+    take_profit_pct: float = 0.10
     take_profit_price: float = 0.55
-    stop_loss_cents: float = 0.08
-    time_stop_seconds: float = 1200.0
+    stop_loss_cents: float = 0.07
+    stop_loss_pct: float = 0.10
+    time_stop_seconds: float = 900.0
     reversal_cents: float = 0.05
     reversal_window_seconds: float = 120.0
 
@@ -44,12 +47,143 @@ def filter_longshot_executions(
     executions: dict[ContractSide, ExecutionEstimate],
     *,
     max_entry_price: float,
+    inclusive_max: bool = False,
 ) -> dict[ContractSide, ExecutionEstimate]:
+    if inclusive_max:
+        return {
+            side: execution
+            for side, execution in executions.items()
+            if execution.executable_cost <= max_entry_price + 1e-12
+        }
     return {
         side: execution
         for side, execution in executions.items()
         if execution.executable_cost + 1e-12 < max_entry_price
     }
+
+
+@dataclass(frozen=True)
+class LongshotEntryContext:
+    executions: dict[ContractSide, ExecutionEstimate]
+    max_entry_price: float
+    min_edge_override: float | None
+    forced_side: ContractSide | None
+    extreme_poll_active: bool
+    failures: tuple[GateFailure, ...]
+
+
+def extreme_poll_active(
+    *,
+    poll: PollSnapshot,
+    seconds_remaining: float,
+    cfg: LongshotConfig,
+) -> bool:
+    if not cfg.follow_extreme_poll:
+        return False
+    if poll.dominant_poll is None or poll.dominant_side is None:
+        return False
+    if poll.dominant_poll + 1e-12 < cfg.extreme_poll_threshold:
+        return False
+    if cfg.extreme_poll_late_seconds <= 0:
+        return True
+    return seconds_remaining + 1e-9 <= cfg.extreme_poll_late_seconds
+
+
+def resolve_longshot_entries(
+    executions: dict[ContractSide, ExecutionEstimate],
+    *,
+    poll: PollSnapshot,
+    forecast: ProbabilityEstimate,
+    seconds_remaining: float,
+    cfg: LongshotConfig,
+) -> LongshotEntryContext:
+    """Apply longshot filters; strong favorites (85%+) follow the crowd, not momentary spikes."""
+    failures: list[GateFailure] = []
+    max_price = cfg.max_entry_price
+    min_edge_override: float | None = None
+    forced_side: ContractSide | None = None
+
+    follow_favorite = extreme_poll_active(
+        poll=poll,
+        seconds_remaining=seconds_remaining,
+        cfg=cfg,
+    )
+
+    if follow_favorite:
+        dominant = poll.dominant_side
+        assert dominant is not None
+        dominant_prob = (
+            forecast.p_up if dominant is ContractSide.YES else forecast.p_down
+        )
+        contrarian = {
+            side: execution
+            for side, execution in executions.items()
+            if side is not dominant
+        }
+        if contrarian:
+            failures.append(
+                _failure(
+                    "favorite_poll_contrarian",
+                    "strong market favorite blocks contrarian entries on momentary spikes",
+                    (
+                        poll.dominant_poll,
+                        dominant.value,
+                        sorted(contrarian.keys(), key=lambda side: side.value),
+                    ),
+                    cfg.extreme_poll_threshold,
+                )
+            )
+        executions = {
+            side: execution
+            for side, execution in executions.items()
+            if side is dominant
+        }
+        max_price = cfg.extreme_favorite_max_price
+        forced_side = dominant
+        min_edge_override = cfg.min_edge
+        if dominant in executions:
+            cost = executions[dominant].executable_cost
+            remaining_upside = max(0.0, 1.0 - cost)
+            min_edge_override = min(cfg.min_edge, max(0.01, remaining_upside * 0.5))
+        if poll.dominant_poll is not None and poll.dominant_poll + 1e-12 >= cfg.extreme_poll_threshold:
+            min_edge_override = -1.0
+        elif dominant_prob + 1e-12 < cfg.extreme_poll_min_model_prob:
+            failures.append(
+                _failure(
+                    "favorite_poll_model",
+                    "model does not support the market favorite",
+                    dominant_prob,
+                    cfg.extreme_poll_min_model_prob,
+                )
+            )
+    else:
+        price_failure = longshot_price_gate(executions, cfg=cfg)
+        if price_failure is not None:
+            failures.append(price_failure)
+
+    filtered = filter_longshot_executions(
+        executions,
+        max_entry_price=max_price,
+        inclusive_max=forced_side is not None,
+    )
+    if not filtered and executions:
+        failures.append(
+            _failure(
+                "longshot_price",
+                "no executable quote below maximum entry price",
+                {side: execution.executable_cost for side, execution in executions.items()},
+                max_price,
+            )
+        )
+
+    return LongshotEntryContext(
+        executions=filtered,
+        max_entry_price=max_price,
+        min_edge_override=min_edge_override,
+        forced_side=forced_side,
+        extreme_poll_active=follow_favorite,
+        failures=tuple(failures),
+    )
 
 
 def longshot_price_gate(
@@ -102,6 +236,17 @@ def evaluate_longshot_exit(
             exit_bid=exit_bid,
         )
 
+    if entry > 0 and gain / entry + 1e-12 >= cfg.take_profit_pct:
+        return LongshotExitSignal(
+            should_exit=True,
+            reason=(
+                f"longshot take profit: +{gain / entry:.0%} "
+                f"(target +{cfg.take_profit_pct:.0%})"
+            ),
+            trigger="take_profit_pct",
+            exit_bid=exit_bid,
+        )
+
     if exit_bid + 1e-12 >= cfg.take_profit_price:
         return LongshotExitSignal(
             should_exit=True,
@@ -121,6 +266,17 @@ def evaluate_longshot_exit(
                 f"(limit -{cfg.stop_loss_cents * 100:.0f}¢)"
             ),
             trigger="stop_loss_cents",
+            exit_bid=exit_bid,
+        )
+
+    if entry > 0 and (-gain) / entry + 1e-12 >= cfg.stop_loss_pct:
+        return LongshotExitSignal(
+            should_exit=True,
+            reason=(
+                f"longshot stop loss: {-gain / entry:.0%} "
+                f"(limit -{cfg.stop_loss_pct:.0%})"
+            ),
+            trigger="stop_loss_pct",
             exit_bid=exit_bid,
         )
 
@@ -159,8 +315,10 @@ def evaluate_longshot_exit(
 def longshot_exit_config(cfg: LongshotConfig) -> LongshotExitConfig:
     return LongshotExitConfig(
         take_profit_cents=cfg.take_profit_cents,
+        take_profit_pct=cfg.take_profit_pct,
         take_profit_price=cfg.take_profit_price,
         stop_loss_cents=cfg.stop_loss_cents,
+        stop_loss_pct=cfg.stop_loss_pct,
         time_stop_seconds=cfg.time_stop_seconds,
         reversal_cents=cfg.reversal_cents,
         reversal_window_seconds=cfg.reversal_window_seconds,

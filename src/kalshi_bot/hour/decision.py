@@ -31,14 +31,14 @@ from kalshi_bot.market.orderbook import (
 )
 from kalshi_bot.strategies.longshot import (
     evaluate_longshot_exit,
-    filter_longshot_executions,
     longshot_exit_config,
-    longshot_price_gate,
+    resolve_longshot_entries,
 )
 from kalshi_bot.market.poll_alignment import (
     PollConfig as PollAlignmentConfig,
-    evaluate_poll_alignment,
+    evaluate_poll_gate,
     market_poll_snapshot,
+    poll_gate_config_from_model,
 )
 from kalshi_bot.config import HourEdgeConfig, HourStrategyConfig, LongshotConfig, PollConfig
 
@@ -404,14 +404,17 @@ class HourDecisionEngine:
                     )
                 )
 
+        entry_ctx = None
         if cfg.longshot.enabled:
-            price_failure = longshot_price_gate(executions, cfg=cfg.longshot)
-            if price_failure is not None:
-                failures.append(price_failure)
-            executions = filter_longshot_executions(
+            entry_ctx = resolve_longshot_entries(
                 executions,
-                max_entry_price=cfg.longshot.max_entry_price,
+                poll=market_poll_snapshot(market.orderbook),
+                forecast=forecast,
+                seconds_remaining=features.seconds_remaining,
+                cfg=cfg.longshot,
             )
+            failures.extend(entry_ctx.failures)
+            executions = entry_ctx.executions
 
         if not executions:
             return DecisionResult(
@@ -472,9 +475,30 @@ class HourDecisionEngine:
             )
 
         selected_side = max(valid_edges, key=lambda side: (valid_edges[side], side.value))
-        selected_edge = valid_edges[selected_side]
+        if entry_ctx is not None and entry_ctx.forced_side is not None:
+            if entry_ctx.forced_side in valid_edges:
+                selected_side = entry_ctx.forced_side
+            else:
+                failures.append(
+                    _failure(
+                        "extreme_poll_favorite",
+                        "extreme poll favorite is not executable",
+                        entry_ctx.forced_side.value,
+                        entry_ctx.max_entry_price,
+                    )
+                )
+        selected_edge = valid_edges.get(selected_side)
+        if selected_edge is None:
+            selected_side = max(valid_edges, key=lambda side: (valid_edges[side], side.value))
+            selected_edge = valid_edges[selected_side]
         selected_execution = executions[selected_side]
-        required = cfg.longshot.min_edge if cfg.longshot.enabled else edge_assessment.required_edge
+        required = (
+            entry_ctx.min_edge_override
+            if entry_ctx is not None and entry_ctx.min_edge_override is not None
+            else cfg.longshot.min_edge if cfg.longshot.enabled else edge_assessment.required_edge
+        )
+        if not cfg.longshot.enabled:
+            required = edge_assessment.required_edge
 
         dominant_side = (
             ContractSide.YES if forecast.p_up >= forecast.p_down else ContractSide.NO
@@ -500,15 +524,20 @@ class HourDecisionEngine:
             )
 
         if cfg.longshot.enabled:
-            if selected_edge + 1e-12 < cfg.longshot.min_edge:
-                failures.append(
-                    _failure(
-                        "minimum_edge",
-                        "longshot edge below required threshold",
-                        selected_edge,
-                        cfg.longshot.min_edge,
+            if selected_edge is None or (
+                entry_ctx is None
+                or entry_ctx.min_edge_override is None
+                or entry_ctx.min_edge_override >= 0
+            ):
+                if selected_edge is None or selected_edge + 1e-12 < required:
+                    failures.append(
+                        _failure(
+                            "minimum_edge",
+                            "longshot edge below required threshold",
+                            selected_edge,
+                            required,
+                        )
                     )
-                )
         elif edge_assessment.trade_tier is TradeTier.NONE:
             failures.append(
                 _failure(
@@ -519,25 +548,31 @@ class HourDecisionEngine:
                 )
             )
 
-        if cfg.longshot.poll_enabled or not cfg.longshot.enabled:
-            poll_failure = evaluate_poll_alignment(
-            selected_side=selected_side,
-            forecast=forecast,
-            poll=market_poll_snapshot(market.orderbook),
-            cfg=PollAlignmentConfig(
-                favorable_min=cfg.poll.favorable_min,
-                favorable_max=cfg.poll.favorable_max,
-                low_poll_threshold=cfg.poll.low_poll_threshold,
-                counter_evidence_min_probability=cfg.poll.counter_evidence_min_probability,
-                counter_evidence_min_confidence=cfg.poll.counter_evidence_min_confidence,
-                counter_evidence_min_agreement=cfg.poll.counter_evidence_min_agreement,
-                low_poll_min_probability=cfg.poll.low_poll_min_probability,
-                low_poll_min_confidence=cfg.poll.low_poll_min_confidence,
-                low_poll_min_agreement=cfg.poll.low_poll_min_agreement,
-            ),
-        )
-        if poll_failure is not None:
-            failures.append(poll_failure)
+        poll_active = (not cfg.longshot.enabled) or cfg.longshot.poll_enabled
+        if poll_active and not (entry_ctx is not None and entry_ctx.extreme_poll_active):
+            poll_cfg = poll_gate_config_from_model(cfg.poll)
+            if cfg.longshot.enabled and poll_cfg.mode == "legacy":
+                poll_cfg = PollAlignmentConfig(
+                    mode="confirm_aligned",
+                    confirm_threshold=poll_cfg.confirm_threshold,
+                    favorable_min=poll_cfg.favorable_min,
+                    favorable_max=poll_cfg.favorable_max,
+                    low_poll_threshold=poll_cfg.low_poll_threshold,
+                    counter_evidence_min_probability=poll_cfg.counter_evidence_min_probability,
+                    counter_evidence_min_confidence=poll_cfg.counter_evidence_min_confidence,
+                    counter_evidence_min_agreement=poll_cfg.counter_evidence_min_agreement,
+                    low_poll_min_probability=poll_cfg.low_poll_min_probability,
+                    low_poll_min_confidence=poll_cfg.low_poll_min_confidence,
+                    low_poll_min_agreement=poll_cfg.low_poll_min_agreement,
+                )
+            poll_failure = evaluate_poll_gate(
+                selected_side=selected_side,
+                forecast=forecast,
+                poll=market_poll_snapshot(market.orderbook),
+                cfg=poll_cfg,
+            )
+            if poll_failure is not None:
+                failures.append(poll_failure)
 
         if failures:
             return DecisionResult(

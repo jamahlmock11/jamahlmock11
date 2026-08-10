@@ -122,6 +122,7 @@ def test_reversal_check_triggers_early_exit():
         quantity=1,
         cfg=LongshotExitConfig(
             stop_loss_cents=0.20,
+            stop_loss_pct=1.0,
             reversal_cents=0.05,
             reversal_window_seconds=120,
         ),
