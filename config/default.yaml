@@ -47,6 +47,11 @@ longshot:
   reversal_cents: 0.05
   reversal_window_seconds: 120
   entry_window_seconds: 900
+  follow_extreme_poll: true
+  extreme_poll_threshold: 0.90
+  extreme_poll_late_seconds: 180
+  extreme_favorite_max_price: 0.99
+  extreme_poll_min_model_prob: 0.50
 
 strategy:
   min_edge: 0.20

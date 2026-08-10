@@ -16,6 +16,7 @@ from kalshi_bot.domain import (
     utc_datetime,
 )
 from kalshi_bot.execution.stop_loss import executable_exit_price
+from kalshi_bot.market.poll_alignment import PollSnapshot, market_poll_snapshot
 
 
 @dataclass(frozen=True)
@@ -46,12 +47,135 @@ def filter_longshot_executions(
     executions: dict[ContractSide, ExecutionEstimate],
     *,
     max_entry_price: float,
+    inclusive_max: bool = False,
 ) -> dict[ContractSide, ExecutionEstimate]:
+    if inclusive_max:
+        return {
+            side: execution
+            for side, execution in executions.items()
+            if execution.executable_cost <= max_entry_price + 1e-12
+        }
     return {
         side: execution
         for side, execution in executions.items()
         if execution.executable_cost + 1e-12 < max_entry_price
     }
+
+
+@dataclass(frozen=True)
+class LongshotEntryContext:
+    executions: dict[ContractSide, ExecutionEstimate]
+    max_entry_price: float
+    min_edge_override: float | None
+    forced_side: ContractSide | None
+    extreme_poll_active: bool
+    failures: tuple[GateFailure, ...]
+
+
+def extreme_poll_active(
+    *,
+    poll: PollSnapshot,
+    seconds_remaining: float,
+    cfg: LongshotConfig,
+) -> bool:
+    return (
+        cfg.follow_extreme_poll
+        and poll.dominant_poll is not None
+        and poll.dominant_side is not None
+        and poll.dominant_poll + 1e-12 >= cfg.extreme_poll_threshold
+        and seconds_remaining + 1e-9 <= cfg.extreme_poll_late_seconds
+    )
+
+
+def resolve_longshot_entries(
+    executions: dict[ContractSide, ExecutionEstimate],
+    *,
+    poll: PollSnapshot,
+    forecast: ProbabilityEstimate,
+    seconds_remaining: float,
+    cfg: LongshotConfig,
+) -> LongshotEntryContext:
+    """Apply longshot filters; late extreme polls follow the crowd, not cheap contrarians."""
+    failures: list[GateFailure] = []
+    max_price = cfg.max_entry_price
+    min_edge_override: float | None = None
+    forced_side: ContractSide | None = None
+
+    if extreme_poll_active(poll=poll, seconds_remaining=seconds_remaining, cfg=cfg):
+        dominant = poll.dominant_side
+        assert dominant is not None
+        dominant_prob = (
+            forecast.p_up if dominant is ContractSide.YES else forecast.p_down
+        )
+        contrarian = {
+            side: execution
+            for side, execution in executions.items()
+            if side is not dominant
+        }
+        if contrarian:
+            failures.append(
+                _failure(
+                    "extreme_poll_contrarian",
+                    "late extreme market poll blocks contrarian longshot entries",
+                    (
+                        poll.dominant_poll,
+                        dominant.value,
+                        sorted(contrarian.keys(), key=lambda side: side.value),
+                    ),
+                    cfg.extreme_poll_threshold,
+                )
+            )
+        executions = {
+            side: execution
+            for side, execution in executions.items()
+            if side is dominant
+        }
+        max_price = cfg.extreme_favorite_max_price
+        forced_side = dominant
+        min_edge_override = cfg.min_edge
+        if dominant in executions:
+            cost = executions[dominant].executable_cost
+            remaining_upside = max(0.0, 1.0 - cost)
+            min_edge_override = min(cfg.min_edge, max(0.01, remaining_upside * 0.5))
+        if poll.dominant_poll is not None and poll.dominant_poll + 1e-12 >= 0.95:
+            min_edge_override = -1.0
+        elif dominant_prob + 1e-12 < cfg.extreme_poll_min_model_prob:
+            failures.append(
+                _failure(
+                    "extreme_poll_model",
+                    "model does not support the extreme poll favorite",
+                    dominant_prob,
+                    cfg.extreme_poll_min_model_prob,
+                )
+            )
+    else:
+        price_failure = longshot_price_gate(executions, cfg=cfg)
+        if price_failure is not None:
+            failures.append(price_failure)
+
+    filtered = filter_longshot_executions(
+        executions,
+        max_entry_price=max_price,
+        inclusive_max=forced_side is not None,
+    )
+    if not filtered and executions:
+        failures.append(
+            _failure(
+                "longshot_price",
+                "no executable quote below maximum entry price",
+                {side: execution.executable_cost for side, execution in executions.items()},
+                max_price,
+            )
+        )
+
+    return LongshotEntryContext(
+        executions=filtered,
+        max_entry_price=max_price,
+        min_edge_override=min_edge_override,
+        forced_side=forced_side,
+        extreme_poll_active=forced_side is not None,
+        failures=tuple(failures),
+    )
 
 
 def longshot_price_gate(

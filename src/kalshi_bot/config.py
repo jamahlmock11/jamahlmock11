@@ -81,6 +81,11 @@ class LongshotConfig(BaseModel):
     reversal_cents: float = Field(default=0.05, gt=0.0, le=1.0)
     reversal_window_seconds: float = Field(default=120.0, ge=0.0)
     entry_window_seconds: float = Field(default=1200.0, ge=0.0)
+    follow_extreme_poll: bool = True
+    extreme_poll_threshold: float = Field(default=0.90, ge=0.0, le=1.0)
+    extreme_poll_late_seconds: float = Field(default=180.0, ge=0.0)
+    extreme_favorite_max_price: float = Field(default=0.99, gt=0.0, le=1.0)
+    extreme_poll_min_model_prob: float = Field(default=0.50, ge=0.0, le=1.0)
 
 
 class HourStrategyConfig(BaseModel):

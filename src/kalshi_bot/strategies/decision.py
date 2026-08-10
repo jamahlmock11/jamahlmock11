@@ -29,9 +29,8 @@ from kalshi_bot.market.orderbook import (
 )
 from kalshi_bot.strategies.longshot import (
     evaluate_longshot_exit,
-    filter_longshot_executions,
     longshot_exit_config,
-    longshot_price_gate,
+    resolve_longshot_entries,
 )
 from kalshi_bot.market.poll_alignment import (
     PollConfig as PollAlignmentConfig,
@@ -505,14 +504,17 @@ class DecisionEngine:
                     )
                 )
 
+        entry_ctx = None
         if cfg.longshot.enabled:
-            price_failure = longshot_price_gate(executions, cfg=cfg.longshot)
-            if price_failure is not None:
-                failures.append(price_failure)
-            executions = filter_longshot_executions(
+            entry_ctx = resolve_longshot_entries(
                 executions,
-                max_entry_price=cfg.longshot.max_entry_price,
+                poll=market_poll_snapshot(market.orderbook),
+                forecast=forecast,
+                seconds_remaining=(market.expiration - observed_now).total_seconds(),
+                cfg=cfg.longshot,
             )
+            failures.extend(entry_ctx.failures)
+            executions = entry_ctx.executions
 
         if not executions:
             return DecisionResult(
@@ -528,7 +530,10 @@ class DecisionEngine:
             side: side_probabilities[side] - execution.executable_cost
             for side, execution in executions.items()
         }
-        selected_side = max(edges, key=lambda side: (edges[side], side.value))
+        if entry_ctx is not None and entry_ctx.forced_side is not None:
+            selected_side = entry_ctx.forced_side
+        else:
+            selected_side = max(edges, key=lambda side: (edges[side], side.value))
         selected_execution = executions[selected_side]
         selected_edge = edges[selected_side]
         edge_decimal = Decimal(str(side_probabilities[selected_side])) - Decimal(
@@ -536,6 +541,8 @@ class DecisionEngine:
         )
         seconds_remaining = (market.expiration - observed_now).total_seconds()
         required_edge = cfg.effective_minimum_edge
+        if entry_ctx is not None and entry_ctx.min_edge_override is not None:
+            required_edge = Decimal(str(entry_ctx.min_edge_override))
         if benchmark.is_proxy and not cfg.longshot.enabled:
             required_edge = max(required_edge, Decimal(str(cfg.proxy_minimum_edge)))
         if not cfg.longshot.enabled:
@@ -543,18 +550,26 @@ class DecisionEngine:
                 required_edge = max(required_edge, Decimal(str(cfg.late_minimum_edge)))
             if seconds_remaining <= cfg.final_seconds:
                 required_edge = max(required_edge, Decimal(str(cfg.final_minimum_edge)))
-        if edge_decimal + EDGE_TOLERANCE < required_edge:
-            failures.append(
-                _failure(
-                    "minimum_edge",
-                    "best all-in edge is below the applicable hard minimum",
-                    selected_edge,
-                    float(required_edge),
+        if entry_ctx is not None and entry_ctx.min_edge_override is not None:
+            if entry_ctx.min_edge_override >= 0:
+                required_edge = Decimal(str(entry_ctx.min_edge_override))
+        if (
+            entry_ctx is None
+            or entry_ctx.min_edge_override is None
+            or entry_ctx.min_edge_override >= 0
+        ):
+            if edge_decimal + EDGE_TOLERANCE < required_edge:
+                failures.append(
+                    _failure(
+                        "minimum_edge",
+                        "best all-in edge is below the applicable hard minimum",
+                        selected_edge,
+                        float(required_edge),
+                    )
                 )
-            )
 
         poll_active = (not cfg.longshot.enabled) or cfg.longshot.poll_enabled
-        if poll_active:
+        if poll_active and not (entry_ctx is not None and entry_ctx.extreme_poll_active):
             poll_cfg = poll_gate_config_from_model(cfg.poll)
             if cfg.longshot.enabled and poll_cfg.mode == "legacy":
                 poll_cfg = PollAlignmentConfig(
