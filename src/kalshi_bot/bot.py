@@ -14,6 +14,7 @@ from rich.table import Table
 from kalshi_bot.config import AppConfig, Settings
 from kalshi_bot.data.cf_benchmark import create_benchmark_feed
 from kalshi_bot.data.ibit_options import IBITOptionsProvider
+from kalshi_bot.data.spot_hub import SpotPriceHub
 from kalshi_bot.data.supporting_feeds import SupportingFeeds
 from kalshi_bot.domain import ContractSide, MarketPosition, OpenOrder
 from kalshi_bot.execution.engine import ExecutionEngine, ExecutionReport
@@ -25,6 +26,7 @@ from kalshi_bot.journal import TradeJournal
 from kalshi_bot.learning.signal_weights import SignalWeightTracker
 from kalshi_bot.strategies.forecasting import ForecastCycle, ForecastingScanner
 from kalshi_bot.strategies.decision import format_edge_gap
+from kalshi_bot.strategies.alt_runner import AltStrategyRunner
 from kalshi_bot.venues.kalshi import KalshiClient
 
 logger = logging.getLogger(__name__)
@@ -115,6 +117,12 @@ class TradingBot:
             orders_lookup=self._orders_lookup,
             intelligence=self.intelligence,
         )
+        self.spot_hub = SpotPriceHub(
+            poll_interval_sec=config.spot_lag.poll_interval_sec,
+        )
+        if config.spot_lag.enabled:
+            self.spot_hub.start()
+        self.alt_runner = AltStrategyRunner(config, self.spot_hub)
         self.stats = BotStats()
 
     def _hydrate_kill_switch(self) -> None:
@@ -224,6 +232,7 @@ class TradingBot:
             )
 
     def close(self) -> None:
+        self.spot_hub.close()
         self.kalshi.close()
         self.benchmark.close()
         self.supporting.close()
@@ -234,6 +243,34 @@ class TradingBot:
         self.risk.begin_cycle()
         mode = "DRY-RUN" if self.engine.dry_run else "LIVE"
         cycle = self.forecasting.scan(risk_locked=self.risk.locked)
+        alt_reports: list[ExecutionReport] = []
+        if (
+            self.config.execution.orders_enabled
+            and cycle.market is not None
+            and (
+                self.config.spot_lag.enabled
+                or self.config.orderbook_skew.enabled
+                or self.config.mean_reversion.enabled
+            )
+        ):
+            seconds_remaining = max(
+                0.0, (cycle.market.expiration - cycle.timestamp).total_seconds()
+            )
+            spot_price = cycle.benchmark.price if cycle.benchmark else None
+            alt = self.alt_runner.evaluate(
+                cycle.market,
+                seconds_remaining=seconds_remaining,
+                position=cycle.market.current_position,
+                open_orders=cycle.market.open_orders,
+                spot_price=spot_price,
+            )
+            for signal in alt.signals:
+                alt_report = self.engine.execute_alt_signal(signal)
+                if alt_report:
+                    alt_reports.append(alt_report)
+                    console.print(
+                        f"[cyan]{alt_report.detail}[/cyan]"
+                    )
         report = None
         if (
             self.config.execution.orders_enabled
@@ -246,13 +283,14 @@ class TradingBot:
                 timestamp=cycle.timestamp,
                 benchmark=cycle.benchmark,
             )
-        traded = bool(report and report.ok)
+        traded = bool(report and report.ok) or any(r.ok for r in alt_reports)
         self.journal.log_decision(
             cycle,
             dry_run=self.engine.dry_run,
             traded=traded,
             payload={
                 "execution": report.payload if report else None,
+                "alt_execution": [r.payload for r in alt_reports if r.payload],
                 "risk": {
                     "locked": self.risk.locked,
                     "reason": self.risk.state.halt_reason,

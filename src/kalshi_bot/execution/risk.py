@@ -201,6 +201,54 @@ class RiskManager:
         # terminal probability edge. It cannot satisfy the mandated entry rule.
         return 0
 
+    def size_alt_signal(self, edge: float, limit_price: float) -> int:
+        if self.state.halted or limit_price <= 0:
+            return 0
+        if self.state.trades_this_cycle >= self.max_trades_per_cycle:
+            return 0
+        daily_room = max(0.0, abs(self.max_daily_loss) + self.state.realized_pnl)
+        budget = min(
+            self.config.risk.max_position_size - self.state.open_exposure_usd,
+            self.config.risk.max_contract_exposure,
+            kelly_notional_usd(max(edge, 0.0), daily_room),
+        )
+        return max(
+            0,
+            min(
+                int(budget / limit_price),
+                self.config.execution.max_contracts_per_trade,
+            ),
+        )
+
+    def alt_entry_allowed(
+        self,
+        *,
+        ticker: str,
+        edge: float,
+        notional: float,
+        intent_id: str,
+        min_edge: float,
+    ) -> tuple[bool, str]:
+        if edge + 1e-12 < min_edge:
+            return False, f"edge below strategy minimum {min_edge:.0%}"
+        if self.state.halted:
+            return False, self.state.halt_reason or "risk lock active"
+        if intent_id in self.state.intent_ids:
+            return False, "duplicate order intent"
+        if self.state.trades_this_cycle >= self.max_trades_per_cycle:
+            return False, "cycle trade limit reached"
+        if self.state.trades_by_contract.get(ticker, 0) >= self.config.risk.max_trades_per_contract:
+            return False, "contract trade limit reached"
+        existing = self.state.positions.get(ticker, 0.0)
+        if existing + notional > self.max_per_ticker_usd + 1e-12:
+            return False, "contract exposure limit reached"
+        if self.state.open_exposure_usd + notional > self.config.risk.max_position_size + 1e-12:
+            return False, "portfolio position limit reached"
+        last = self.state.last_trade_ts.get(ticker, 0.0)
+        if last and time.time() - last < self.cooldown_sec:
+            return False, "contract cooldown active"
+        return True, ""
+
     def register_fill(self, ticker: str, notional: float) -> None:
         self.state.open_exposure_usd += notional
         self.state.trades_today += 1

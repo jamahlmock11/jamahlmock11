@@ -165,6 +165,43 @@ def imbalance(book: OrderBookSnapshot) -> float:
     return (yes - no) / (yes + no) if yes + no else 0.0
 
 
+def top_levels(
+    book: OrderBookSnapshot,
+    side: ContractSide,
+    *,
+    asks: bool = True,
+    n: int = 5,
+) -> tuple[OrderLevel, ...]:
+    return book.levels(side, asks=asks)[: max(n, 0)]
+
+
+def skew_top_n(book: OrderBookSnapshot, *, n: int = 5) -> float:
+    """Top-N bid vs ask size skew on YES (+1 = bid heavy, -1 = ask heavy)."""
+    bid_size = sum(level.size for level in top_levels(book, ContractSide.YES, asks=False, n=n))
+    ask_size = sum(level.size for level in top_levels(book, ContractSide.YES, asks=True, n=n))
+    total = bid_size + ask_size
+    if total <= 0:
+        return 0.0
+    return (bid_size - ask_size) / total
+
+
+def microprice(book: OrderBookSnapshot, side: ContractSide) -> float | None:
+    """Size-weighted mid from top of book."""
+    bids = top_levels(book, side, asks=False, n=1)
+    asks = top_levels(book, side, asks=True, n=1)
+    if not bids or not asks:
+        bid = book.yes_bid if side is ContractSide.YES else book.no_bid
+        ask = book.yes_ask if side is ContractSide.YES else book.no_ask
+        if bid is not None and ask is not None:
+            return (bid + ask) / 2.0
+        return ask if ask is not None else bid
+    bid, ask = bids[0], asks[0]
+    total = bid.size + ask.size
+    if total <= 0:
+        return (bid.price + ask.price) / 2.0
+    return (ask.price * bid.size + bid.price * ask.size) / total
+
+
 def estimate_buy_execution(
     book: OrderBookSnapshot,
     side: ContractSide,

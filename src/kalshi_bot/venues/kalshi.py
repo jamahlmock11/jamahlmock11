@@ -324,6 +324,9 @@ class KalshiClient:
         }
         return self.post("/portfolio/events/orders", json=body)
 
+    def cancel_order(self, order_id: str) -> dict[str, Any]:
+        return self.delete(f"/portfolio/orders/{order_id}")
+
     @staticmethod
     def _to_market(raw: dict[str, Any], series_hint: str = "") -> KalshiMarket | None:
         ticker = raw.get("ticker") or ""

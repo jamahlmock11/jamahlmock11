@@ -11,10 +11,35 @@ tiers:
 
 # Cross-venue arb: Kalshi UP + Polymarket DOWN (or inverse) < threshold
 cross_venue:
-  enabled: false  # off live until Polymarket leg is automated (avoids unpaired Kalshi risk)
-  max_pair_cost: 0.99   # risk-free if combined ask < 1.00; 0.99 leaves buffer
+  enabled: false
+  max_pair_cost: 0.99
   min_edge_usd: 0.01
   order_size: 5
+
+spot_lag:
+  enabled: true
+  min_spot_move_usd: 50
+  lookback_seconds: 30
+  min_implied_lag: 0.03
+  min_edge: 0.03
+  poll_interval_sec: 1.0
+
+orderbook_skew:
+  enabled: true
+  top_levels: 5
+  max_seconds_remaining: 180
+  min_skew: 0.25
+  min_z_distance: 1.5
+  min_edge: 0.05
+
+mean_reversion:
+  enabled: true
+  cheap_threshold: 0.20
+  rich_threshold: 0.80
+  maker_offset_cents: 0.01
+  revert_exit_cents: 0.15
+  max_resting_orders: 2
+  time_in_force: good_til_canceled
 
 execution:
   dry_run: false

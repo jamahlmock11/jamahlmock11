@@ -25,6 +25,34 @@ class CrossVenueConfig(BaseModel):
     order_size: int = 5
 
 
+class SpotLagArbConfig(BaseModel):
+    enabled: bool = False
+    min_spot_move_usd: float = Field(default=50.0, ge=0.0)
+    lookback_seconds: float = Field(default=30.0, gt=0.0)
+    min_implied_lag: float = Field(default=0.03, ge=0.0, le=1.0)
+    min_edge: float = Field(default=0.03, ge=0.0, le=1.0)
+    poll_interval_sec: float = Field(default=1.0, gt=0.0)
+
+
+class OrderbookSkewConfig(BaseModel):
+    enabled: bool = False
+    top_levels: int = Field(default=5, ge=1, le=20)
+    max_seconds_remaining: float = Field(default=180.0, ge=0.0)
+    min_skew: float = Field(default=0.25, ge=0.0, le=1.0)
+    min_z_distance: float = Field(default=1.5, ge=0.0)
+    min_edge: float = Field(default=0.05, ge=0.0, le=1.0)
+
+
+class MeanReversionConfig(BaseModel):
+    enabled: bool = False
+    cheap_threshold: float = Field(default=0.20, gt=0.0, le=1.0)
+    rich_threshold: float = Field(default=0.80, gt=0.0, le=1.0)
+    maker_offset_cents: float = Field(default=0.01, ge=0.0, le=0.5)
+    revert_exit_cents: float = Field(default=0.15, gt=0.0, le=1.0)
+    max_resting_orders: int = Field(default=2, ge=0)
+    time_in_force: str = "good_til_canceled"
+
+
 class ExecutionConfig(BaseModel):
     dry_run: bool = True
     orders_enabled: bool = True
@@ -192,6 +220,9 @@ class AppConfig(BaseModel):
     hour_edge: HourEdgeConfig = Field(default_factory=HourEdgeConfig)
     tiers: TierConfig = Field(default_factory=TierConfig)
     cross_venue: CrossVenueConfig = Field(default_factory=CrossVenueConfig)
+    spot_lag: SpotLagArbConfig = Field(default_factory=SpotLagArbConfig)
+    orderbook_skew: OrderbookSkewConfig = Field(default_factory=OrderbookSkewConfig)
+    mean_reversion: MeanReversionConfig = Field(default_factory=MeanReversionConfig)
     execution: ExecutionConfig = Field(default_factory=ExecutionConfig)
     strategy: StrategyConfig = Field(default_factory=StrategyConfig)
     risk: RiskConfig = Field(default_factory=RiskConfig)
