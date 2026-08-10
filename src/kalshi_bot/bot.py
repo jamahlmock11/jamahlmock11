@@ -93,6 +93,9 @@ class TradingBot:
             cooldown_sec=config.risk.cooldown_seconds,
             max_trades_per_cycle=1,
             max_per_ticker_usd=config.risk.max_contract_exposure,
+            hard_min_edge=(
+                config.longshot.min_edge if config.longshot.enabled else None
+            ),
         )
         self._hydrate_positions()
         self.engine = ExecutionEngine(

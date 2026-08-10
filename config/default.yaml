@@ -29,19 +29,35 @@ execution:
   slippage_bps: 5.0
   slippage_per_contract: 0.0
 
+longshot:
+  enabled: true
+  max_entry_price: 0.45
+  min_edge: 0.10
+  min_confidence: 0.50
+  min_signal_agreement: 0.50
+  poll_enabled: false
+  require_forecast_alignment: false
+  position_size_mult: 0.5
+  take_profit_cents: 0.10
+  take_profit_price: 0.55
+  stop_loss_cents: 0.08
+  time_stop_seconds: 600
+  reversal_cents: 0.05
+  reversal_window_seconds: 120
+  entry_window_seconds: 600
+
 strategy:
-  min_edge: 0.20       # cannot be configured below 0.20
-  target_edge: 0.25
-  min_confidence: 0.58
-  min_signal_agreement: 0.58
+  min_edge: 0.20
+  target_edge: 0.20
+  min_confidence: 0.50
+  min_signal_agreement: 0.50
   min_data_completeness: 0.75
   max_spread: 0.12
   min_seconds_remaining: 30
-  # Only enter in the final 10 minutes of each 15-minute contract.
   max_entry_seconds_remaining: 600
   late_seconds: 120
   final_seconds: 60
-  final_min_edge: 0.25
+  final_min_edge: 0.20
   order_quantity: 1
 
 poll:
@@ -66,19 +82,15 @@ risk:
   min_hold_seconds: 0
   stop_loss_fraction: 0.55
   opposite_edge_shift: 0.25
-  thesis_reversal_enabled: true
-  opposite_edge_exit_enabled: true
-  recovery_hold_enabled: true
+  thesis_reversal_enabled: false
+  opposite_edge_exit_enabled: false
+  recovery_hold_enabled: false
   recovery_hold_min_probability: 0.58
   recovery_hold_min_confidence: 0.58
   recovery_hold_min_agreement: 0.58
 
 data:
-  # constituent_proxy is an explicitly unofficial PAPER-only estimate built
-  # from public CME CF constituent venues. Use official for LIVE eligibility.
   benchmark_mode: kalshi_passthrough
-  # Required when benchmark_mode=official. The proxy is never labelled BRTI
-  # and can authorize PAPER decisions only.
   cf_benchmark_url: ""
   cf_benchmark_api_key: ""
   cf_benchmark_api_key_header: Authorization
@@ -89,14 +101,11 @@ data:
 
 pricing:
   risk_free_rate: 0.05
-  # IBIT ↔ BTC translation uses live price ratio (IBIT/BTC)
-  # Short-tenor IV is extrapolated from the nearest IBIT smile via sqrt-time
   min_iv: 0.30
   max_iv: 1.50
-  default_iv: 0.60   # fallback if smile unavailable (BTC high-vol regime)
+  default_iv: 0.60
   smile_cache_sec: 60
 
 settlement:
-  # Kalshi settles on the 60-second average of CF Benchmarks BRTI.
   reference: BRTI
   proxy_symbol: ""

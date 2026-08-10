@@ -7,23 +7,39 @@ hour:
   market_type: 1h
   contract_duration_seconds: 3600
   min_seconds_remaining: 30
-  # Only enter in the final 15 minutes of each hourly contract.
-  max_entry_seconds_remaining: 900
-  late_window_seconds: 900
+  max_entry_seconds_remaining: 1200
+  late_window_seconds: 1200
   mid_window_seconds: 1800
   final_seconds: 60
   history_seconds: 3700
   min_confidence: 0.50
   min_signal_agreement: 0.50
-  tier_b_min_confidence: 0.55
-  tier_b_min_agreement: 0.55
+  tier_b_min_confidence: 0.50
+  tier_b_min_agreement: 0.50
   min_data_completeness: 0.65
   max_spread: 0.14
   order_quantity: 1
   poll_interval_sec: 5
   model_version: hour-v1.0.0
-  require_forecast_alignment: true
+  require_forecast_alignment: false
   forecast_alignment_min_probability: 0.65
+
+longshot:
+  enabled: true
+  max_entry_price: 0.45
+  min_edge: 0.10
+  min_confidence: 0.50
+  min_signal_agreement: 0.50
+  poll_enabled: false
+  require_forecast_alignment: false
+  position_size_mult: 0.5
+  take_profit_cents: 0.10
+  take_profit_price: 0.55
+  stop_loss_cents: 0.08
+  time_stop_seconds: 1200
+  reversal_cents: 0.05
+  reversal_window_seconds: 120
+  entry_window_seconds: 1200
 
 poll:
   favorable_min: 0.85
@@ -58,10 +74,9 @@ execution:
 
 strategy:
   min_edge: 0.20
-  # Shared StrategyConfig floor (ge=0.20). Hourly entries use hour_edge.* instead.
   target_edge: 0.20
-  min_confidence: 0.55
-  min_signal_agreement: 0.55
+  min_confidence: 0.50
+  min_signal_agreement: 0.50
   min_data_completeness: 0.65
   max_spread: 0.14
   min_seconds_remaining: 30
@@ -78,7 +93,7 @@ risk:
   max_trades_per_contract: 1
   max_flips_per_contract: 0
   cooldown_seconds: 300
-  min_hold_seconds: 120
+  min_hold_seconds: 0
   stop_loss_fraction: 0.55
   opposite_edge_shift: 0.25
   thesis_reversal_enabled: false
