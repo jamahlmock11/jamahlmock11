@@ -119,3 +119,6 @@ def test_dashboard_api(tmp_path: Path):
     assert client.get("/").status_code == 200
     assert "Edge" in client.get("/").text
     assert client.get("/static/styles.css").status_code == 200
+    analytics = client.get("/api/analytics").json()
+    assert "win_rate_by_time_remaining" in analytics
+    assert "total_trades" in analytics

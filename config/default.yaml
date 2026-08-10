@@ -41,6 +41,11 @@ strategy:
   final_seconds: 60
   final_min_edge: 0.25
   order_quantity: 1
+  min_trade_quality_score: 65
+  max_do_not_trade_score: 40
+  require_trade_quality: true
+  min_pattern_matches: 10
+  external_data_enabled: false
 
 risk:
   max_daily_loss: 100

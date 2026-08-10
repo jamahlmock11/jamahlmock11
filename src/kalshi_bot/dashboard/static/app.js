@@ -220,6 +220,26 @@
       else if (payload?.risk) risk = `OK · P/L ${money(payload.risk.realized_pnl)}`;
     } catch (_) {}
     $("decisionPosition").textContent = `${position} / ${risk}`;
+
+    let tradeQuality = "—";
+    let modelAgreement = "—";
+    let liquidity = "—";
+    try {
+      const payload = d.payload ? JSON.parse(d.payload) : null;
+      const tq = payload?.trade_quality;
+      if (tq) {
+        tradeQuality = `${tq.score}/100 · ${tq.recommendation}`;
+        liquidity = `${tq.liquidity_label || "—"} · ${tq.historical_match_count || 0} matches`;
+      }
+      const ma = payload?.model_agreement;
+      if (ma) {
+        modelAgreement = `${pct(ma.agreement * 100)} ${ma.consensus} · ${ma.models_agree ? "agree" : "disagree"}`;
+      }
+    } catch (_) {}
+    $("decisionTradeQuality").textContent = tradeQuality;
+    $("decisionModelAgreement").textContent = modelAgreement;
+    $("decisionLiquidity").textContent = liquidity;
+
     $("whyLabel").textContent =
       action === "NO_TRADE" ? "WHY NO TRADE" :
       action === "EXIT" ? "WHY EXIT" :
@@ -274,9 +294,25 @@
     }
   }
 
+  function renderAnalytics(analytics) {
+    if (!analytics) return;
+    const fmt = (obj) =>
+      Object.entries(obj || {})
+        .map(([k, v]) => `${k}: ${typeof v === "number" ? (v * 100).toFixed(1) + "%" : v}`)
+        .join("\n") || "—";
+    $("analyticsTimeRemaining").textContent = fmt(analytics.win_rate_by_time_remaining);
+    $("analyticsSession").textContent = fmt(analytics.win_rate_by_session);
+    $("analyticsStrategy").textContent = Object.entries(analytics.profit_by_strategy || {})
+      .map(([k, v]) => `${k}: $${Number(v).toFixed(2)}`)
+      .join("\n") || "—";
+    $("analyticsLossCauses").textContent = (analytics.largest_loss_causes || [])
+      .map((c) => `${c.cause}: ${c.count}`)
+      .join("\n") || "—";
+  }
+
   async function refresh() {
     try {
-      const [stats, trades, decisions, signals, scans] = await Promise.all([
+      const [stats, trades, decisions, signals, scans, analytics] = await Promise.all([
         fetch("/api/stats").then((r) => {
           if (!r.ok) throw new Error(`stats HTTP ${r.status}`);
           return r.json();
@@ -291,6 +327,7 @@
         }),
         fetch("/api/signals?limit=100").then((r) => r.ok ? r.json() : { signals: [] }),
         fetch("/api/scans?limit=40").then((r) => r.ok ? r.json() : { scans: [] }),
+        fetch("/api/analytics").then((r) => r.ok ? r.json() : null),
       ]);
       $("offlineBanner").hidden = true;
       state.trades = trades.trades || [];
@@ -300,6 +337,7 @@
       renderCurrentDecision((decisions.decisions || [])[0]);
       renderSignals(signals.signals || []);
       renderScans(scans.scans || []);
+      renderAnalytics(analytics);
     } catch (err) {
       $("pulse").classList.add("off");
       $("mode").textContent = "OFFLINE";

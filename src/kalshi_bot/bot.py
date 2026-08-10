@@ -15,7 +15,7 @@ from kalshi_bot.config import AppConfig, Settings
 from kalshi_bot.data.cf_benchmark import create_benchmark_feed
 from kalshi_bot.data.ibit_options import IBITOptionsProvider
 from kalshi_bot.data.supporting_feeds import SupportingFeeds
-from kalshi_bot.domain import ContractSide, MarketPosition, OpenOrder
+from kalshi_bot.domain import ContractSide, MarketPosition, OpenOrder, Regime
 from kalshi_bot.execution.engine import ExecutionEngine, ExecutionReport
 from kalshi_bot.execution.position_manager import PositionManager, PositionManagerConfig
 from kalshi_bot.execution.risk import RiskManager
@@ -23,6 +23,8 @@ from kalshi_bot.intelligence.kill_switch import ConfidenceKillSwitch
 from kalshi_bot.intelligence.orchestrator import IntelligenceOrchestrator
 from kalshi_bot.journal import TradeJournal
 from kalshi_bot.learning.signal_weights import SignalWeightTracker
+from kalshi_bot.learning.trade_recorder import TradeRecorder
+from kalshi_bot.learning.pattern_matcher import PatternMatcher
 from kalshi_bot.strategies.forecasting import ForecastCycle, ForecastingScanner
 from kalshi_bot.strategies.decision import format_edge_gap
 from kalshi_bot.venues.kalshi import KalshiClient
@@ -56,6 +58,8 @@ class TradingBot:
             if signal_weights_path.exists()
             else SignalWeightTracker()
         )
+        self.trade_recorder = TradeRecorder()
+        self.pattern_matcher = PatternMatcher()
         self.kill_switch = ConfidenceKillSwitch()
         self._hydrate_kill_switch()
         self.intelligence = IntelligenceOrchestrator(
@@ -244,21 +248,68 @@ class TradingBot:
                 benchmark=cycle.benchmark,
             )
         traded = bool(report and report.ok)
+        payload: dict = {
+            "execution": report.payload if report else None,
+            "risk": {
+                "locked": self.risk.locked,
+                "reason": self.risk.state.halt_reason,
+                "realized_pnl": self.risk.state.realized_pnl,
+                "open_exposure_usd": self.risk.state.open_exposure_usd,
+                "consecutive_losses": self.risk.state.consecutive_losses,
+            },
+            "horizon": "15m",
+            "strategy": "forecast",
+        }
+        if cycle.trade_quality is not None:
+            tq = cycle.trade_quality
+            payload["trade_quality"] = {
+                "score": tq.trade_quality_score,
+                "do_not_trade_score": tq.do_not_trade_score,
+                "recommendation": tq.recommendation,
+                "liquidity_label": tq.liquidity_label,
+                "historical_match_count": tq.historical_match_count,
+                "trade_tier": tq.trade_tier.value,
+            }
+        if cycle.model_agreement is not None:
+            payload["model_agreement"] = {
+                "agreement": cycle.model_agreement.agreement,
+                "consensus": cycle.model_agreement.consensus_direction,
+                "models_agree": cycle.model_agreement.models_agree,
+            }
+        if cycle.enriched is not None:
+            payload["enriched_features"] = cycle.enriched.as_dict()
+            payload["entry_features"] = cycle.enriched.as_dict().get("price_action", {})
         self.journal.log_decision(
             cycle,
             dry_run=self.engine.dry_run,
             traded=traded,
-            payload={
-                "execution": report.payload if report else None,
-                "risk": {
-                    "locked": self.risk.locked,
-                    "reason": self.risk.state.halt_reason,
-                    "realized_pnl": self.risk.state.realized_pnl,
-                    "open_exposure_usd": self.risk.state.open_exposure_usd,
-                    "consecutive_losses": self.risk.state.consecutive_losses,
-                },
-            },
+            payload=payload,
         )
+        if (
+            traded
+            and cycle.market is not None
+            and cycle.decision is not None
+            and cycle.enriched is not None
+            and cycle.forecast is not None
+        ):
+            self.trade_recorder.record_entry(
+                ticker=cycle.market.ticker,
+                features=cycle.enriched.as_dict(),
+                prediction=cycle.forecast.p_up,
+                confidence=cycle.forecast.confidence,
+                edge=cycle.decision.edge or 0.0,
+                action=cycle.decision.action.value,
+                reason=cycle.decision.reason,
+            )
+            self.pattern_matcher.save_entry(
+                cycle.features,
+                cycle.enriched,
+                cycle.regime or Regime.UNCERTAIN,
+                prediction=cycle.forecast.p_up,
+                confidence=cycle.forecast.confidence,
+                edge=cycle.decision.edge or 0.0,
+                action=cycle.decision.action.value,
+            )
         self.stats.decisions += 1
         if traded:
             self.stats.trades += 1
@@ -342,6 +393,24 @@ class TradingBot:
             if decision.edge is not None:
                 table.add_row("All-in edge", f"{decision.edge:.1%}")
             table.add_row("Edge gap", format_edge_gap(decision))
+            if cycle.trade_quality:
+                tq = cycle.trade_quality
+                table.add_row(
+                    "Trade quality",
+                    f"{tq.trade_quality_score:.0f}/100 · {tq.recommendation} · "
+                    f"DNT {tq.do_not_trade_score:.0f}",
+                )
+                table.add_row(
+                    "Liquidity",
+                    f"{tq.liquidity_label} · tier {tq.trade_tier.value}",
+                )
+            if cycle.model_agreement:
+                ma = cycle.model_agreement
+                table.add_row(
+                    "Model agreement",
+                    f"{ma.agreement:.0%} {ma.consensus_direction} "
+                    f"({len(ma.dissenting_models)} dissenting)",
+                )
             table.add_row("Why", cycle.reason)
         if cycle.intelligence and cycle.intelligence.explainability:
             console.print(cycle.intelligence.explainability.format_report())
