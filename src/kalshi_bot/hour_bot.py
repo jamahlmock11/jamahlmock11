@@ -49,10 +49,13 @@ class HourTradingBot:
             else SignalWeightTracker()
         )
         self.kill_switch = ConfidenceKillSwitch()
+        ls = config.longshot
         self.intelligence = IntelligenceOrchestrator(
             kill_switch=self.kill_switch,
             signal_weights=self.signal_weights,
-            confidence_threshold=config.hour.min_confidence,
+            confidence_threshold=(
+                ls.min_confidence if ls.enabled else config.hour.min_confidence
+            ),
         )
         self.kalshi = KalshiClient(
             base_url=settings.kalshi_url,
