@@ -27,7 +27,7 @@ from kalshi_bot.domain import (
     TrajectoryState,
 )
 from kalshi_bot.features.engine import FeatureEngine, FeatureEngineConfig, classify_trajectory
-from kalshi_bot.market.discovery import discover_current_market
+from kalshi_bot.market.discovery import DiscoveryConfig, discover_current_market
 from kalshi_bot.market.orderbook import parse_orderbook_fp
 from kalshi_bot.models.ensemble import EnsembleProbabilityModel
 from kalshi_bot.strategies.decision import DecisionConfig, DecisionEngine
@@ -200,6 +200,41 @@ def test_constituent_proxy_is_robust_and_never_primary():
     FeatureEngine(FeatureEngineConfig(allow_proxy=True)).add_quote(quote)
     with pytest.raises(ValueError):
         FeatureEngine().add_quote(quote)
+
+
+def test_discovery_finds_15m_contract_outside_entry_window():
+    raw = {
+        "ticker": "KXBTC15M-26AUG080815-00",
+        "status": "active",
+        "rules_primary": "60 seconds of CF Benchmarks' BRTI determine settlement",
+        "floor_strike": 65000,
+        "open_time": (NOW - timedelta(minutes=3)).isoformat(),
+        "close_time": (NOW + timedelta(minutes=12)).isoformat(),
+    }
+    full_window = discover_current_market(
+        [raw],
+        orderbooks={raw["ticker"]: book()},
+        now=NOW,
+        config=DiscoveryConfig(
+            series_ticker="KXBTC15M",
+            minimum_seconds_remaining=30.0,
+            maximum_seconds_remaining=900.0,
+        ),
+    )
+    assert full_window.market is not None
+
+    entry_only = discover_current_market(
+        [raw],
+        orderbooks={raw["ticker"]: book()},
+        now=NOW,
+        config=DiscoveryConfig(
+            series_ticker="KXBTC15M",
+            minimum_seconds_remaining=30.0,
+            maximum_seconds_remaining=600.0,
+        ),
+    )
+    assert entry_only.market is None
+    assert any("too much time remains" in reason for reasons in entry_only.rejections.values() for reason in reasons)
 
 
 def test_discovery_selects_active_explicit_brti_contract():

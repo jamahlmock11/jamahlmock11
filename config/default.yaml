@@ -54,6 +54,7 @@ longshot:
   extreme_poll_min_model_prob: 0.50
 
 strategy:
+  contract_duration_seconds: 900
   min_edge: 0.20
   target_edge: 0.20
   min_confidence: 0.52
