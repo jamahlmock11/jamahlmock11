@@ -12,9 +12,9 @@ hour:
   mid_window_seconds: 1800
   final_seconds: 60
   history_seconds: 3700
-  min_confidence: 0.52
+  min_confidence: 0.0
   min_signal_agreement: 0.52
-  tier_b_min_confidence: 0.52
+  tier_b_min_confidence: 0.0
   tier_b_min_agreement: 0.52
   min_data_completeness: 0.65
   max_spread: 0.14
@@ -28,7 +28,7 @@ longshot:
   enabled: true
   max_entry_price: 0.45
   min_edge: 0.06
-  min_confidence: 0.52
+  min_confidence: 0.0
   min_signal_agreement: 0.52
   poll_enabled: true
   require_forecast_alignment: false
@@ -85,7 +85,7 @@ execution:
 strategy:
   min_edge: 0.20
   target_edge: 0.20
-  min_confidence: 0.52
+  min_confidence: 0.0
   min_signal_agreement: 0.52
   min_data_completeness: 0.65
   max_spread: 0.14
