@@ -26,7 +26,7 @@ from kalshi_bot.journal import TradeJournal
 from kalshi_bot.learning.signal_weights import SignalWeightTracker
 from kalshi_bot.strategies.forecasting import ForecastCycle, ForecastingScanner
 from kalshi_bot.strategies.decision import format_edge_gap
-from kalshi_bot.strategies.alt_runner import AltStrategyRunner
+from kalshi_bot.agents.pipeline import RomaPipeline, format_roma_report
 from kalshi_bot.venues.kalshi import KalshiClient
 
 logger = logging.getLogger(__name__)
@@ -123,6 +123,7 @@ class TradingBot:
         if config.spot_lag.enabled:
             self.spot_hub.start()
         self.alt_runner = AltStrategyRunner(config, self.spot_hub)
+        self.roma = RomaPipeline(config.agents)
         self.stats = BotStats()
 
     def _hydrate_kill_switch(self) -> None:
@@ -308,6 +309,9 @@ class TradingBot:
         if report:
             self.stats.reports.append(report)
         self._print_cycle(cycle, mode)
+        roma = self.roma.evaluate(cycle, risk_locked=self.risk.locked)
+        if roma is not None:
+            console.print(f"\n[bold cyan]{format_roma_report(roma)}[/bold cyan]")
         if report:
             color = "green" if report.ok else "red"
             console.print(f"[{color}]{report.detail}[/{color}]")

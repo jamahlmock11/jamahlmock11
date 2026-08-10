@@ -41,6 +41,12 @@ mean_reversion:
   max_resting_orders: 2
   time_in_force: good_til_canceled
 
+agents:
+  enabled: true
+  min_edge: 0.03
+  momentum_weight: 0.5
+  skew_weight: 0.5
+
 execution:
   dry_run: false
   orders_enabled: true

@@ -53,6 +53,13 @@ class MeanReversionConfig(BaseModel):
     time_in_force: str = "good_til_canceled"
 
 
+class AgentsConfig(BaseModel):
+    enabled: bool = True
+    min_edge: float = Field(default=0.03, ge=0.0, le=1.0)
+    momentum_weight: float = Field(default=0.5, ge=0.0, le=1.0)
+    skew_weight: float = Field(default=0.5, ge=0.0, le=1.0)
+
+
 class ExecutionConfig(BaseModel):
     dry_run: bool = True
     orders_enabled: bool = True
@@ -223,6 +230,7 @@ class AppConfig(BaseModel):
     spot_lag: SpotLagArbConfig = Field(default_factory=SpotLagArbConfig)
     orderbook_skew: OrderbookSkewConfig = Field(default_factory=OrderbookSkewConfig)
     mean_reversion: MeanReversionConfig = Field(default_factory=MeanReversionConfig)
+    agents: AgentsConfig = Field(default_factory=AgentsConfig)
     execution: ExecutionConfig = Field(default_factory=ExecutionConfig)
     strategy: StrategyConfig = Field(default_factory=StrategyConfig)
     risk: RiskConfig = Field(default_factory=RiskConfig)
