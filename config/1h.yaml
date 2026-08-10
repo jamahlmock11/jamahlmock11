@@ -13,9 +13,9 @@ hour:
   final_seconds: 60
   history_seconds: 3700
   min_confidence: 0.52
-  min_signal_agreement: 0.50
+  min_signal_agreement: 0.52
   tier_b_min_confidence: 0.52
-  tier_b_min_agreement: 0.50
+  tier_b_min_agreement: 0.52
   min_data_completeness: 0.65
   max_spread: 0.14
   order_quantity: 1
@@ -29,7 +29,7 @@ longshot:
   max_entry_price: 0.45
   min_edge: 0.06
   min_confidence: 0.52
-  min_signal_agreement: 0.50
+  min_signal_agreement: 0.52
   poll_enabled: true
   require_forecast_alignment: false
   position_size_mult: 0.5
@@ -46,7 +46,8 @@ longshot:
   extreme_poll_threshold: 0.85
   extreme_poll_late_seconds: 0
   extreme_favorite_max_price: 0.99
-  extreme_poll_min_model_prob: 0.50
+  extreme_poll_min_model_prob: 0.52
+  favorite_only: true
 
 poll:
   mode: confirm_aligned
@@ -84,8 +85,8 @@ execution:
 strategy:
   min_edge: 0.20
   target_edge: 0.20
-  min_confidence: 0.50
-  min_signal_agreement: 0.50
+  min_confidence: 0.52
+  min_signal_agreement: 0.52
   min_data_completeness: 0.65
   max_spread: 0.14
   min_seconds_remaining: 30

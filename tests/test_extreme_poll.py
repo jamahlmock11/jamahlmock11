@@ -76,6 +76,23 @@ def test_blocks_contrarian_at_87_percent_favorite():
     assert ContractSide.YES not in ctx.executions
 
 
+def test_favorite_only_blocks_entries_when_poll_below_threshold():
+    book_obj = book(0.50)
+    executions = {
+        ContractSide.YES: estimate_buy_execution(book_obj, ContractSide.YES, 1),
+        ContractSide.NO: estimate_buy_execution(book_obj, ContractSide.NO, 1),
+    }
+    ctx = resolve_longshot_entries(
+        executions,
+        poll=market_poll_snapshot(book_obj),
+        forecast=forecast(0.55),
+        seconds_remaining=600,
+        cfg=LongshotConfig(enabled=True, favorite_only=True),
+    )
+    assert any(f.gate == "favorite_only" for f in ctx.failures)
+    assert not ctx.executions
+
+
 def test_allows_expensive_no_favorite_when_poll_is_99_late():
     book_obj = book(0.03)
     executions = {

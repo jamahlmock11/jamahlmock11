@@ -157,9 +157,20 @@ def resolve_longshot_entries(
                 )
             )
     else:
-        price_failure = longshot_price_gate(executions, cfg=cfg)
-        if price_failure is not None:
-            failures.append(price_failure)
+        if cfg.favorite_only:
+            failures.append(
+                _failure(
+                    "favorite_only",
+                    "plan B only: entries require market favorite at or above poll threshold",
+                    poll.dominant_poll,
+                    cfg.extreme_poll_threshold,
+                )
+            )
+            executions = {}
+        else:
+            price_failure = longshot_price_gate(executions, cfg=cfg)
+            if price_failure is not None:
+                failures.append(price_failure)
 
     filtered = filter_longshot_executions(
         executions,
