@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
 
+from kalshi_bot.config import PollConfig
 from kalshi_bot.domain import (
     BenchmarkQuote,
     ContractSide,
@@ -25,6 +26,11 @@ from kalshi_bot.market.orderbook import (
     depth,
     estimate_buy_execution,
     spread,
+)
+from kalshi_bot.market.poll_alignment import (
+    PollConfig as PollAlignmentConfig,
+    evaluate_poll_alignment,
+    market_poll_snapshot,
 )
 
 ABSOLUTE_MINIMUM_EDGE = Decimal("0.20")
@@ -130,6 +136,7 @@ class DecisionConfig:
     recovery_hold_min_confidence: float = 0.58
     recovery_hold_min_agreement: float = 0.58
     min_hold_seconds: float = 0.0
+    poll: PollConfig = field(default_factory=PollConfig)
 
     @property
     def effective_minimum_edge(self) -> Decimal:
@@ -501,6 +508,25 @@ class DecisionEngine:
                     float(required_edge),
                 )
             )
+
+        poll_failure = evaluate_poll_alignment(
+            selected_side=selected_side,
+            forecast=forecast,
+            poll=market_poll_snapshot(market.orderbook),
+            cfg=PollAlignmentConfig(
+                favorable_min=cfg.poll.favorable_min,
+                favorable_max=cfg.poll.favorable_max,
+                low_poll_threshold=cfg.poll.low_poll_threshold,
+                counter_evidence_min_probability=cfg.poll.counter_evidence_min_probability,
+                counter_evidence_min_confidence=cfg.poll.counter_evidence_min_confidence,
+                counter_evidence_min_agreement=cfg.poll.counter_evidence_min_agreement,
+                low_poll_min_probability=cfg.poll.low_poll_min_probability,
+                low_poll_min_confidence=cfg.poll.low_poll_min_confidence,
+                low_poll_min_agreement=cfg.poll.low_poll_min_agreement,
+            ),
+        )
+        if poll_failure is not None:
+            failures.append(poll_failure)
 
         if failures:
             return DecisionResult(

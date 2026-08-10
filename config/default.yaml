@@ -37,10 +37,23 @@ strategy:
   min_data_completeness: 0.75
   max_spread: 0.12
   min_seconds_remaining: 30
+  # Only enter in the final 10 minutes of each 15-minute contract.
+  max_entry_seconds_remaining: 600
   late_seconds: 120
   final_seconds: 60
   final_min_edge: 0.25
   order_quantity: 1
+
+poll:
+  favorable_min: 0.85
+  favorable_max: 0.90
+  low_poll_threshold: 0.85
+  counter_evidence_min_probability: 0.70
+  counter_evidence_min_confidence: 0.65
+  counter_evidence_min_agreement: 0.65
+  low_poll_min_probability: 0.72
+  low_poll_min_confidence: 0.68
+  low_poll_min_agreement: 0.68
 
 risk:
   max_daily_loss: 100
