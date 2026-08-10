@@ -509,6 +509,7 @@ class ExecutionEngine:
         if self.dry_run:
             if signal.action == "buy":
                 self.risk.register_fill(signal.ticker, notional)
+            self.risk.register_intent(signal.intent_id)
             trade_id = self._persist_trade(
                 strategy=signal.strategy,
                 ticker=signal.ticker,
