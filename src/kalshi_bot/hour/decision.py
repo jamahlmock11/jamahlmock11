@@ -37,8 +37,9 @@ from kalshi_bot.strategies.longshot import (
 )
 from kalshi_bot.market.poll_alignment import (
     PollConfig as PollAlignmentConfig,
-    evaluate_poll_alignment,
+    evaluate_poll_gate,
     market_poll_snapshot,
+    poll_gate_config_from_model,
 )
 from kalshi_bot.config import HourEdgeConfig, HourStrategyConfig, LongshotConfig, PollConfig
 
@@ -519,25 +520,31 @@ class HourDecisionEngine:
                 )
             )
 
-        if cfg.longshot.poll_enabled or not cfg.longshot.enabled:
-            poll_failure = evaluate_poll_alignment(
-            selected_side=selected_side,
-            forecast=forecast,
-            poll=market_poll_snapshot(market.orderbook),
-            cfg=PollAlignmentConfig(
-                favorable_min=cfg.poll.favorable_min,
-                favorable_max=cfg.poll.favorable_max,
-                low_poll_threshold=cfg.poll.low_poll_threshold,
-                counter_evidence_min_probability=cfg.poll.counter_evidence_min_probability,
-                counter_evidence_min_confidence=cfg.poll.counter_evidence_min_confidence,
-                counter_evidence_min_agreement=cfg.poll.counter_evidence_min_agreement,
-                low_poll_min_probability=cfg.poll.low_poll_min_probability,
-                low_poll_min_confidence=cfg.poll.low_poll_min_confidence,
-                low_poll_min_agreement=cfg.poll.low_poll_min_agreement,
-            ),
-        )
-        if poll_failure is not None:
-            failures.append(poll_failure)
+        poll_active = (not cfg.longshot.enabled) or cfg.longshot.poll_enabled
+        if poll_active:
+            poll_cfg = poll_gate_config_from_model(cfg.poll)
+            if cfg.longshot.enabled and poll_cfg.mode == "legacy":
+                poll_cfg = PollAlignmentConfig(
+                    mode="confirm_aligned",
+                    confirm_threshold=poll_cfg.confirm_threshold,
+                    favorable_min=poll_cfg.favorable_min,
+                    favorable_max=poll_cfg.favorable_max,
+                    low_poll_threshold=poll_cfg.low_poll_threshold,
+                    counter_evidence_min_probability=poll_cfg.counter_evidence_min_probability,
+                    counter_evidence_min_confidence=poll_cfg.counter_evidence_min_confidence,
+                    counter_evidence_min_agreement=poll_cfg.counter_evidence_min_agreement,
+                    low_poll_min_probability=poll_cfg.low_poll_min_probability,
+                    low_poll_min_confidence=poll_cfg.low_poll_min_confidence,
+                    low_poll_min_agreement=poll_cfg.low_poll_min_agreement,
+                )
+            poll_failure = evaluate_poll_gate(
+                selected_side=selected_side,
+                forecast=forecast,
+                poll=market_poll_snapshot(market.orderbook),
+                cfg=poll_cfg,
+            )
+            if poll_failure is not None:
+                failures.append(poll_failure)
 
         if failures:
             return DecisionResult(

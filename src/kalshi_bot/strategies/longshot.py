@@ -20,10 +20,12 @@ from kalshi_bot.execution.stop_loss import executable_exit_price
 
 @dataclass(frozen=True)
 class LongshotExitConfig:
-    take_profit_cents: float = 0.10
+    take_profit_cents: float = 0.06
+    take_profit_pct: float = 0.10
     take_profit_price: float = 0.55
-    stop_loss_cents: float = 0.08
-    time_stop_seconds: float = 1200.0
+    stop_loss_cents: float = 0.07
+    stop_loss_pct: float = 0.10
+    time_stop_seconds: float = 900.0
     reversal_cents: float = 0.05
     reversal_window_seconds: float = 120.0
 
@@ -102,6 +104,17 @@ def evaluate_longshot_exit(
             exit_bid=exit_bid,
         )
 
+    if entry > 0 and gain / entry + 1e-12 >= cfg.take_profit_pct:
+        return LongshotExitSignal(
+            should_exit=True,
+            reason=(
+                f"longshot take profit: +{gain / entry:.0%} "
+                f"(target +{cfg.take_profit_pct:.0%})"
+            ),
+            trigger="take_profit_pct",
+            exit_bid=exit_bid,
+        )
+
     if exit_bid + 1e-12 >= cfg.take_profit_price:
         return LongshotExitSignal(
             should_exit=True,
@@ -121,6 +134,17 @@ def evaluate_longshot_exit(
                 f"(limit -{cfg.stop_loss_cents * 100:.0f}¢)"
             ),
             trigger="stop_loss_cents",
+            exit_bid=exit_bid,
+        )
+
+    if entry > 0 and (-gain) / entry + 1e-12 >= cfg.stop_loss_pct:
+        return LongshotExitSignal(
+            should_exit=True,
+            reason=(
+                f"longshot stop loss: {-gain / entry:.0%} "
+                f"(limit -{cfg.stop_loss_pct:.0%})"
+            ),
+            trigger="stop_loss_pct",
             exit_bid=exit_bid,
         )
 
@@ -159,8 +183,10 @@ def evaluate_longshot_exit(
 def longshot_exit_config(cfg: LongshotConfig) -> LongshotExitConfig:
     return LongshotExitConfig(
         take_profit_cents=cfg.take_profit_cents,
+        take_profit_pct=cfg.take_profit_pct,
         take_profit_price=cfg.take_profit_price,
         stop_loss_cents=cfg.stop_loss_cents,
+        stop_loss_pct=cfg.stop_loss_pct,
         time_stop_seconds=cfg.time_stop_seconds,
         reversal_cents=cfg.reversal_cents,
         reversal_window_seconds=cfg.reversal_window_seconds,

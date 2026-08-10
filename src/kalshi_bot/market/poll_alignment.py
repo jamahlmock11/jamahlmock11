@@ -11,6 +11,8 @@ from kalshi_bot.domain import ContractSide, GateFailure, OrderBookSnapshot, Prob
 class PollConfig:
     """Poll alignment thresholds for favoring market consensus."""
 
+    mode: str = "legacy"
+    confirm_threshold: float = 0.75
     favorable_min: float = 0.85
     favorable_max: float = 0.90
     low_poll_threshold: float = 0.85
@@ -143,3 +145,78 @@ def evaluate_poll_alignment(
             )
 
     return None
+
+
+def evaluate_poll_confirmation(
+    *,
+    selected_side: ContractSide,
+    forecast: ProbabilityEstimate,
+    poll: PollSnapshot,
+    threshold: float,
+) -> GateFailure | None:
+    """When crowd poll is high, require the model to agree on the same side."""
+    side_poll = selected_side_poll(poll, selected_side)
+    if side_poll is None:
+        return _failure(
+            "poll_missing",
+            "market poll is unavailable for the selected side",
+            None,
+            "executable poll quote",
+        )
+
+    model_prob = forecast.p_up if selected_side is ContractSide.YES else forecast.p_down
+    if side_poll + 1e-12 >= threshold and model_prob + 1e-12 < threshold:
+        return _failure(
+            "poll_confirm",
+            "high market poll requires matching model conviction on the same side",
+            (side_poll, model_prob),
+            threshold,
+        )
+    return None
+
+
+def poll_gate_config_from_model(model: object) -> PollConfig:
+    """Convert the YAML/pydantic poll config into gate-evaluation settings."""
+    return PollConfig(
+        mode=str(getattr(model, "mode", "legacy")),
+        confirm_threshold=float(getattr(model, "confirm_threshold", 0.75)),
+        favorable_min=float(getattr(model, "favorable_min", 0.85)),
+        favorable_max=float(getattr(model, "favorable_max", 0.90)),
+        low_poll_threshold=float(getattr(model, "low_poll_threshold", 0.85)),
+        counter_evidence_min_probability=float(
+            getattr(model, "counter_evidence_min_probability", 0.70)
+        ),
+        counter_evidence_min_confidence=float(
+            getattr(model, "counter_evidence_min_confidence", 0.65)
+        ),
+        counter_evidence_min_agreement=float(
+            getattr(model, "counter_evidence_min_agreement", 0.65)
+        ),
+        low_poll_min_probability=float(getattr(model, "low_poll_min_probability", 0.72)),
+        low_poll_min_confidence=float(getattr(model, "low_poll_min_confidence", 0.68)),
+        low_poll_min_agreement=float(getattr(model, "low_poll_min_agreement", 0.68)),
+    )
+
+
+def evaluate_poll_gate(
+    *,
+    selected_side: ContractSide,
+    forecast: ProbabilityEstimate,
+    poll: PollSnapshot,
+    cfg: PollConfig,
+) -> GateFailure | None:
+    if cfg.mode == "disabled":
+        return None
+    if cfg.mode == "confirm_aligned":
+        return evaluate_poll_confirmation(
+            selected_side=selected_side,
+            forecast=forecast,
+            poll=poll,
+            threshold=cfg.confirm_threshold,
+        )
+    return evaluate_poll_alignment(
+        selected_side=selected_side,
+        forecast=forecast,
+        poll=poll,
+        cfg=cfg,
+    )

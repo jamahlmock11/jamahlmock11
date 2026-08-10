@@ -11,6 +11,7 @@ from kalshi_bot.market.orderbook import parse_orderbook_fp
 from kalshi_bot.market.poll_alignment import (
     PollConfig,
     evaluate_poll_alignment,
+    evaluate_poll_confirmation,
     market_poll_snapshot,
 )
 
@@ -90,12 +91,35 @@ def test_contrarian_against_strong_poll_requires_counter_evidence():
     assert failure.gate == "poll_contrarian"
 
 
-def test_contrarian_allowed_with_counter_evidence():
-    poll = market_poll_snapshot(book(0.88))
-    failure = evaluate_poll_alignment(
-        selected_side=ContractSide.NO,
-        forecast=forecast(0.20, confidence=0.70, agreement=0.70),
+def test_poll_confirmation_blocks_mismatched_high_poll():
+    poll = market_poll_snapshot(book(0.80))
+    failure = evaluate_poll_confirmation(
+        selected_side=ContractSide.YES,
+        forecast=forecast(0.55),
         poll=poll,
-        cfg=CFG,
+        threshold=0.75,
+    )
+    assert failure is not None
+    assert failure.gate == "poll_confirm"
+
+
+def test_poll_confirmation_allows_aligned_high_poll():
+    poll = market_poll_snapshot(book(0.80))
+    failure = evaluate_poll_confirmation(
+        selected_side=ContractSide.YES,
+        forecast=forecast(0.78),
+        poll=poll,
+        threshold=0.75,
+    )
+    assert failure is None
+
+
+def test_poll_confirmation_allows_longshot_low_poll():
+    poll = market_poll_snapshot(book(0.35))
+    failure = evaluate_poll_confirmation(
+        selected_side=ContractSide.YES,
+        forecast=forecast(0.52),
+        poll=poll,
+        threshold=0.75,
     )
     assert failure is None

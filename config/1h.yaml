@@ -12,9 +12,9 @@ hour:
   mid_window_seconds: 1800
   final_seconds: 60
   history_seconds: 3700
-  min_confidence: 0.50
+  min_confidence: 0.52
   min_signal_agreement: 0.50
-  tier_b_min_confidence: 0.50
+  tier_b_min_confidence: 0.52
   tier_b_min_agreement: 0.50
   min_data_completeness: 0.65
   max_spread: 0.14
@@ -27,21 +27,25 @@ hour:
 longshot:
   enabled: true
   max_entry_price: 0.45
-  min_edge: 0.10
-  min_confidence: 0.50
+  min_edge: 0.06
+  min_confidence: 0.52
   min_signal_agreement: 0.50
-  poll_enabled: false
+  poll_enabled: true
   require_forecast_alignment: false
   position_size_mult: 0.5
-  take_profit_cents: 0.10
+  take_profit_cents: 0.06
+  take_profit_pct: 0.10
   take_profit_price: 0.55
-  stop_loss_cents: 0.08
-  time_stop_seconds: 1200
+  stop_loss_cents: 0.07
+  stop_loss_pct: 0.10
+  time_stop_seconds: 900
   reversal_cents: 0.05
   reversal_window_seconds: 120
   entry_window_seconds: 1200
 
 poll:
+  mode: confirm_aligned
+  confirm_threshold: 0.75
   favorable_min: 0.85
   favorable_max: 0.90
   low_poll_threshold: 0.85
