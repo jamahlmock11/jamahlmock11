@@ -89,7 +89,11 @@ class LongshotConfig(BaseModel):
         description="Deprecated: 0 means favorite-follow applies whenever poll >= threshold.",
     )
     extreme_favorite_max_price: float = Field(default=0.99, gt=0.0, le=1.0)
-    extreme_poll_min_model_prob: float = Field(default=0.50, ge=0.0, le=1.0)
+    extreme_poll_min_model_prob: float = Field(default=0.52, ge=0.0, le=1.0)
+    favorite_only: bool = Field(
+        default=False,
+        description="Plan B: only enter when poll >= extreme_poll_threshold (follow favorite).",
+    )
 
 
 class HourStrategyConfig(BaseModel):
