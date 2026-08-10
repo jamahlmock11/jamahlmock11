@@ -93,6 +93,16 @@ class HourForecastingScanner:
         self.options = options
         self.config = config
         hour_cfg = config.hour
+        ls = config.longshot
+        if ls.enabled:
+            hour_cfg = hour_cfg.model_copy(
+                update={
+                    "max_entry_seconds_remaining": ls.entry_window_seconds,
+                    "min_confidence": ls.min_confidence,
+                    "min_signal_agreement": ls.min_signal_agreement,
+                    "require_forecast_alignment": ls.require_forecast_alignment,
+                }
+            )
         self.features = features or HourFeatureEngine(
             FeatureEngineConfig(
                 history_seconds=hour_cfg.history_seconds,
@@ -110,6 +120,7 @@ class HourForecastingScanner:
                 hour=hour_cfg,
                 edge=config.hour_edge,
                 poll=config.poll,
+                longshot=config.longshot,
                 maximum_benchmark_age=config.data.max_brti_age_seconds,
                 fee_rate=config.execution.fee_rate,
                 fee_per_contract=config.execution.fee_per_contract,

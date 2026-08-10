@@ -100,25 +100,35 @@ class ForecastingScanner:
             )
         )
         self.model = model or EnsembleProbabilityModel()
+        ls = config.longshot
+        entry_window = (
+            ls.entry_window_seconds
+            if ls.enabled
+            else config.strategy.max_entry_seconds_remaining
+        )
         self.discovery = MarketDiscovery(
             DiscoveryConfig(
                 series_ticker="KXBTC15M",
                 minimum_seconds_remaining=config.strategy.min_seconds_remaining,
-                maximum_seconds_remaining=config.strategy.max_entry_seconds_remaining,
+                maximum_seconds_remaining=entry_window,
                 minimum_depth=config.strategy.order_quantity,
                 maximum_spread=config.strategy.max_spread,
             )
         )
         self.decision_engine = decision_engine or DecisionEngine(
             DecisionConfig(
-                minimum_edge=config.strategy.min_edge,
+                minimum_edge=ls.min_edge if ls.enabled else config.strategy.min_edge,
                 target_edge=config.strategy.target_edge,
                 quantity=config.strategy.order_quantity,
                 maximum_benchmark_age=config.data.max_brti_age_seconds,
                 minimum_seconds_remaining=config.strategy.min_seconds_remaining,
-                maximum_seconds_remaining=config.strategy.max_entry_seconds_remaining,
-                minimum_confidence=config.strategy.min_confidence,
-                minimum_agreement=config.strategy.min_signal_agreement,
+                maximum_seconds_remaining=entry_window,
+                minimum_confidence=ls.min_confidence if ls.enabled else config.strategy.min_confidence,
+                minimum_agreement=(
+                    ls.min_signal_agreement
+                    if ls.enabled
+                    else config.strategy.min_signal_agreement
+                ),
                 minimum_data_completeness=config.strategy.min_data_completeness,
                 minimum_depth=config.strategy.order_quantity,
                 maximum_spread=config.strategy.max_spread,
@@ -127,9 +137,9 @@ class ForecastingScanner:
                 slippage_bps=config.execution.slippage_bps,
                 slippage_per_contract=config.execution.slippage_per_contract,
                 late_seconds=config.strategy.late_seconds,
-                late_minimum_edge=config.strategy.target_edge,
+                late_minimum_edge=ls.min_edge if ls.enabled else config.strategy.target_edge,
                 final_seconds=config.strategy.final_seconds,
-                final_minimum_edge=config.strategy.final_min_edge,
+                final_minimum_edge=ls.min_edge if ls.enabled else config.strategy.final_min_edge,
                 allow_proxy_data=(
                     config.execution.dry_run
                     and config.data.benchmark_mode == "constituent_proxy"
@@ -139,20 +149,27 @@ class ForecastingScanner:
                 stop_loss_fraction=config.risk.stop_loss_fraction,
                 opposite_edge_shift=config.risk.opposite_edge_shift,
                 thesis_reversal_margin=config.risk.thesis_reversal_margin,
-                thesis_reversal_enabled=config.risk.thesis_reversal_enabled,
-                opposite_edge_exit_enabled=config.risk.opposite_edge_exit_enabled,
-                recovery_hold_enabled=config.risk.recovery_hold_enabled,
+                thesis_reversal_enabled=(
+                    False if ls.enabled else config.risk.thesis_reversal_enabled
+                ),
+                opposite_edge_exit_enabled=(
+                    False if ls.enabled else config.risk.opposite_edge_exit_enabled
+                ),
+                recovery_hold_enabled=(
+                    False if ls.enabled else config.risk.recovery_hold_enabled
+                ),
                 recovery_hold_min_probability=config.risk.recovery_hold_min_probability,
                 recovery_hold_min_confidence=config.risk.recovery_hold_min_confidence,
                 recovery_hold_min_agreement=config.risk.recovery_hold_min_agreement,
                 min_hold_seconds=config.risk.min_hold_seconds,
                 poll=config.poll,
+                longshot=config.longshot,
             )
         )
         self.position_lookup = position_lookup or (lambda _ticker: None)
         self.orders_lookup = orders_lookup or (lambda _ticker: ())
         self.intelligence = intelligence or IntelligenceOrchestrator(
-            confidence_threshold=config.strategy.min_confidence,
+            confidence_threshold=ls.min_confidence if ls.enabled else config.strategy.min_confidence,
         )
         self.enriched_engine = EnrichedFeatureEngine()
         self.pattern_matcher = PatternMatcher()

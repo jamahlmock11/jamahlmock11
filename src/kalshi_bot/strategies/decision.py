@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from kalshi_bot.config import PollConfig
+from kalshi_bot.config import LongshotConfig, PollConfig
 from kalshi_bot.domain import (
     BenchmarkQuote,
     ContractSide,
@@ -26,6 +26,12 @@ from kalshi_bot.market.orderbook import (
     depth,
     estimate_buy_execution,
     spread,
+)
+from kalshi_bot.strategies.longshot import (
+    evaluate_longshot_exit,
+    filter_longshot_executions,
+    longshot_exit_config,
+    longshot_price_gate,
 )
 from kalshi_bot.market.poll_alignment import (
     PollConfig as PollAlignmentConfig,
@@ -137,10 +143,13 @@ class DecisionConfig:
     recovery_hold_min_agreement: float = 0.58
     min_hold_seconds: float = 0.0
     poll: PollConfig = field(default_factory=PollConfig)
+    longshot: LongshotConfig = field(default_factory=LongshotConfig)
 
     @property
     def effective_minimum_edge(self) -> Decimal:
-        """The configured threshold can tighten, but never weaken, 20 points."""
+        """Longshot mode allows 10¢ edges; otherwise the 20¢ floor applies."""
+        if self.longshot.enabled:
+            return Decimal(str(self.longshot.min_edge))
         return max(ABSOLUTE_MINIMUM_EDGE, Decimal(str(self.minimum_edge)))
 
 
@@ -292,14 +301,15 @@ class DecisionEngine:
             min(1.0, cfg.minimum_confidence + cfg.late_confidence_increment),
         )
         if seconds <= cfg.late_seconds and forecast.confidence < late_confidence:
-            failures.append(
-                _failure(
-                    "late_confidence",
-                    "late-contract confidence is below the conservative minimum",
-                    forecast.confidence,
-                    late_confidence,
+            if not cfg.longshot.enabled:
+                failures.append(
+                    _failure(
+                        "late_confidence",
+                        "late-contract confidence is below the conservative minimum",
+                        forecast.confidence,
+                        late_confidence,
+                    )
                 )
-            )
         if forecast.signal_agreement < cfg.minimum_agreement:
             failures.append(
                 _failure(
@@ -387,6 +397,29 @@ class DecisionEngine:
 
         # Stop-loss, thesis reversal, or data loss exits to flat before new entries.
         if position is not None and position.quantity > 0:
+            if cfg.longshot.enabled:
+                longshot_exit = evaluate_longshot_exit(
+                    market=market,
+                    position=position,
+                    quantity=trade_quantity,
+                    cfg=longshot_exit_config(cfg.longshot),
+                    now=observed_now,
+                )
+                if longshot_exit is not None:
+                    exit_quantity = min(position.quantity, trade_quantity)
+                    if self._can_exit(market, position.side, exit_quantity):
+                        return DecisionResult(
+                            action=DecisionAction.EXIT,
+                            reason=longshot_exit.reason,
+                            gate_failures=tuple(failures),
+                            current_direction=current_direction,
+                            predicted_direction=predicted_direction,
+                            trade_direction=Direction.FLAT,
+                            selected_side=position.side,
+                            predicted_probability=forecast.p_up if position.side is ContractSide.YES else forecast.p_down,
+                            quantity=exit_quantity,
+                            target_edge=cfg.target_edge,
+                        )
             exit_signal = evaluate_position_exit(
                 market=market,
                 position=position,
@@ -394,7 +427,7 @@ class DecisionEngine:
                 failures=failures,
                 predicted_side=predicted_side,
                 quantity=trade_quantity,
-                stop_loss_fraction=cfg.stop_loss_fraction,
+                stop_loss_fraction=0.0 if cfg.longshot.enabled else cfg.stop_loss_fraction,
                 opposite_edge_shift=cfg.opposite_edge_shift,
                 thesis_reversal_margin=cfg.thesis_reversal_margin,
                 thesis_reversal_enabled=cfg.thesis_reversal_enabled,
@@ -471,6 +504,15 @@ class DecisionEngine:
                     )
                 )
 
+        if cfg.longshot.enabled:
+            price_failure = longshot_price_gate(executions, cfg=cfg.longshot)
+            if price_failure is not None:
+                failures.append(price_failure)
+            executions = filter_longshot_executions(
+                executions,
+                max_entry_price=cfg.longshot.max_entry_price,
+            )
+
         if not executions:
             return DecisionResult(
                 action=DecisionAction.NO_TRADE,
@@ -493,12 +535,13 @@ class DecisionEngine:
         )
         seconds_remaining = (market.expiration - observed_now).total_seconds()
         required_edge = cfg.effective_minimum_edge
-        if benchmark.is_proxy:
+        if benchmark.is_proxy and not cfg.longshot.enabled:
             required_edge = max(required_edge, Decimal(str(cfg.proxy_minimum_edge)))
-        if seconds_remaining <= cfg.late_seconds:
-            required_edge = max(required_edge, Decimal(str(cfg.late_minimum_edge)))
-        if seconds_remaining <= cfg.final_seconds:
-            required_edge = max(required_edge, Decimal(str(cfg.final_minimum_edge)))
+        if not cfg.longshot.enabled:
+            if seconds_remaining <= cfg.late_seconds:
+                required_edge = max(required_edge, Decimal(str(cfg.late_minimum_edge)))
+            if seconds_remaining <= cfg.final_seconds:
+                required_edge = max(required_edge, Decimal(str(cfg.final_minimum_edge)))
         if edge_decimal + EDGE_TOLERANCE < required_edge:
             failures.append(
                 _failure(
@@ -509,24 +552,25 @@ class DecisionEngine:
                 )
             )
 
-        poll_failure = evaluate_poll_alignment(
-            selected_side=selected_side,
-            forecast=forecast,
-            poll=market_poll_snapshot(market.orderbook),
-            cfg=PollAlignmentConfig(
-                favorable_min=cfg.poll.favorable_min,
-                favorable_max=cfg.poll.favorable_max,
-                low_poll_threshold=cfg.poll.low_poll_threshold,
-                counter_evidence_min_probability=cfg.poll.counter_evidence_min_probability,
-                counter_evidence_min_confidence=cfg.poll.counter_evidence_min_confidence,
-                counter_evidence_min_agreement=cfg.poll.counter_evidence_min_agreement,
-                low_poll_min_probability=cfg.poll.low_poll_min_probability,
-                low_poll_min_confidence=cfg.poll.low_poll_min_confidence,
-                low_poll_min_agreement=cfg.poll.low_poll_min_agreement,
-            ),
-        )
-        if poll_failure is not None:
-            failures.append(poll_failure)
+        if cfg.longshot.poll_enabled or not cfg.longshot.enabled:
+            poll_failure = evaluate_poll_alignment(
+                selected_side=selected_side,
+                forecast=forecast,
+                poll=market_poll_snapshot(market.orderbook),
+                cfg=PollAlignmentConfig(
+                    favorable_min=cfg.poll.favorable_min,
+                    favorable_max=cfg.poll.favorable_max,
+                    low_poll_threshold=cfg.poll.low_poll_threshold,
+                    counter_evidence_min_probability=cfg.poll.counter_evidence_min_probability,
+                    counter_evidence_min_confidence=cfg.poll.counter_evidence_min_confidence,
+                    counter_evidence_min_agreement=cfg.poll.counter_evidence_min_agreement,
+                    low_poll_min_probability=cfg.poll.low_poll_min_probability,
+                    low_poll_min_confidence=cfg.poll.low_poll_min_confidence,
+                    low_poll_min_agreement=cfg.poll.low_poll_min_agreement,
+                ),
+            )
+            if poll_failure is not None:
+                failures.append(poll_failure)
 
         if failures:
             return DecisionResult(
@@ -568,6 +612,7 @@ class DecisionEngine:
             target_edge=cfg.target_edge,
             quantity=trade_quantity,
             execution=selected_execution,
+            size_multiplier=cfg.longshot.position_size_mult if cfg.longshot.enabled else 1.0,
         )
 
 

@@ -29,12 +29,18 @@ from kalshi_bot.market.orderbook import (
     estimate_buy_execution,
     spread,
 )
+from kalshi_bot.strategies.longshot import (
+    evaluate_longshot_exit,
+    filter_longshot_executions,
+    longshot_exit_config,
+    longshot_price_gate,
+)
 from kalshi_bot.market.poll_alignment import (
     PollConfig as PollAlignmentConfig,
     evaluate_poll_alignment,
     market_poll_snapshot,
 )
-from kalshi_bot.config import HourEdgeConfig, HourStrategyConfig, PollConfig
+from kalshi_bot.config import HourEdgeConfig, HourStrategyConfig, LongshotConfig, PollConfig
 
 
 @dataclass(frozen=True)
@@ -42,6 +48,7 @@ class HourDecisionConfig:
     hour: HourStrategyConfig
     edge: HourEdgeConfig
     poll: PollConfig = field(default_factory=PollConfig)
+    longshot: LongshotConfig = field(default_factory=LongshotConfig)
     maximum_benchmark_age: float = 20.0
     maximum_feature_age: float = 15.0
     fee_rate: float = 0.0
@@ -288,6 +295,31 @@ class HourDecisionEngine:
         )
 
         if position is not None and position.quantity > 0:
+            held_prob = forecast.p_up if position.side is ContractSide.YES else forecast.p_down
+            if cfg.longshot.enabled:
+                longshot_exit = evaluate_longshot_exit(
+                    market=market,
+                    position=position,
+                    quantity=trade_quantity,
+                    cfg=longshot_exit_config(cfg.longshot),
+                    now=observed_now,
+                )
+                if longshot_exit is not None:
+                    exit_quantity = min(position.quantity, trade_quantity)
+                    if self._can_exit(market, position.side, exit_quantity):
+                        return DecisionResult(
+                            action=DecisionAction.EXIT,
+                            reason=longshot_exit.reason,
+                            gate_failures=tuple(failures),
+                            current_direction=current_direction,
+                            predicted_direction=predicted_direction,
+                            trade_direction=Direction.FLAT,
+                            selected_side=position.side,
+                            predicted_probability=held_prob,
+                            quantity=exit_quantity,
+                            target_edge=edge_cfg.preferred_edge,
+                        )
+            held_prob = forecast.p_up if position.side is ContractSide.YES else forecast.p_down
             exit_signal = evaluate_position_exit(
                 market=market,
                 position=position,
@@ -295,7 +327,7 @@ class HourDecisionEngine:
                 failures=failures,
                 predicted_side=predicted_side,
                 quantity=trade_quantity,
-                stop_loss_fraction=cfg.stop_loss_fraction,
+                stop_loss_fraction=0.0 if cfg.longshot.enabled else cfg.stop_loss_fraction,
                 opposite_edge_shift=cfg.opposite_edge_shift,
                 thesis_reversal_margin=cfg.thesis_reversal_margin,
                 thesis_reversal_enabled=cfg.thesis_reversal_enabled,
@@ -307,7 +339,6 @@ class HourDecisionEngine:
                 min_hold_seconds=cfg.min_hold_seconds,
                 now=observed_now,
             )
-            held_prob = forecast.p_up if position.side is ContractSide.YES else forecast.p_down
             if exit_signal is not None:
                 exit_quantity = min(position.quantity, trade_quantity)
                 if self._can_exit(market, position.side, exit_quantity):
@@ -373,6 +404,15 @@ class HourDecisionEngine:
                     )
                 )
 
+        if cfg.longshot.enabled:
+            price_failure = longshot_price_gate(executions, cfg=cfg.longshot)
+            if price_failure is not None:
+                failures.append(price_failure)
+            executions = filter_longshot_executions(
+                executions,
+                max_entry_price=cfg.longshot.max_entry_price,
+            )
+
         if not executions:
             return DecisionResult(
                 action=DecisionAction.NO_TRADE,
@@ -434,14 +474,19 @@ class HourDecisionEngine:
         selected_side = max(valid_edges, key=lambda side: (valid_edges[side], side.value))
         selected_edge = valid_edges[selected_side]
         selected_execution = executions[selected_side]
-        required = edge_assessment.required_edge
+        required = cfg.longshot.min_edge if cfg.longshot.enabled else edge_assessment.required_edge
 
         dominant_side = (
             ContractSide.YES if forecast.p_up >= forecast.p_down else ContractSide.NO
         )
         dominant_prob = max(forecast.p_up, forecast.p_down)
+        alignment_required = (
+            cfg.longshot.require_forecast_alignment
+            if cfg.longshot.enabled
+            else hour.require_forecast_alignment
+        )
         if (
-            hour.require_forecast_alignment
+            alignment_required
             and dominant_prob + 1e-12 >= hour.forecast_alignment_min_probability
             and selected_side is not dominant_side
         ):
@@ -454,7 +499,17 @@ class HourDecisionEngine:
                 )
             )
 
-        if edge_assessment.trade_tier is TradeTier.NONE:
+        if cfg.longshot.enabled:
+            if selected_edge + 1e-12 < cfg.longshot.min_edge:
+                failures.append(
+                    _failure(
+                        "minimum_edge",
+                        "longshot edge below required threshold",
+                        selected_edge,
+                        cfg.longshot.min_edge,
+                    )
+                )
+        elif edge_assessment.trade_tier is TradeTier.NONE:
             failures.append(
                 _failure(
                     "minimum_edge",
@@ -464,7 +519,8 @@ class HourDecisionEngine:
                 )
             )
 
-        poll_failure = evaluate_poll_alignment(
+        if cfg.longshot.poll_enabled or not cfg.longshot.enabled:
+            poll_failure = evaluate_poll_alignment(
             selected_side=selected_side,
             forecast=forecast,
             poll=market_poll_snapshot(market.orderbook),
@@ -508,7 +564,12 @@ class HourDecisionEngine:
             if selected_side is ContractSide.YES
             else DecisionAction.BUY_DOWN
         )
-        tier_label = edge_assessment.trade_tier.value
+        tier_label = edge_assessment.trade_tier.value if not cfg.longshot.enabled else "longshot"
+        size_multiplier = (
+            edge_assessment.size_multiplier * cfg.longshot.position_size_mult
+            if cfg.longshot.enabled
+            else edge_assessment.size_multiplier
+        )
         return DecisionResult(
             action=action,
             reason=f"{tier_label} trade: {selected_side.value} edge {selected_edge:.1%} >= required {required:.1%}",
@@ -524,7 +585,7 @@ class HourDecisionEngine:
             required_edge=required,
             trade_tier=edge_assessment.trade_tier,
             entry_timing=edge_assessment.entry_timing,
-            size_multiplier=edge_assessment.size_multiplier,
+            size_multiplier=size_multiplier,
             quantity=trade_quantity,
             execution=selected_execution,
         )
