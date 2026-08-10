@@ -43,8 +43,8 @@ longshot:
   reversal_window_seconds: 120
   entry_window_seconds: 1200
   follow_extreme_poll: true
-  extreme_poll_threshold: 0.90
-  extreme_poll_late_seconds: 180
+  extreme_poll_threshold: 0.85
+  extreme_poll_late_seconds: 0
   extreme_favorite_max_price: 0.99
   extreme_poll_min_model_prob: 0.50
 

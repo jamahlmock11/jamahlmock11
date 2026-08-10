@@ -78,13 +78,15 @@ def extreme_poll_active(
     seconds_remaining: float,
     cfg: LongshotConfig,
 ) -> bool:
-    return (
-        cfg.follow_extreme_poll
-        and poll.dominant_poll is not None
-        and poll.dominant_side is not None
-        and poll.dominant_poll + 1e-12 >= cfg.extreme_poll_threshold
-        and seconds_remaining + 1e-9 <= cfg.extreme_poll_late_seconds
-    )
+    if not cfg.follow_extreme_poll:
+        return False
+    if poll.dominant_poll is None or poll.dominant_side is None:
+        return False
+    if poll.dominant_poll + 1e-12 < cfg.extreme_poll_threshold:
+        return False
+    if cfg.extreme_poll_late_seconds <= 0:
+        return True
+    return seconds_remaining + 1e-9 <= cfg.extreme_poll_late_seconds
 
 
 def resolve_longshot_entries(
@@ -95,13 +97,19 @@ def resolve_longshot_entries(
     seconds_remaining: float,
     cfg: LongshotConfig,
 ) -> LongshotEntryContext:
-    """Apply longshot filters; late extreme polls follow the crowd, not cheap contrarians."""
+    """Apply longshot filters; strong favorites (85%+) follow the crowd, not momentary spikes."""
     failures: list[GateFailure] = []
     max_price = cfg.max_entry_price
     min_edge_override: float | None = None
     forced_side: ContractSide | None = None
 
-    if extreme_poll_active(poll=poll, seconds_remaining=seconds_remaining, cfg=cfg):
+    follow_favorite = extreme_poll_active(
+        poll=poll,
+        seconds_remaining=seconds_remaining,
+        cfg=cfg,
+    )
+
+    if follow_favorite:
         dominant = poll.dominant_side
         assert dominant is not None
         dominant_prob = (
@@ -115,8 +123,8 @@ def resolve_longshot_entries(
         if contrarian:
             failures.append(
                 _failure(
-                    "extreme_poll_contrarian",
-                    "late extreme market poll blocks contrarian longshot entries",
+                    "favorite_poll_contrarian",
+                    "strong market favorite blocks contrarian entries on momentary spikes",
                     (
                         poll.dominant_poll,
                         dominant.value,
@@ -137,13 +145,13 @@ def resolve_longshot_entries(
             cost = executions[dominant].executable_cost
             remaining_upside = max(0.0, 1.0 - cost)
             min_edge_override = min(cfg.min_edge, max(0.01, remaining_upside * 0.5))
-        if poll.dominant_poll is not None and poll.dominant_poll + 1e-12 >= 0.95:
+        if poll.dominant_poll is not None and poll.dominant_poll + 1e-12 >= cfg.extreme_poll_threshold:
             min_edge_override = -1.0
         elif dominant_prob + 1e-12 < cfg.extreme_poll_min_model_prob:
             failures.append(
                 _failure(
-                    "extreme_poll_model",
-                    "model does not support the extreme poll favorite",
+                    "favorite_poll_model",
+                    "model does not support the market favorite",
                     dominant_prob,
                     cfg.extreme_poll_min_model_prob,
                 )
@@ -173,7 +181,7 @@ def resolve_longshot_entries(
         max_entry_price=max_price,
         min_edge_override=min_edge_override,
         forced_side=forced_side,
-        extreme_poll_active=forced_side is not None,
+        extreme_poll_active=follow_favorite,
         failures=tuple(failures),
     )
 

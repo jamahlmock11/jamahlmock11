@@ -53,9 +53,27 @@ def test_blocks_contrarian_yes_when_no_poll_is_99_late():
         seconds_remaining=120,
         cfg=CFG,
     )
-    assert any(f.gate == "extreme_poll_contrarian" for f in ctx.failures)
+    assert any(f.gate == "favorite_poll_contrarian" for f in ctx.failures)
     assert ContractSide.YES not in ctx.executions
     assert ctx.forced_side is ContractSide.NO
+
+
+def test_blocks_contrarian_at_87_percent_favorite():
+    book_obj = book(0.15)
+    executions = {
+        ContractSide.YES: estimate_buy_execution(book_obj, ContractSide.YES, 1),
+        ContractSide.NO: estimate_buy_execution(book_obj, ContractSide.NO, 1),
+    }
+    ctx = resolve_longshot_entries(
+        executions,
+        poll=market_poll_snapshot(book_obj),
+        forecast=forecast(0.20),
+        seconds_remaining=600,
+        cfg=CFG,
+    )
+    assert any(f.gate == "favorite_poll_contrarian" for f in ctx.failures)
+    assert ctx.forced_side is ContractSide.NO
+    assert ContractSide.YES not in ctx.executions
 
 
 def test_allows_expensive_no_favorite_when_poll_is_99_late():
