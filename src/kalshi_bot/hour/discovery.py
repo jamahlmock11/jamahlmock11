@@ -93,10 +93,12 @@ def discover_hour_market(
     reference_price: float | None = None,
 ) -> DiscoveryResult:
     hour_cfg = config.hour
+    # Track the active hourly contract for the full window; entry timing is enforced
+    # later in the decision engine, not during discovery.
     discovery_cfg = DiscoveryConfig(
         series_ticker=hour_cfg.series_ticker,
         minimum_seconds_remaining=hour_cfg.min_seconds_remaining,
-        maximum_seconds_remaining=hour_cfg.max_entry_seconds_remaining,
+        maximum_seconds_remaining=hour_cfg.contract_duration_seconds,
         minimum_depth=config.minimum_depth,
         maximum_spread=config.maximum_spread,
     )
