@@ -92,37 +92,38 @@ class ForecastingScanner:
         )
         self.model = model or EnsembleProbabilityModel()
         ls = config.longshot
+        strategy = config.strategy
         entry_window = (
             ls.entry_window_seconds
             if ls.enabled
-            else config.strategy.max_entry_seconds_remaining
+            else strategy.max_entry_seconds_remaining
         )
         self.discovery = MarketDiscovery(
             DiscoveryConfig(
                 series_ticker="KXBTC15M",
-                minimum_seconds_remaining=config.strategy.min_seconds_remaining,
-                maximum_seconds_remaining=entry_window,
-                minimum_depth=config.strategy.order_quantity,
-                maximum_spread=config.strategy.max_spread,
+                minimum_seconds_remaining=strategy.min_seconds_remaining,
+                maximum_seconds_remaining=strategy.contract_duration_seconds,
+                minimum_depth=strategy.order_quantity,
+                maximum_spread=strategy.max_spread,
             )
         )
         self.decision_engine = decision_engine or DecisionEngine(
             DecisionConfig(
-                minimum_edge=ls.min_edge if ls.enabled else config.strategy.min_edge,
-                target_edge=config.strategy.target_edge,
-                quantity=config.strategy.order_quantity,
+                minimum_edge=ls.min_edge if ls.enabled else strategy.min_edge,
+                target_edge=strategy.target_edge,
+                quantity=strategy.order_quantity,
                 maximum_benchmark_age=config.data.max_brti_age_seconds,
-                minimum_seconds_remaining=config.strategy.min_seconds_remaining,
+                minimum_seconds_remaining=strategy.min_seconds_remaining,
                 maximum_seconds_remaining=entry_window,
-                minimum_confidence=ls.min_confidence if ls.enabled else config.strategy.min_confidence,
+                minimum_confidence=ls.min_confidence if ls.enabled else strategy.min_confidence,
                 minimum_agreement=(
                     ls.min_signal_agreement
                     if ls.enabled
-                    else config.strategy.min_signal_agreement
+                    else strategy.min_signal_agreement
                 ),
-                minimum_data_completeness=config.strategy.min_data_completeness,
-                minimum_depth=config.strategy.order_quantity,
-                maximum_spread=config.strategy.max_spread,
+                minimum_data_completeness=strategy.min_data_completeness,
+                minimum_depth=strategy.order_quantity,
+                maximum_spread=strategy.max_spread,
                 fee_rate=config.execution.fee_rate,
                 fee_per_contract=config.execution.fee_per_contract,
                 slippage_bps=config.execution.slippage_bps,

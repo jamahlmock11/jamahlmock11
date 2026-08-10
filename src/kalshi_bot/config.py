@@ -116,6 +116,7 @@ class HourStrategyConfig(BaseModel):
 
 
 class StrategyConfig(BaseModel):
+    contract_duration_seconds: float = Field(default=900.0, gt=0.0)
     min_edge: float = Field(default=0.20, ge=0.20)
     target_edge: float = Field(default=0.25, ge=0.20)
     min_confidence: float = Field(default=0.60, ge=0.0, le=1.0)
