@@ -84,6 +84,11 @@ class StrategyConfig(BaseModel):
     final_seconds: float = Field(default=60.0, ge=0.0)
     final_min_edge: float = Field(default=0.25, ge=0.20)
     order_quantity: float = Field(default=1.0, gt=0.0)
+    min_trade_quality_score: float = Field(default=65.0, ge=0.0, le=100.0)
+    max_do_not_trade_score: float = Field(default=40.0, ge=0.0, le=100.0)
+    require_trade_quality: bool = True
+    min_pattern_matches: int = Field(default=10, ge=0)
+    external_data_enabled: bool = False
 
 
 class RiskConfig(BaseModel):
