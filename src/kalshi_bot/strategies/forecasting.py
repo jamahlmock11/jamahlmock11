@@ -436,10 +436,14 @@ class ForecastingScanner:
                 trade_tier=trade_quality.trade_tier,
                 size_multiplier=trade_quality.size_multiplier,
             )
-        if intel_report.skip_trade and decision.action in {
+        if (
+            intel_report is not None
+            and intel_report.skip_trade
+            and decision.action in {
             DecisionAction.BUY_UP,
             DecisionAction.BUY_DOWN,
-        }:
+        }
+        ):
             decision = replace(
                 decision,
                 action=DecisionAction.NO_TRADE,
