@@ -15,6 +15,10 @@ from kalshi_bot.domain import (
     ProbabilityEstimate,
     utc_datetime,
 )
+from kalshi_bot.execution.position_reversal import (
+    PositionReversalConfig,
+    evaluate_position_reversal,
+)
 from kalshi_bot.market.orderbook import depth
 
 
@@ -102,6 +106,7 @@ def evaluate_position_exit(
     market: MarketSnapshot,
     position: MarketPosition,
     forecast: ProbabilityEstimate,
+    features: FeatureSnapshot | None = None,
     failures: tuple[GateFailure, ...] | list[GateFailure],
     predicted_side: ContractSide,
     quantity: float,
@@ -115,6 +120,7 @@ def evaluate_position_exit(
     recovery_hold_min_confidence: float = 0.58,
     recovery_hold_min_agreement: float = 0.58,
     min_hold_seconds: float = 0.0,
+    position_reversal: PositionReversalConfig | None = None,
     now: datetime | None = None,
     reliability_gates: set[str] | frozenset[str] | None = None,
 ) -> PositionExitSignal | None:
@@ -162,6 +168,27 @@ def evaluate_position_exit(
                     premium_loss_fraction=loss,
                     exit_bid=exit_bid,
                 )
+
+    reversal_cfg = position_reversal or PositionReversalConfig()
+    if features is not None and reversal_cfg.enabled and position.side is not None:
+        reversal = evaluate_position_reversal(
+            position_side=position.side,
+            features=features,
+            forecast=forecast,
+            cfg=reversal_cfg,
+        )
+        if reversal.should_reverse:
+            if within_min_hold:
+                return None
+            return PositionExitSignal(
+                should_exit=True,
+                reason=f"{reversal.reason}; exit before any opposite entry",
+                trigger="position_reversal",
+                premium_loss_fraction=(
+                    premium_loss_fraction(entry, exit_bid) if exit_bid is not None else None
+                ),
+                exit_bid=exit_bid,
+            )
 
     held_prob = forecast.p_up if position.side is ContractSide.YES else forecast.p_down
     thesis_reversed = (

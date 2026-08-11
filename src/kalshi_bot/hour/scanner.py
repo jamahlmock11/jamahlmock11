@@ -30,6 +30,7 @@ from kalshi_bot.domain import (
     SupportingAggregate,
 )
 from kalshi_bot.features.engine import FeatureEngineConfig
+from kalshi_bot.execution.position_reversal import reversal_config_from_risk
 from kalshi_bot.hour.decision import HourDecisionConfig, HourDecisionEngine
 from kalshi_bot.hour.discovery import HourDiscoveryConfig, discover_hour_market
 from kalshi_bot.hour.feature_engine import HourFeatureBundle, HourFeatureEngine
@@ -143,6 +144,7 @@ class HourForecastingScanner:
                 recovery_hold_min_confidence=config.risk.recovery_hold_min_confidence,
                 recovery_hold_min_agreement=config.risk.recovery_hold_min_agreement,
                 min_hold_seconds=config.risk.min_hold_seconds,
+                position_reversal=reversal_config_from_risk(config.risk),
             )
         )
         self.position_lookup = position_lookup or (lambda _ticker: None)

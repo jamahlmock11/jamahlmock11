@@ -270,6 +270,13 @@ class RiskConfig(BaseModel):
     recovery_hold_min_confidence: float = Field(default=0.58, ge=0.0, le=1.0)
     recovery_hold_min_agreement: float = Field(default=0.58, ge=0.0, le=1.0)
     min_hold_seconds: float = Field(default=0.0, ge=0.0)
+    position_reversal_enabled: bool = True
+    position_reversal_window_seconds: float = Field(default=420.0, ge=0.0)
+    position_reversal_min_hold_probability: float = Field(default=0.42, ge=0.0, le=1.0)
+    position_reversal_late_hold_probability: float = Field(default=0.55, ge=0.0, le=1.0)
+    position_reversal_min_z_support: float = Field(default=-0.50)
+    position_reversal_wrong_side_seconds: float = Field(default=180.0, ge=0.0)
+    position_reversal_min_forecast_probability: float = Field(default=0.40, ge=0.0, le=1.0)
     kelly_enabled: bool = True
     kelly_fraction: float = Field(
         default=0.25,

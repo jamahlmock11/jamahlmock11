@@ -21,6 +21,10 @@ from kalshi_bot.domain import (
     ProbabilityEstimate,
     utc_datetime,
 )
+from kalshi_bot.execution.position_reversal import (
+    PositionReversalConfig,
+    reversal_config_from_risk,
+)
 from kalshi_bot.execution.stop_loss import evaluate_position_exit
 from kalshi_bot.market.orderbook import (
     InsufficientDepthError,
@@ -151,6 +155,7 @@ class DecisionConfig:
     recovery_hold_min_confidence: float = 0.58
     recovery_hold_min_agreement: float = 0.58
     min_hold_seconds: float = 0.0
+    position_reversal: PositionReversalConfig = field(default_factory=PositionReversalConfig)
     poll: PollConfig = field(default_factory=PollConfig)
     longshot: LongshotConfig = field(default_factory=LongshotConfig)
 
@@ -473,6 +478,7 @@ class DecisionEngine:
                 market=market,
                 position=position,
                 forecast=forecast,
+                features=features,
                 failures=failures,
                 predicted_side=predicted_side,
                 quantity=trade_quantity,
@@ -486,6 +492,7 @@ class DecisionEngine:
                 recovery_hold_min_confidence=cfg.recovery_hold_min_confidence,
                 recovery_hold_min_agreement=cfg.recovery_hold_min_agreement,
                 min_hold_seconds=cfg.min_hold_seconds,
+                position_reversal=cfg.position_reversal,
                 now=observed_now,
             )
             if exit_signal is not None:

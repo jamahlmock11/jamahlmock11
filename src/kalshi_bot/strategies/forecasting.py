@@ -161,6 +161,7 @@ class ForecastingScanner:
                 recovery_hold_min_confidence=config.risk.recovery_hold_min_confidence,
                 recovery_hold_min_agreement=config.risk.recovery_hold_min_agreement,
                 min_hold_seconds=config.risk.min_hold_seconds,
+                position_reversal=reversal_config_from_risk(config.risk),
                 poll=config.poll,
                 longshot=config.longshot,
             )

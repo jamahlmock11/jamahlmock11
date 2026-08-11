@@ -18,6 +18,10 @@ from kalshi_bot.data.spot_hub import SpotPriceHub
 from kalshi_bot.data.supporting_feeds import SupportingFeeds
 from kalshi_bot.domain import ContractSide, DecisionAction, MarketPosition, OpenOrder
 from kalshi_bot.execution.engine import ExecutionEngine, ExecutionReport
+from kalshi_bot.execution.position_reversal import (
+    evaluate_position_reversal,
+    reversal_config_from_risk,
+)
 from kalshi_bot.execution.position_manager import PositionManager, PositionManagerConfig
 from kalshi_bot.execution.risk import RiskManager
 from kalshi_bot.intelligence.kill_switch import ConfidenceKillSwitch
@@ -411,6 +415,25 @@ class TradingBot:
                 "Path hold",
                 f"{hold_side} {hold_prob:.0%}",
             )
+            position = (
+                cycle.market.current_position
+                if cycle.market and cycle.market.current_position
+                else None
+            )
+            if (
+                position is not None
+                and position.quantity > 0
+                and cycle.forecast is not None
+                and self.config.risk.position_reversal_enabled
+            ):
+                reversal = evaluate_position_reversal(
+                    position_side=position.side,
+                    features=cycle.features,
+                    forecast=cycle.forecast,
+                    cfg=reversal_config_from_risk(self.config.risk),
+                )
+                label = "Reversal risk" if reversal.should_reverse else "Position hold"
+                table.add_row(label, reversal.summary)
         if not self.config.longshot.enabled:
             if cycle.forecast:
                 table.add_row(
