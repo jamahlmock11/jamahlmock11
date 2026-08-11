@@ -461,6 +461,21 @@ def _late_favorite_config() -> DecisionConfig:
     )
 
 
+def test_last_minute_entry_blocked():
+    from kalshi_bot.strategies.decision import DecisionConfig, DecisionEngine
+
+    late_market = replace(market(), expiration=NOW + timedelta(seconds=45))
+    result = DecisionEngine(DecisionConfig(minimum_seconds_remaining=60)).decide(
+        late_market,
+        forecast(0.78),
+        features(),
+        benchmark(),
+        now=NOW,
+    )
+    assert result.action.value == "NO_TRADE"
+    assert any(failure.gate == "last_minute" for failure in result.gate_failures)
+
+
 def test_late_favorite_allows_four_cent_edge_on_poll_dominant_side():
     late_market = replace(market(yes_ask=0.79), expiration=NOW + timedelta(seconds=300))
     result = DecisionEngine(_late_favorite_config()).decide(

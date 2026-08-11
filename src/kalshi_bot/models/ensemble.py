@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from statistics import NormalDist
 
 from kalshi_bot.domain import FeatureSnapshot, ProbabilityEstimate, Regime, TrajectoryState
+from kalshi_bot.models.strike_gravity import assess_strike_gravity
 
 Calibrator = Callable[[float], float]
 SECONDS_PER_YEAR = 365.25 * 24 * 60 * 60
@@ -21,6 +22,7 @@ class EnsembleConfig:
     probability_floor: float = 0.03
     probability_ceiling: float = 0.97
     late_seconds: float = 60.0
+    settlement_window_seconds: float = 420.0
     late_probability_floor: float = 0.10
     late_probability_ceiling: float = 0.90
     missing_signal_shrink: float = 0.55
@@ -28,15 +30,16 @@ class EnsembleConfig:
 
 
 BASE_WEIGHTS: dict[str, float] = {
-    "terminal_distribution": 0.30,
-    "strike_distance": 0.18,
-    "trajectory_momentum": 0.13,
-    "acceleration_reversal": 0.08,
-    "trend_mean_reversion": 0.08,
-    "orderbook": 0.08,
-    "cross_exchange": 0.06,
-    "market_prior": 0.05,
-    "historical_prior": 0.04,
+    "brti_settlement_core": 0.24,
+    "terminal_distribution": 0.22,
+    "strike_distance": 0.14,
+    "trajectory_momentum": 0.12,
+    "acceleration_reversal": 0.07,
+    "trend_mean_reversion": 0.07,
+    "orderbook": 0.06,
+    "cross_exchange": 0.04,
+    "market_prior": 0.02,
+    "historical_prior": 0.02,
 }
 
 
@@ -56,7 +59,91 @@ def _terminal_probability(spot: float, strike: float, seconds: float, volatility
     return NormalDist().cdf(d2)
 
 
-def _regime_weights(regime: Regime, seconds_remaining: float) -> dict[str, float]:
+def _time_urgency(seconds_remaining: float, *, window_seconds: float) -> float:
+    """Ramp 0→1 over the late tradable window as expiry approaches."""
+    seconds = max(0.0, seconds_remaining)
+    if seconds >= window_seconds:
+        return 0.12
+    return _clip(1.0 - seconds / window_seconds, 0.12, 1.0)
+
+
+def _momentum_finish_probability(features: FeatureSnapshot) -> float:
+    """Short-horizon BRTI momentum tilted toward finishing above strike."""
+    spot = features.current_price
+    strike = (
+        features.settlement_effective_strike
+        if features.settlement_effective_strike is not None
+        else features.strike
+    )
+    expected_fraction = max(features.expected_remaining_move / max(spot, 1.0), 0.0001)
+    trend_signal = math.tanh(features.short_trend / expected_fraction)
+    if spot + 1e-9 < strike:
+        trend_signal = -trend_signal
+    velocity_signal = math.tanh(
+        features.velocities.get(5, features.velocities.get(10, 0.0)) * 500.0
+    )
+    if spot + 1e-9 < strike:
+        velocity_signal = -velocity_signal
+    combined = 0.65 * trend_signal + 0.35 * velocity_signal
+    return _clip(0.5 + 0.24 * combined)
+
+
+def _brti_settlement_core_probability(
+    features: FeatureSnapshot,
+    volatility: float,
+    *,
+    settlement_window_seconds: float,
+) -> float:
+    """
+    Core BRTI view: spot vs strike with momentum, volatility, and time-to-expiry.
+
+    Weight shifts toward distance, terminal mass, and locked settlement as expiry nears.
+    """
+    effective_strike = (
+        features.settlement_effective_strike
+        if features.settlement_effective_strike is not None
+        else features.strike
+    )
+    spot = features.current_price
+    seconds = max(features.seconds_remaining, 1.0)
+    urgency = _time_urgency(seconds, window_seconds=settlement_window_seconds)
+
+    terminal = _terminal_probability(spot, effective_strike, seconds, volatility)
+    distance = NormalDist().cdf(features.z_distance_to_strike)
+    gravity = assess_strike_gravity(features)
+    momentum = _momentum_finish_probability(features)
+
+    # High realized vol pulls the view toward uncertainty unless spot is already far from strike.
+    vol_damp = min(volatility / 1.25, 0.55)
+    distance_anchor = 0.5 + (distance - 0.5) * (1.0 - 0.35 * vol_damp)
+
+    early = (
+        0.24 * terminal
+        + 0.24 * distance_anchor
+        + 0.28 * gravity.finish_probability_up
+        + 0.24 * momentum
+    )
+    late = (
+        0.30 * terminal
+        + 0.32 * distance_anchor
+        + 0.28 * gravity.finish_probability_up
+        + 0.10 * momentum
+    )
+    blended = (1.0 - urgency) * early + urgency * late
+    if features.settlement_locked_fraction > 0.0:
+        blended = (
+            blended * (1.0 - features.settlement_locked_fraction)
+            + distance_anchor * features.settlement_locked_fraction
+        )
+    return _clip(blended)
+
+
+def _regime_weights(
+    regime: Regime,
+    seconds_remaining: float,
+    *,
+    settlement_window_seconds: float,
+) -> dict[str, float]:
     weights = dict(BASE_WEIGHTS)
     if regime in {Regime.TREND_UP, Regime.TREND_DOWN, Regime.BREAKOUT, Regime.BREAKDOWN}:
         weights["trajectory_momentum"] *= 1.55
@@ -72,7 +159,16 @@ def _regime_weights(regime: Regime, seconds_remaining: float) -> dict[str, float
         weights["terminal_distribution"] *= 1.35
         weights["orderbook"] *= 0.55
         weights["trajectory_momentum"] *= 0.65
+    if seconds_remaining <= settlement_window_seconds:
+        weights["brti_settlement_core"] *= 1.40
+        weights["terminal_distribution"] *= 1.20
+        weights["strike_distance"] *= 1.25
+        weights["orderbook"] *= 0.85
+    if seconds_remaining <= 180:
+        weights["brti_settlement_core"] *= 1.20
+        weights["trajectory_momentum"] *= 1.15
     if seconds_remaining <= 60:
+        weights["brti_settlement_core"] *= 1.35
         weights["terminal_distribution"] *= 1.55
         weights["strike_distance"] *= 1.45
         weights["historical_prior"] *= 0.40
@@ -139,6 +235,11 @@ class EnsembleProbabilityModel:
                 volatility,
             )
         )
+        settlement_core = _brti_settlement_core_probability(
+            features,
+            volatility,
+            settlement_window_seconds=cfg.settlement_window_seconds,
+        )
         strike_distance = NormalDist().cdf(features.z_distance_to_strike)
 
         expected_fraction = max(
@@ -176,6 +277,7 @@ class EnsembleProbabilityModel:
             * max(0.0, 1.0 - features.cross_venue_dispersion / 0.003)
         )
         components: dict[str, float] = {
+            "brti_settlement_core": settlement_core,
             "terminal_distribution": terminal,
             "strike_distance": strike_distance,
             "trajectory_momentum": trajectory_momentum,
@@ -186,7 +288,11 @@ class EnsembleProbabilityModel:
             "market_prior": _clip(market_prior) if market_prior is not None else 0.5,
             "historical_prior": _clip(historical_prior) if historical_prior is not None else 0.5,
         }
-        weights = _regime_weights(regime, features.seconds_remaining)
+        weights = _regime_weights(
+            regime,
+            features.seconds_remaining,
+            settlement_window_seconds=cfg.settlement_window_seconds,
+        )
         weight_total = sum(weights.values())
         weighted = sum(components[name] * weights[name] for name in weights) / weight_total
 
@@ -234,6 +340,7 @@ class EnsembleProbabilityModel:
         notes = (
             f"volatility={volatility:.6f}",
             f"shrink={shrink:.6f}",
+            f"settlement_core={settlement_core:.4f}",
             "late-contract cap applied" if features.seconds_remaining <= cfg.late_seconds else "",
         )
         return ProbabilityEstimate(

@@ -233,14 +233,24 @@ class DecisionEngine:
             failures.append(_failure("market_status", "market is not open", market.status, "open/active"))
         seconds = (market.expiration - now).total_seconds()
         if seconds < cfg.minimum_seconds_remaining or seconds > cfg.maximum_seconds_remaining:
-            failures.append(
-                _failure(
-                    "time_window",
-                    "contract is outside the safe entry window",
-                    seconds,
-                    (cfg.minimum_seconds_remaining, cfg.maximum_seconds_remaining),
+            if seconds < cfg.minimum_seconds_remaining:
+                failures.append(
+                    _failure(
+                        "last_minute",
+                        "entries are blocked in the final minute before expiry",
+                        seconds,
+                        cfg.minimum_seconds_remaining,
+                    )
                 )
-            )
+            else:
+                failures.append(
+                    _failure(
+                        "time_window",
+                        "contract is outside the safe entry window",
+                        seconds,
+                        (cfg.minimum_seconds_remaining, cfg.maximum_seconds_remaining),
+                    )
+                )
         source = benchmark.source.lower()
         is_brti = "brti" in source or "bitcoin real time index" in source
         official_brti = benchmark.primary and not benchmark.is_proxy and is_brti

@@ -417,6 +417,12 @@ class TradingBot:
                     "Probability",
                     f"UP {cycle.forecast.p_up:.1%} · DOWN {cycle.forecast.p_down:.1%}",
                 )
+                core = cycle.forecast.component_probabilities.get("brti_settlement_core")
+                if core is not None:
+                    table.add_row(
+                        "BRTI settlement core",
+                        f"UP {core:.1%} (spot/strike · momentum · vol · time)",
+                    )
                 table.add_row(
                     "Confidence",
                     f"{cycle.forecast.confidence:.1%} · agreement {cycle.forecast.signal_agreement:.1%}",
