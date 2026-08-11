@@ -329,10 +329,14 @@ class ForecastingScanner:
             risk_locked=risk_locked or intel_report.skip_trade,
             duplicate_entry=duplicate_entry,
         )
-        if intel_report.skip_trade and decision.action in {
+        if (
+            intel_report.skip_trade
+            and not self.config.longshot.enabled
+            and decision.action in {
             DecisionAction.BUY_UP,
             DecisionAction.BUY_DOWN,
-        }:
+        }
+        ):
             decision = replace(
                 decision,
                 action=DecisionAction.NO_TRADE,

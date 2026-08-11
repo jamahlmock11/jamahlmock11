@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from kalshi_bot.strategies.decision import _direction_for_side, _failure
 from kalshi_bot.domain import (
@@ -552,7 +552,9 @@ class HourDecisionEngine:
             )
 
         poll_active = (not cfg.longshot.enabled) or cfg.longshot.poll_enabled
-        bypass_poll = False
+        bypass_poll = (
+            entry_ctx is not None and entry_ctx.extreme_poll_active
+        )
         if poll_active and not bypass_poll:
             poll_cfg = poll_gate_config_from_model(cfg.poll)
             if cfg.longshot.enabled and poll_cfg.mode == "legacy":
@@ -568,14 +570,6 @@ class HourDecisionEngine:
                     low_poll_min_probability=poll_cfg.low_poll_min_probability,
                     low_poll_min_confidence=poll_cfg.low_poll_min_confidence,
                     low_poll_min_agreement=poll_cfg.low_poll_min_agreement,
-                )
-            if (
-                entry_ctx is not None
-                and entry_ctx.poll_confirm_threshold is not None
-            ):
-                poll_cfg = replace(
-                    poll_cfg,
-                    confirm_threshold=entry_ctx.poll_confirm_threshold,
                 )
             poll_failure = evaluate_poll_gate(
                 selected_side=selected_side,

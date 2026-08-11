@@ -42,7 +42,7 @@ mean_reversion:
   time_in_force: good_til_canceled
 
 agents:
-  enabled: true
+  enabled: false
   min_edge: 0.03
   momentum_weight: 0.5
   skew_weight: 0.5
@@ -66,8 +66,8 @@ longshot:
   min_edge: 0.06
   min_confidence: 0.0
   min_signal_agreement: 0.48
-  poll_enabled: true
-  require_forecast_alignment: true
+  poll_enabled: false
+  require_forecast_alignment: false
   position_size_mult: 0.5
   take_profit_cents: 0.06
   take_profit_pct: 0.10
@@ -84,7 +84,7 @@ longshot:
   extreme_favorite_max_price: 0.85
   extreme_poll_min_model_prob: 0.48
   favorite_only: true
-  perfect_entry_only: true
+  perfect_entry_only: false
   late_crowd_follow_seconds: 540
   late_crowd_poll_threshold: 0.84
   late_crowd_min_model_prob: 0.50
@@ -110,8 +110,7 @@ strategy:
   order_quantity: 1
 
 poll:
-  mode: confirm_aligned
-  confirm_threshold: 0.85
+  mode: disabled
   favorable_min: 0.85
   favorable_max: 0.90
   low_poll_threshold: 0.85

@@ -5,7 +5,13 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from kalshi_bot.config import LongshotConfig
-from kalshi_bot.domain import ContractSide, ProbabilityEstimate, Regime
+from kalshi_bot.domain import (
+    ContractSide,
+    FeatureSnapshot,
+    ProbabilityEstimate,
+    Regime,
+    TrajectoryState,
+)
 from kalshi_bot.market.orderbook import estimate_buy_execution, parse_orderbook_fp
 from kalshi_bot.market.poll_alignment import PollConfig, market_poll_snapshot
 from kalshi_bot.strategies.longshot import resolve_longshot_entries
@@ -29,24 +35,44 @@ def book(yes_ask: float):
     )
 
 
-def forecast(
-    p_up: float,
-    *,
-    confidence: float = 0.65,
-    agreement: float = 0.70,
-):
+def forecast(p_up: float):
     return ProbabilityEstimate(
         p_up=p_up,
         p_down=1 - p_up,
-        confidence=confidence,
-        signal_agreement=agreement,
+        confidence=0.65,
+        signal_agreement=0.70,
         component_probabilities={"terminal": p_up},
         regime=Regime.TREND_UP,
         raw_p_up=p_up,
     )
 
 
-def test_blocks_contrarian_yes_when_no_poll_is_99_late():
+def features(spot: float, strike: float, *, seconds_remaining: float, z_distance: float):
+    return FeatureSnapshot(
+        timestamp=NOW,
+        current_price=spot,
+        strike=strike,
+        seconds_remaining=seconds_remaining,
+        changes={},
+        velocities={},
+        acceleration=0.0,
+        short_trend=0.0,
+        medium_trend=0.0,
+        realized_vol=0.5,
+        expected_remaining_move=abs(spot - strike) / max(abs(z_distance), 0.1),
+        z_distance_to_strike=z_distance,
+        mean_reversion_score=0.0,
+        orderbook_imbalance=0.0,
+        cross_venue_agreement=1.0,
+        cross_venue_dispersion=0.0,
+        data_completeness=1.0,
+        trajectory=TrajectoryState.FLAT,
+        sample_count=100,
+        oldest_sample_age=0.0,
+    )
+
+
+def test_follows_no_favorite_without_model_support():
     book_obj = book(0.02)
     executions = {
         ContractSide.YES: estimate_buy_execution(book_obj, ContractSide.YES, 1),
@@ -55,31 +81,15 @@ def test_blocks_contrarian_yes_when_no_poll_is_99_late():
     ctx = resolve_longshot_entries(
         executions,
         poll=market_poll_snapshot(book_obj),
-        forecast=forecast(0.24),
+        forecast=forecast(0.80),
         seconds_remaining=120,
         cfg=CFG,
         poll_cfg=POLL_CFG,
     )
-    assert ContractSide.YES not in ctx.executions
-    assert ctx.forced_side is ContractSide.NO
-
-
-def test_blocks_contrarian_at_87_percent_favorite():
-    book_obj = book(0.15)
-    executions = {
-        ContractSide.YES: estimate_buy_execution(book_obj, ContractSide.YES, 1),
-        ContractSide.NO: estimate_buy_execution(book_obj, ContractSide.NO, 1),
-    }
-    ctx = resolve_longshot_entries(
-        executions,
-        poll=market_poll_snapshot(book_obj),
-        forecast=forecast(0.20),
-        seconds_remaining=600,
-        cfg=CFG,
-        poll_cfg=POLL_CFG,
-    )
     assert ctx.forced_side is ContractSide.NO
     assert ContractSide.YES not in ctx.executions
+    assert not any(f.gate == "crowd_model_direction" for f in ctx.failures)
+    assert not any(f.gate == "favorite_poll_model" for f in ctx.failures)
 
 
 def test_favorite_only_blocks_entries_when_poll_below_threshold():
@@ -100,25 +110,7 @@ def test_favorite_only_blocks_entries_when_poll_below_threshold():
     assert not ctx.executions
 
 
-def test_crowd_follow_requires_model_direction_match():
-    book_obj = book(0.03)
-    executions = {
-        ContractSide.YES: estimate_buy_execution(book_obj, ContractSide.YES, 1),
-        ContractSide.NO: estimate_buy_execution(book_obj, ContractSide.NO, 1),
-    }
-    ctx = resolve_longshot_entries(
-        executions,
-        poll=market_poll_snapshot(book_obj),
-        forecast=forecast(0.80, confidence=0.50, agreement=0.50),
-        seconds_remaining=120,
-        cfg=CFG,
-        poll_cfg=POLL_CFG,
-    )
-    assert any(f.gate == "crowd_model_direction" for f in ctx.failures)
-    assert not ctx.executions
-
-
-def test_crowd_follow_selects_favorite_with_aligned_model():
+def test_crowd_follow_waives_edge_and_ignores_model_direction():
     book_obj = parse_orderbook_fp(
         {
             "orderbook_fp": {
@@ -132,25 +124,21 @@ def test_crowd_follow_selects_favorite_with_aligned_model():
         ContractSide.YES: estimate_buy_execution(book_obj, ContractSide.YES, 1),
         ContractSide.NO: estimate_buy_execution(book_obj, ContractSide.NO, 1),
     }
-    cfg = LongshotConfig(
-        enabled=True,
-        extreme_favorite_max_price=0.86,
-        perfect_entry_only=True,
-    )
+    cfg = LongshotConfig(enabled=True, extreme_favorite_max_price=0.86)
     ctx = resolve_longshot_entries(
         executions,
         poll=market_poll_snapshot(book_obj),
-        forecast=forecast(0.88),
+        forecast=forecast(0.20),
         seconds_remaining=600,
         cfg=cfg,
         poll_cfg=POLL_CFG,
     )
     assert ctx.forced_side is ContractSide.YES
     assert ContractSide.YES in ctx.executions
-    assert ctx.min_edge_override == cfg.min_edge
+    assert ctx.min_edge_override == -1.0
 
 
-def test_blocks_expensive_favorite_above_85_cent_cap():
+def test_blocks_expensive_favorite_above_price_cap():
     book_obj = book(0.03)
     executions = {
         ContractSide.YES: estimate_buy_execution(book_obj, ContractSide.YES, 1),
@@ -168,26 +156,7 @@ def test_blocks_expensive_favorite_above_85_cent_cap():
     assert any(f.gate == "longshot_price" for f in ctx.failures)
 
 
-def test_reversal_allows_contrarian_with_full_counter_evidence():
-    book_obj = book(0.02)
-    executions = {
-        ContractSide.YES: estimate_buy_execution(book_obj, ContractSide.YES, 1),
-        ContractSide.NO: estimate_buy_execution(book_obj, ContractSide.NO, 1),
-    }
-    ctx = resolve_longshot_entries(
-        executions,
-        poll=market_poll_snapshot(book_obj),
-        forecast=forecast(0.78, confidence=0.70, agreement=0.70),
-        seconds_remaining=120,
-        cfg=CFG,
-        poll_cfg=POLL_CFG,
-    )
-    assert ctx.forced_side is ContractSide.YES
-    assert ContractSide.YES in ctx.executions
-    assert not any(f.gate == "favorite_poll_contrarian" for f in ctx.failures)
-
-
-def test_late_crowd_follow_allows_84_percent_no_with_54_percent_model():
+def test_late_crowd_follow_allows_84_percent_no_without_model():
     book_obj = parse_orderbook_fp(
         {
             "orderbook_fp": {
@@ -207,55 +176,18 @@ def test_late_crowd_follow_allows_84_percent_no_with_54_percent_model():
         extreme_favorite_max_price=0.85,
         late_crowd_follow_seconds=540,
         late_crowd_poll_threshold=0.84,
-        late_crowd_min_model_prob=0.50,
-        late_crowd_confirm_threshold=0.50,
         late_crowd_favorite_max_price=0.86,
     )
     ctx = resolve_longshot_entries(
         executions,
         poll=market_poll_snapshot(book_obj),
-        forecast=forecast(0.46, confidence=0.33, agreement=0.50),
+        forecast=forecast(0.80),
         seconds_remaining=480,
         cfg=cfg,
         poll_cfg=POLL_CFG,
+        features=features(63_900.0, 63_915.0, seconds_remaining=480, z_distance=-0.4),
     )
     assert ctx.forced_side is ContractSide.NO
     assert ContractSide.NO in ctx.executions
     assert ctx.min_edge_override == -1.0
-    assert ctx.poll_confirm_threshold == 0.50
-    assert not any(f.gate == "crowd_model_direction" for f in ctx.failures)
-
-
-def test_late_crowd_follow_not_active_outside_final_nine_minutes():
-    book_obj = parse_orderbook_fp(
-        {
-            "orderbook_fp": {
-                "yes_dollars": [["0.15", "1000"]],
-                "no_dollars": [["0.83", "1000"]],
-            }
-        },
-        timestamp=NOW,
-    )
-    poll = market_poll_snapshot(book_obj)
-    assert poll.dominant_poll is not None
-    assert poll.dominant_poll + 1e-12 < 0.85
-    executions = {
-        ContractSide.YES: estimate_buy_execution(book_obj, ContractSide.YES, 1),
-        ContractSide.NO: estimate_buy_execution(book_obj, ContractSide.NO, 1),
-    }
-    cfg = LongshotConfig(
-        enabled=True,
-        favorite_only=True,
-        late_crowd_follow_seconds=540,
-        late_crowd_poll_threshold=0.84,
-    )
-    ctx = resolve_longshot_entries(
-        executions,
-        poll=market_poll_snapshot(book_obj),
-        forecast=forecast(0.46, confidence=0.33, agreement=0.50),
-        seconds_remaining=600,
-        cfg=cfg,
-        poll_cfg=POLL_CFG,
-    )
-    assert any(f.gate == "favorite_only" for f in ctx.failures)
-    assert not ctx.executions
+    assert ctx.strike_hold is not None

@@ -324,9 +324,10 @@ class TradingBot:
         if report:
             self.stats.reports.append(report)
         self._print_cycle(cycle, mode)
-        roma = self.roma.evaluate(cycle, risk_locked=self.risk.locked)
-        if roma is not None:
-            console.print(f"\n[bold cyan]{format_roma_report(roma)}[/bold cyan]")
+        if not self.config.longshot.enabled and self.config.agents.enabled:
+            roma = self.roma.evaluate(cycle, risk_locked=self.risk.locked)
+            if roma is not None:
+                console.print(f"\n[bold cyan]{format_roma_report(roma)}[/bold cyan]")
         if report:
             color = "green" if report.ok else "red"
             console.print(f"[{color}]{report.detail}[/{color}]")
@@ -405,37 +406,39 @@ class TradingBot:
             )
             table.add_row(
                 "Path hold",
-                (
-                    f"{hold_side} {hold_prob:.0%} "
-                    f"(gravity UP {gravity.finish_probability_up:.0%})"
-                ),
+                f"{hold_side} {hold_prob:.0%}",
             )
-        if cycle.forecast:
-            table.add_row(
-                "Probability",
-                f"UP {cycle.forecast.p_up:.1%} · DOWN {cycle.forecast.p_down:.1%}",
-            )
-            table.add_row(
-                "Confidence",
-                f"{cycle.forecast.confidence:.1%} · agreement {cycle.forecast.signal_agreement:.1%}",
-            )
-        if cycle.regime:
-            table.add_row("Regime", cycle.regime.value)
-        if cycle.intelligence:
-            intel = cycle.intelligence
-            table.add_row(
-                "Monte Carlo",
-                f"UP {intel.monte_carlo.p_up:.1%} · DOWN {intel.monte_carlo.p_down:.1%}",
-            )
-            table.add_row("Trading regime", intel.trading_regime.label)
-            if intel.kill_switch.halted:
-                table.add_row("Kill switch", f"ACTIVE: {intel.kill_switch.reason}")
+        if not self.config.longshot.enabled:
+            if cycle.forecast:
+                table.add_row(
+                    "Probability",
+                    f"UP {cycle.forecast.p_up:.1%} · DOWN {cycle.forecast.p_down:.1%}",
+                )
+                table.add_row(
+                    "Confidence",
+                    f"{cycle.forecast.confidence:.1%} · agreement {cycle.forecast.signal_agreement:.1%}",
+                )
+            if cycle.regime:
+                table.add_row("Regime", cycle.regime.value)
+            if cycle.intelligence:
+                intel = cycle.intelligence
+                table.add_row(
+                    "Monte Carlo",
+                    f"UP {intel.monte_carlo.p_up:.1%} · DOWN {intel.monte_carlo.p_down:.1%}",
+                )
+                table.add_row("Trading regime", intel.trading_regime.label)
+                if intel.kill_switch.halted:
+                    table.add_row("Kill switch", f"ACTIVE: {intel.kill_switch.reason}")
         if decision:
             table.add_row("Decision", decision.action.value)
             if decision.edge is not None:
                 table.add_row("All-in edge", f"{decision.edge:.1%}")
             table.add_row("Edge gap", format_edge_gap(decision))
             table.add_row("Why", cycle.reason)
-        if cycle.intelligence and cycle.intelligence.explainability:
+        if (
+            not self.config.longshot.enabled
+            and cycle.intelligence
+            and cycle.intelligence.explainability
+        ):
             console.print(cycle.intelligence.explainability.format_report())
         console.print(table)
