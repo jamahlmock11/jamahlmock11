@@ -61,7 +61,7 @@ execution:
   slippage_per_contract: 0.0
 
 longshot:
-  enabled: true
+  enabled: false
   max_entry_price: 0.45
   min_edge: 0.06
   min_confidence: 0.0
@@ -78,19 +78,19 @@ longshot:
   reversal_cents: 0.05
   reversal_window_seconds: 120
   entry_window_seconds: 900
-  follow_extreme_poll: true
+  follow_extreme_poll: false
   extreme_poll_threshold: 0.85
   extreme_poll_late_seconds: 0
   extreme_favorite_max_price: 0.85
   extreme_poll_min_model_prob: 0.48
-  favorite_only: true
+  favorite_only: false
   perfect_entry_only: false
-  late_crowd_follow_seconds: 540
+  late_crowd_follow_seconds: 0
   late_crowd_poll_threshold: 0.84
   late_crowd_min_model_prob: 0.50
   late_crowd_confirm_threshold: 0.50
   late_crowd_favorite_max_price: 0.86
-  late_crowd_require_strike_hold: true
+  late_crowd_require_strike_hold: false
   late_crowd_min_hold_probability: 0.50
   late_crowd_max_z_against: 1.0
 
