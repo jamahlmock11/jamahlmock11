@@ -370,7 +370,7 @@ class ExecutionEngine:
                     count=position.quantity,
                     price=exit_price,
                     notional=position.quantity * exit_price,
-                    edge=(decision.edge or 0.0) * 100,
+                    edge=None,
                     confidence="EXIT",
                     dry_run=self.dry_run,
                     ok=True,

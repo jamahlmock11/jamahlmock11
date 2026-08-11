@@ -239,6 +239,12 @@ class StrategyConfig(BaseModel):
         le=0.20,
         description="Minimum edge (e.g. 4¢) when late favorite poll threshold is met.",
     )
+    min_entry_executable_cost: float = Field(
+        default=0.08,
+        ge=0.0,
+        le=1.0,
+        description="Minimum executable entry price (e.g. 8¢) to avoid penny-ticket churn.",
+    )
     order_quantity: float = Field(default=1.0, gt=0.0)
 
 

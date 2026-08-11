@@ -132,6 +132,7 @@ class DecisionConfig:
     late_favorite_seconds: float = 420.0
     late_favorite_poll_threshold: float = 0.78
     late_favorite_min_edge: float = 0.04
+    min_entry_executable_cost: float = 0.08
     late_confidence_increment: float = 0.10
     allow_replay_data: bool = False
     allow_proxy_data: bool = False
@@ -603,6 +604,15 @@ class DecisionEngine:
         if entry_ctx is not None and entry_ctx.min_edge_override is not None:
             if entry_ctx.min_edge_override >= 0:
                 required_edge = Decimal(str(entry_ctx.min_edge_override))
+        if selected_execution.executable_cost + 1e-12 < cfg.min_entry_executable_cost:
+            failures.append(
+                _failure(
+                    "min_entry_price",
+                    "executable entry price is below the minimum for live entries",
+                    selected_execution.executable_cost,
+                    cfg.min_entry_executable_cost,
+                )
+            )
         if (
             entry_ctx is None
             or entry_ctx.min_edge_override is None

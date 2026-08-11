@@ -102,4 +102,7 @@ class AltStrategyRunner:
             signals=signals,
         )
 
+        if position is not None and position.quantity > 0:
+            signals = [signal for signal in signals if signal.action != "buy"]
+
         return AltStrategyResult(tuple(signals), tuple(notes))

@@ -138,6 +138,7 @@ class ForecastingScanner:
                 late_favorite_seconds=config.strategy.late_favorite_seconds,
                 late_favorite_poll_threshold=config.strategy.late_favorite_poll_threshold,
                 late_favorite_min_edge=config.strategy.late_favorite_min_edge,
+                min_entry_executable_cost=config.strategy.min_entry_executable_cost,
                 allow_proxy_data=(
                     config.execution.dry_run
                     and config.data.benchmark_mode == "constituent_proxy"

@@ -141,8 +141,6 @@ def evaluate_position_exit(
             "benchmark_freshness",
             "feature_freshness",
             "data_completeness",
-            "confidence",
-            "agreement",
             "risk_lock",
         }
     )
@@ -153,16 +151,17 @@ def evaluate_position_exit(
     if stop_loss_fraction > 0 and exit_bid is not None:
         loss = premium_loss_fraction(entry, exit_bid)
         if loss + 1e-12 >= stop_loss_fraction:
-            return PositionExitSignal(
-                should_exit=True,
-                reason=(
-                    f"stop loss: {loss:.0%} premium loss "
-                    f"(limit {stop_loss_fraction:.0%}; entry {entry:.2f} bid {exit_bid:.2f})"
-                ),
-                trigger="stop_loss",
-                premium_loss_fraction=loss,
-                exit_bid=exit_bid,
-            )
+            if not within_min_hold:
+                return PositionExitSignal(
+                    should_exit=True,
+                    reason=(
+                        f"stop loss: {loss:.0%} premium loss "
+                        f"(limit {stop_loss_fraction:.0%}; entry {entry:.2f} bid {exit_bid:.2f})"
+                    ),
+                    trigger="stop_loss",
+                    premium_loss_fraction=loss,
+                    exit_bid=exit_bid,
+                )
 
     held_prob = forecast.p_up if position.side is ContractSide.YES else forecast.p_down
     thesis_reversed = (

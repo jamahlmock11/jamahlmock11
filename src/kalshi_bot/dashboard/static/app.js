@@ -133,7 +133,7 @@
         <td class="mono">${Number(t.count || 0).toFixed(0)}</td>
         <td class="mono">${t.price_cents != null ? `${t.price_cents}¢` : fixed(t.price)}</td>
         <td class="${pnlClass(t.pnl_usd)}">${signedMoney(t.pnl_usd)}</td>
-        <td class="edge-pos mono">${t.edge_pct != null ? `${Number(t.edge_pct).toFixed(1)}%` : fixed(t.edge, 1)}</td>
+        <td class="mono">${t.action_type === "EXIT" || t.strategy === "forecast_exit" ? "—" : t.edge_pct != null ? `${Number(t.edge_pct).toFixed(1)}%` : fixed(t.edge, 1)}</td>
         <td>${modeBadge(t)}</td>
       </tr>`
       )

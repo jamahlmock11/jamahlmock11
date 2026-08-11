@@ -17,20 +17,20 @@ cross_venue:
   order_size: 5
 
 spot_lag:
-  enabled: true
+  enabled: false
   min_spot_move_usd: 50
   lookback_seconds: 30
   min_implied_lag: 0.03
-  min_edge: 0.03
+  min_edge: 0.20
   poll_interval_sec: 1.0
 
 orderbook_skew:
-  enabled: true
+  enabled: false
   top_levels: 5
   max_seconds_remaining: 180
   min_skew: 0.25
   min_z_distance: 1.5
-  min_edge: 0.05
+  min_edge: 0.20
 
 mean_reversion:
   enabled: false
@@ -113,6 +113,7 @@ strategy:
   late_favorite_seconds: 420
   late_favorite_poll_threshold: 0.78
   late_favorite_min_edge: 0.04
+  min_entry_executable_cost: 0.08
   order_quantity: 1
 
 poll:
@@ -135,7 +136,7 @@ risk:
   max_trades_per_contract: 1
   max_flips_per_contract: 0
   cooldown_seconds: 300
-  min_hold_seconds: 0
+  min_hold_seconds: 120
   kelly_enabled: true
   kelly_fraction: 0.25
   kelly_max_fraction: 0.25

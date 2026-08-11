@@ -509,5 +509,18 @@ def test_stop_loss_still_triggers_during_min_hold():
         min_hold_seconds=90,
         now=NOW,
     )
-    assert signal is not None
-    assert signal.trigger == "stop_loss"
+    assert signal is None
+
+    signal_after_hold = evaluate_position_exit(
+        market=market,
+        position=market.current_position,
+        forecast=forecast,
+        failures=(),
+        predicted_side=ContractSide.YES,
+        quantity=1,
+        stop_loss_fraction=0.55,
+        min_hold_seconds=90,
+        now=NOW + timedelta(seconds=120),
+    )
+    assert signal_after_hold is not None
+    assert signal_after_hold.trigger == "stop_loss"

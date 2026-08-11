@@ -199,7 +199,10 @@ class RiskManager:
     ) -> int:
         """Kelly-sized contract count for a new entry, capped by risk limits."""
         risk_cfg = self.config.risk
-        if not risk_cfg.kelly_enabled or executable_cost <= 0:
+        if not self.config.risk.kelly_enabled or executable_cost <= 0:
+            return 0
+        min_price = self.config.strategy.min_entry_executable_cost
+        if executable_cost + 1e-12 < min_price:
             return 0
         floor = self.hard_min_edge if min_edge is None else max(self.hard_min_edge, min_edge)
         if edge + 1e-12 < floor:

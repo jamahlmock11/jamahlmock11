@@ -70,6 +70,8 @@ def summarize_trade(row: dict[str, Any], *, horizon: str | None = None) -> dict[
     edge_pct = parsed.get("edge_pct")
     if edge_pct is None and trade.get("edge") is not None:
         edge_pct = float(trade["edge"])
+    if action == "EXIT":
+        edge_pct = None
 
     hz = horizon or infer_horizon(trade.get("ticker") or "")
     mode = parsed.get("mode_label") or ("PAPER" if trade.get("dry_run") else "LIVE")
