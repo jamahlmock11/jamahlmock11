@@ -442,10 +442,20 @@ def test_proxy_requires_extra_edge_and_is_never_allowed_by_default():
 
 def test_existing_position_exits_before_opposite_entry():
     held = MarketPosition(ContractSide.YES, quantity=1, average_price=0.4)
-    result = DecisionEngine().decide(
+    late_market = replace(
         market(0.52, held),
+        expiration=NOW + timedelta(seconds=120),
+    )
+    result = DecisionEngine().decide(
+        late_market,
         forecast(0.2),
-        replace(features(), trajectory=TrajectoryState.REVERSING_DOWN),
+        replace(
+            features(),
+            trajectory=TrajectoryState.REVERSING_DOWN,
+            seconds_remaining=120,
+            current_price=64_980,
+            z_distance_to_strike=-0.35,
+        ),
         benchmark(),
         now=NOW,
     )
