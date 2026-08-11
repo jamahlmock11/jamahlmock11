@@ -393,6 +393,14 @@ tbody tr:hover {
 
 .req-blocked-list {
   color: rgba(239, 230, 214, 0.9);
+  white-space: normal;
+  line-height: 1.35;
+}
+
+.req-blocked-more {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  color: var(--muted);
 }
 
 .req-muted {

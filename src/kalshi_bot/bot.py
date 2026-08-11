@@ -332,6 +332,9 @@ class TradingBot:
                 and cycle.decision.quantity > 0
                 else None
             ),
+            "required_edge": (
+                cycle.decision.required_edge if cycle.decision is not None else None
+            ),
             "config": {
                 "min_edge": self.config.strategy.min_edge,
                 "min_seconds_remaining": self.config.strategy.min_seconds_remaining,

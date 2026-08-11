@@ -115,14 +115,28 @@
     const reqs = d.requirements || [];
     if (!reqs.length) return '<span class="req-muted">—</span>';
     const action = (d.action || "NO_TRADE").toUpperCase();
-    if (action === "NO_TRADE" && d.blocking_summary) {
-      return `<div class="req-cell blocked"><span class="req-blocked-label">Blocked</span><span class="req-blocked-list">${d.blocking_summary}</span></div>`;
+    const details = d.gate_failure_details || [];
+    if (action === "NO_TRADE" && (d.primary_blocker || d.blocking_summary)) {
+      const headline = d.primary_blocker || d.blocking_summary;
+      const extra =
+        details.length > 1
+          ? `<span class="req-blocked-more">+${details.length - 1} more</span>`
+          : "";
+      return `<div class="req-cell blocked"><span class="req-blocked-label">Blocked</span><span class="req-blocked-list">${headline}</span>${extra}</div>`;
     }
     const pass = d.pass_count ?? reqs.filter((r) => r.status === "pass").length;
     const fail = d.fail_count ?? reqs.filter((r) => r.status === "fail").length;
     const blocked = reqs.filter((r) => r.blocking);
     if (blocked.length) {
-      return `<div class="req-cell blocked"><span class="req-blocked-label">Blocked</span><span class="req-blocked-list">${blocked.map((r) => r.label).join(", ")}</span></div>`;
+      const headline =
+        blocked[0].detail
+          ? `${blocked[0].label}: ${blocked[0].detail}`
+          : blocked[0].label;
+      const extra =
+        blocked.length > 1
+          ? `<span class="req-blocked-more">+${blocked.length - 1} more</span>`
+          : "";
+      return `<div class="req-cell blocked"><span class="req-blocked-label">Blocked</span><span class="req-blocked-list">${headline}</span>${extra}</div>`;
     }
     return `<div class="req-cell ok"><span class="req-score">${pass}/${pass + fail} pass</span></div>`;
   }
@@ -138,16 +152,17 @@
     panel.hidden = false;
     const pass = d.pass_count ?? d.requirements.filter((r) => r.status === "pass").length;
     const fail = d.fail_count ?? d.requirements.filter((r) => r.status === "fail").length;
-    const blocked = d.blocking_summary || "all clear";
+    const blocked = d.blocking_summary || d.primary_blocker || "all clear";
     score.textContent =
       (d.action || "NO_TRADE").toUpperCase() === "NO_TRADE"
-        ? `Blocked: ${blocked}`
+        ? blocked
         : `${pass}/${pass + fail} requirements met`;
     grid.innerHTML = renderRequirementsList(d.requirements);
   }
 
   function edgeGapText(d) {
     if (!d) return "—";
+    if (d.edge_gap_text) return d.edge_gap_text;
     let observed = d.edge != null ? Number(d.edge) * 100 : null;
     let required = 20;
     try {
@@ -283,8 +298,13 @@
       action === "EXIT" ? "WHY EXIT" :
       action === "HOLD" ? "WHY HOLD" : "WHY BUY";
     $("decisionReason").textContent = d.reason || "No explanation recorded.";
-    if (d.blocking_summary && action === "NO_TRADE") {
-      $("decisionReason").textContent = `${d.reason || "No trade."} · Blocked by: ${d.blocking_summary}`;
+    if (action === "NO_TRADE" && (d.primary_blocker || d.blocking_summary)) {
+      $("decisionReason").textContent = d.primary_blocker || d.blocking_summary;
+    } else if (d.blocking_summary && action === "NO_TRADE") {
+      $("decisionReason").textContent = `${d.reason || "No trade."} · ${d.blocking_summary}`;
+    }
+    if (d.edge_gap_text) {
+      $("decisionEdgeGap").textContent = d.edge_gap_text;
     }
     renderRequirementsPanel(d);
   }
@@ -304,7 +324,7 @@
         <td>${d.regime || "—"}</td>
         <td>${d.data_health || "—"}</td>
         <td class="requirements-cell">${renderRequirementsCell(d)}</td>
-        <td class="reason-cell">${d.reason || "—"}</td>
+        <td class="reason-cell">${(d.action || "").toUpperCase() === "NO_TRADE" && d.primary_blocker ? d.primary_blocker : (d.reason || "—")}</td>
       </tr>`).join("");
   }
 

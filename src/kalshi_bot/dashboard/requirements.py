@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from typing import Any
 
 DEFAULT_THRESHOLDS: dict[str, Any] = {
@@ -21,8 +22,48 @@ DEFAULT_THRESHOLDS: dict[str, Any] = {
     "late_seconds": 120.0,
 }
 
+GATE_LABELS: dict[str, str] = {
+    "market_validity": "Valid market",
+    "market_status": "Market open",
+    "market_discovery": "Valid market",
+    "kalshi_api": "Kalshi API",
+    "last_minute": "Entry time window",
+    "time_window": "Entry time window",
+    "primary_brti": "Official BRTI feed",
+    "live_data": "Official BRTI feed",
+    "proxy_constituents": "BRTI proxy venues",
+    "proxy_dispersion": "BRTI proxy dispersion",
+    "proxy_late_contract": "BRTI proxy timing",
+    "benchmark_freshness": "BRTI freshness",
+    "feature_freshness": "Feature freshness",
+    "data_completeness": "Feature history",
+    "confidence": "Forecast confidence",
+    "late_confidence": "Late confidence",
+    "agreement": "Ensemble agreement",
+    "yes_spread": "YES spread",
+    "no_spread": "NO spread",
+    "yes_liquidity": "YES book depth",
+    "no_liquidity": "NO book depth",
+    "yes_execution": "YES execution",
+    "no_execution": "NO execution",
+    "yes_kelly_execution": "YES Kelly depth",
+    "no_kelly_execution": "NO Kelly depth",
+    "minimum_edge": "Minimum edge",
+    "edge": "Minimum edge",
+    "min_entry_price": "Minimum entry price",
+    "exit_liquidity": "Exit bid depth",
+    "kelly_sizing": "Kelly position size",
+    "risk_lock": "Risk limits",
+    "duplicate": "Duplicate intent",
+    "open_order": "Resting orders",
+    "poll_alignment": "Poll alignment",
+    "intelligence": "Intelligence gate",
+}
+
 GATE_TO_REQUIREMENT: dict[str, str] = {
     "market_validity": "market",
+    "market_discovery": "market",
+    "kalshi_api": "market",
     "market_status": "market_open",
     "last_minute": "time_window",
     "time_window": "time_window",
@@ -46,6 +87,7 @@ GATE_TO_REQUIREMENT: dict[str, str] = {
     "yes_kelly_execution": "liquidity",
     "no_kelly_execution": "liquidity",
     "minimum_edge": "edge",
+    "edge": "edge",
     "min_entry_price": "min_entry_price",
     "exit_liquidity": "exit_liquidity",
     "kelly_sizing": "kelly_size",
@@ -55,6 +97,8 @@ GATE_TO_REQUIREMENT: dict[str, str] = {
     "poll_alignment": "poll",
     "intelligence": "intelligence",
 }
+
+EDGE_GATES = frozenset({"minimum_edge", "edge", "kelly_sizing"})
 
 
 def _parse_json(value: Any, default: Any) -> Any:
@@ -101,6 +145,87 @@ def _blocking_ids(failures: list[dict[str, Any]]) -> set[str]:
     return blocked
 
 
+def _as_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _edge_gap_text(observed: float | None, required: float | None) -> str:
+    if observed is None or required is None:
+        return "edge unavailable"
+    observed_cents = observed * 100.0
+    required_cents = required * 100.0
+    gap = max(0.0, required_cents - observed_cents)
+    if gap <= 0.05:
+        surplus = observed_cents - required_cents
+        if surplus > 0.05:
+            return f"met (+{surplus:.0f}¢ above {required_cents:.0f}¢ min)"
+        return f"{observed_cents:.0f}¢ have · {required_cents:.0f}¢ need"
+    shortfall = math.ceil(gap - 1e-9)
+    return f"need {shortfall:.0f}¢ more ({observed_cents:.0f}¢ have · {required_cents:.0f}¢ need)"
+
+
+def _format_gate_failure(failure: dict[str, Any]) -> str:
+    gate = str(failure.get("gate") or "unknown")
+    label = GATE_LABELS.get(gate, gate.replace("_", " ").title())
+    reason = str(failure.get("reason") or "").strip()
+    observed = _as_float(failure.get("observed"))
+    required = _as_float(failure.get("required"))
+
+    if gate in EDGE_GATES:
+        if observed is not None and required is not None:
+            return f"{label}: {_edge_gap_text(observed, required)}"
+        if reason:
+            return f"{label}: {reason}"
+        return label
+
+    if gate in {"yes_spread", "no_spread"}:
+        if observed is not None and required is not None:
+            return (
+                f"{label}: {_cents(observed)} spread · max {_cents(required)}"
+            )
+        return f"{label}: {reason or 'spread too wide'}"
+
+    if gate in {"yes_liquidity", "no_liquidity", "yes_execution", "no_execution"}:
+        if observed is not None and required is not None:
+            return f"{label}: {observed:.1f} depth · need ≥{required:.1f}"
+        return f"{label}: {reason or 'insufficient depth'}"
+
+    if gate in {"agreement", "confidence", "late_confidence", "data_completeness"}:
+        if observed is not None and required is not None:
+            return f"{label}: {_pct(observed)} · need ≥{_pct(required)}"
+        return f"{label}: {reason or 'below threshold'}"
+
+    if gate == "min_entry_price":
+        if observed is not None and required is not None:
+            return f"{label}: {_cents(observed)} · need ≥{_cents(required)}"
+        return f"{label}: {reason or 'price too low'}"
+
+    if gate in {"last_minute", "time_window", "proxy_late_contract"}:
+        if observed is not None and required is not None:
+            return f"{label}: {observed:.0f}s left · need ≥{required:.0f}s"
+        return f"{label}: {reason or 'outside window'}"
+
+    if gate == "risk_lock":
+        return f"{label}: {reason or 'risk controls locked'}"
+
+    if reason:
+        return f"{label}: {reason}"
+    return label
+
+
+def _failure_for_gate(failures: list[dict[str, Any]], *gates: str) -> dict[str, Any] | None:
+    gate_set = set(gates)
+    for failure in failures:
+        if failure.get("gate") in gate_set:
+            return failure
+    return None
+
+
 def _req(
     req_id: str,
     label: str,
@@ -135,6 +260,7 @@ def build_trade_requirements(row: dict[str, Any]) -> dict[str, Any]:
     agreement = row.get("signal_agreement")
     confidence = row.get("confidence")
     traded = bool(row.get("traded"))
+    gate_failure_details = [_format_gate_failure(failure) for failure in failures]
 
     requirements: list[dict[str, Any]] = []
 
@@ -258,60 +384,77 @@ def build_trade_requirements(row: dict[str, Any]) -> dict[str, Any]:
 
     # Liquidity
     spread_blocking = blocked("spread")
+    spread_failure = _failure_for_gate(failures, "yes_spread", "no_spread")
+    if spread_failure:
+        spread_detail = _format_gate_failure(spread_failure).split(": ", 1)[-1]
+    elif not spread_blocking:
+        spread_detail = f"≤{_cents(thresholds['max_spread'])} per side"
+    else:
+        spread_detail = "spread too wide"
     requirements.append(
         _req(
             "spread",
             "Bid-ask spread",
             status="fail" if spread_blocking else "pass",
-            detail=(
-                f"≤{_cents(thresholds['max_spread'])} per side"
-                if not spread_blocking
-                else "spread too wide"
-            ),
+            detail=spread_detail,
             blocking=spread_blocking,
         )
     )
     liquidity_blocking = blocked("liquidity")
+    liquidity_failure = _failure_for_gate(
+        failures,
+        "yes_liquidity",
+        "no_liquidity",
+        "yes_execution",
+        "no_execution",
+        "yes_kelly_execution",
+        "no_kelly_execution",
+    )
+    if liquidity_failure:
+        liquidity_detail = _format_gate_failure(liquidity_failure).split(": ", 1)[-1]
+    else:
+        liquidity_detail = (
+            "insufficient depth" if liquidity_blocking else "executable asks on both sides"
+        )
     requirements.append(
         _req(
             "liquidity",
             "Entry book depth",
             status="fail" if liquidity_blocking else "pass",
-            detail="executable asks on both sides" if not liquidity_blocking else "insufficient depth",
+            detail=liquidity_detail,
             blocking=liquidity_blocking,
         )
     )
 
     # Edge
-    edge_failure = next((f for f in failures if f.get("gate") == "minimum_edge"), None)
-    required_edge = float(thresholds["min_edge"])
+    edge_failure = _failure_for_gate(failures, "minimum_edge", "edge", "kelly_sizing")
+    required_edge = _as_float(payload.get("required_edge"))
+    if required_edge is None:
+        required_edge = float(thresholds["min_edge"])
     if edge_failure and edge_failure.get("required") is not None:
         required_edge = float(edge_failure["required"])
-    observed_edge = edge
+    observed_edge = _as_float(edge)
     if edge_failure and edge_failure.get("observed") is not None:
         observed_edge = float(edge_failure["observed"])
     edge_ok = (
         observed_edge is not None
         and float(observed_edge) + 1e-12 >= required_edge
     )
-    gap = (
-        max(0.0, (required_edge - float(observed_edge)) * 100)
-        if observed_edge is not None
-        else None
+    edge_blocking = blocked("edge") or (
+        action == "NO_TRADE" and observed_edge is not None and not edge_ok
     )
-    if edge_ok:
-        edge_detail = f"{_cents(observed_edge)} have · {_cents(required_edge)} need"
-    elif gap is not None:
-        edge_detail = f"need {gap:.0f}¢ more ({_cents(observed_edge)} have · {_cents(required_edge)} need)"
-    else:
-        edge_detail = f"≥{_cents(required_edge)} required"
+    if edge_blocking:
+        blocking_ids.add("edge")
+    edge_detail = _edge_gap_text(observed_edge, required_edge)
+    if edge_failure and edge_failure.get("reason"):
+        edge_detail = f"{edge_failure['reason']} · {edge_detail}"
     requirements.append(
         _req(
             "edge",
             "Minimum edge",
-            status="pass" if edge_ok and not blocked("edge") else "fail",
+            status="pass" if edge_ok and not edge_blocking else "fail",
             detail=edge_detail,
-            blocking=blocked("edge"),
+            blocking=edge_blocking,
         )
     )
 
@@ -466,14 +609,67 @@ def build_trade_requirements(row: dict[str, Any]) -> dict[str, Any]:
                 req["status"] = "pass"
                 req["blocking"] = False
 
+    known_ids = {req["id"] for req in requirements}
+    for failure in failures:
+        gate = str(failure.get("gate") or "")
+        req_id = GATE_TO_REQUIREMENT.get(gate, gate)
+        detail = _format_gate_failure(failure)
+        detail_body = detail.split(": ", 1)[-1]
+        if req_id in known_ids:
+            for req in requirements:
+                if req["id"] != req_id:
+                    continue
+                req["blocking"] = True
+                req["status"] = "fail"
+                req["detail"] = detail_body
+            continue
+        requirements.append(
+            _req(
+                req_id,
+                GATE_LABELS.get(gate, gate.replace("_", " ").title()),
+                status="fail",
+                detail=detail_body,
+                blocking=True,
+            )
+        )
+        known_ids.add(req_id)
+
     blocking_labels = [r["label"] for r in requirements if r["blocking"]]
+    if not gate_failure_details and blocking_labels:
+        gate_failure_details = [
+            f"{label}: {next((r['detail'] for r in requirements if r['label'] == label and r['blocking']), '')}"
+            for label in blocking_labels
+        ]
+    blocking_summary = (
+        " · ".join(gate_failure_details)
+        if gate_failure_details
+        else ", ".join(blocking_labels)
+    )
+    primary_blocker = gate_failure_details[0] if gate_failure_details else ""
+    observed_edge_cents = (
+        float(observed_edge) * 100.0 if observed_edge is not None else None
+    )
+    required_edge_cents = (
+        float(required_edge) * 100.0 if required_edge is not None else None
+    )
+    edge_gap_cents = (
+        max(0.0, required_edge_cents - observed_edge_cents)
+        if observed_edge_cents is not None and required_edge_cents is not None
+        else None
+    )
 
     return {
         "requirements": requirements,
         "blocking_gates": [f.get("gate") for f in failures],
+        "gate_failure_details": gate_failure_details,
         "blocking_labels": blocking_labels,
-        "blocking_summary": ", ".join(blocking_labels) if blocking_labels else "",
+        "blocking_summary": blocking_summary,
+        "primary_blocker": primary_blocker,
         "required_edge": required_edge,
+        "observed_edge_cents": observed_edge_cents,
+        "required_edge_cents": required_edge_cents,
+        "edge_gap_cents": edge_gap_cents,
+        "edge_gap_text": _edge_gap_text(observed_edge, required_edge),
         "pass_count": sum(1 for r in requirements if r["status"] == "pass"),
         "fail_count": sum(1 for r in requirements if r["status"] == "fail"),
     }

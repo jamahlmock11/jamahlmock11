@@ -39,8 +39,51 @@ def test_no_trade_marks_edge_as_blocking():
     edge = next(r for r in result["requirements"] if r["id"] == "edge")
     assert edge["blocking"] is True
     assert edge["status"] == "fail"
+    assert "need 8¢ more" in edge["detail"]
     assert "Minimum edge" in result["blocking_summary"]
-    assert result["blocking_labels"] == ["Minimum edge"]
+    assert "need 8¢ more" in result["blocking_summary"]
+    assert result["edge_gap_cents"] == 8.0
+    assert result["primary_blocker"].startswith("Minimum edge:")
+
+
+def test_hour_edge_gate_maps_to_edge_requirement():
+    row = _row(
+        gate_failures=json.dumps(
+            [
+                {
+                    "gate": "edge",
+                    "reason": "no executable edge available",
+                    "observed": 0.05,
+                    "required": 0.20,
+                }
+            ]
+        )
+    )
+    result = build_trade_requirements(row)
+    edge = next(r for r in result["requirements"] if r["id"] == "edge")
+    assert edge["blocking"] is True
+    assert "need 15¢ more" in result["primary_blocker"]
+
+
+def test_spread_failure_shows_actual_values():
+    row = _row(
+        edge=0.25,
+        gate_failures=json.dumps(
+            [
+                {
+                    "gate": "yes_spread",
+                    "reason": "YES spread is missing or too wide",
+                    "observed": 0.14,
+                    "required": 0.12,
+                }
+            ]
+        ),
+    )
+    result = build_trade_requirements(row)
+    assert "YES spread: 14¢ spread · max 12¢" in result["blocking_summary"]
+    spread = next(r for r in result["requirements"] if r["id"] == "spread")
+    assert spread["blocking"] is True
+    assert "14¢" in spread["detail"]
 
 
 def test_brti_failure_maps_to_requirement():
