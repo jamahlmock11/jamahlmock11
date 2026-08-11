@@ -119,5 +119,9 @@ def test_dashboard_api(tmp_path: Path):
     assert "requirements" in decisions[0]
     assert decisions[0]["blocking_summary"]
     assert client.get("/").status_code == 200
-    assert "Edge" in client.get("/").text
+    assert "edge" in client.get("/").text.lower()
+    desk = client.get("/api/edge-desk").json()
+    assert "rules" in desk
+    assert "assessments" in desk
+    assert "rules_summary" in desk
     assert client.get("/static/styles.css").status_code == 200

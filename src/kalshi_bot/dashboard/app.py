@@ -10,7 +10,9 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from kalshi_bot.dashboard.assessments import build_assessment, latest_assessments
 from kalshi_bot.dashboard.requirements import enrich_decision
+from kalshi_bot.dashboard.rules import active_edge_rules
 from kalshi_bot.journal import CombinedTradeJournal, TradeJournal
 
 BASE = Path(__file__).resolve().parent
@@ -103,6 +105,40 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
     @app.get("/api/decisions")
     def api_decisions(limit: int = Query(100, ge=1, le=500)) -> dict:
         return {"decisions": _decisions(limit)}
+
+    @app.get("/api/edge-desk")
+    def api_edge_desk(limit: int = Query(50, ge=1, le=200)) -> dict:
+        stats = _stats()
+        decisions = _decisions(limit)
+        last = decisions[0] if decisions else None
+        mode = "PAPER"
+        if last is not None:
+            mode = "PAPER" if last.get("dry_run") else "LIVE"
+        elif stats.get("live_trades", 0) > 0:
+            mode = "LIVE"
+        rules_payload = active_edge_rules(mode=mode)
+        assessments = latest_assessments(decisions)
+        entries = stats.get("entries") or 0
+        exits = stats.get("exits") or 0
+        return {
+            "rules": rules_payload["rules"],
+            "rules_summary": rules_payload["summary"],
+            "assessments": assessments,
+            "stats": stats,
+            "market_count": len(assessments),
+            "entries": entries,
+            "exits": exits,
+            "last_scan_ts": last.get("ts") if last else stats.get("last_trade_ts"),
+            "mode": mode,
+        }
+
+    @app.get("/api/assessments")
+    def api_assessments(limit: int = Query(50, ge=1, le=200)) -> dict:
+        decisions = _decisions(limit)
+        return {
+            "assessments": [build_assessment(row) for row in decisions],
+            "latest": latest_assessments(decisions),
+        }
 
     @app.get("/api/health")
     def health() -> dict:
