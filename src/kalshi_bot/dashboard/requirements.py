@@ -9,7 +9,7 @@ from typing import Any
 DEFAULT_THRESHOLDS: dict[str, Any] = {
     "min_edge": 0.20,
     "min_signal_agreement": 0.48,
-    "min_data_completeness": 0.75,
+    "min_data_completeness": 0.60,
     "min_seconds_remaining": 60.0,
     "max_entry_seconds_remaining": 900.0,
     "max_spread": 0.12,

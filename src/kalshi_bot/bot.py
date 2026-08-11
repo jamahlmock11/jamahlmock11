@@ -300,6 +300,24 @@ class TradingBot:
         traded = bool(report and report.ok)
         payload: dict = {
             "execution": report.payload if report else None,
+            "config": {
+                "min_edge": self.config.strategy.min_edge,
+                "min_seconds_remaining": self.config.strategy.min_seconds_remaining,
+                "max_entry_seconds_remaining": self.config.strategy.max_entry_seconds_remaining,
+                "min_signal_agreement": self.config.strategy.min_signal_agreement,
+                "min_data_completeness": self.config.strategy.min_data_completeness,
+                "min_entry_executable_cost": self.config.strategy.min_entry_executable_cost,
+                "max_spread": self.config.strategy.max_spread,
+                "min_confidence": self.config.strategy.min_confidence,
+                "late_seconds": self.config.strategy.late_seconds,
+                "late_favorite_seconds": self.config.strategy.late_favorite_seconds,
+                "late_favorite_poll_threshold": self.config.strategy.late_favorite_poll_threshold,
+                "late_favorite_min_edge": self.config.strategy.late_favorite_min_edge,
+                "minimum_dominant_poll": self.config.strategy.minimum_dominant_poll,
+                "min_trade_quality_score": self.config.strategy.min_trade_quality_score,
+                "kelly_fraction": self.config.risk.kelly_fraction,
+                "min_hold_seconds": self.config.risk.min_hold_seconds,
+            },
             "risk": {
                 "locked": self.risk.locked,
                 "reason": self.risk.state.halt_reason,
