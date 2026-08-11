@@ -37,6 +37,7 @@ from kalshi_bot.strategies.longshot import (
     longshot_exit_config,
     resolve_longshot_entries,
 )
+from kalshi_bot.strategies.entry_filters import is_in_chop_zone
 from kalshi_bot.market.poll_alignment import (
     PollConfig as PollAlignmentConfig,
     PollSnapshot,
@@ -160,6 +161,8 @@ class DecisionConfig:
     position_reversal: PositionReversalConfig = field(default_factory=PositionReversalConfig)
     poll: PollConfig = field(default_factory=PollConfig)
     longshot: LongshotConfig = field(default_factory=LongshotConfig)
+    chop_zone_min_sigma: float = 0.0
+    require_orderbook_depth: bool = False
 
     @property
     def effective_minimum_edge(self) -> Decimal:
@@ -230,6 +233,8 @@ def decision_config_from_app(
         position_reversal=reversal_config_from_risk(config.risk),
         poll=config.poll,
         longshot=config.longshot,
+        chop_zone_min_sigma=strategy.chop_zone_min_sigma,
+        require_orderbook_depth=strategy.require_orderbook_depth,
     )
 
 
@@ -401,6 +406,15 @@ class DecisionEngine:
                     cfg.minimum_data_completeness,
                 )
             )
+        if is_in_chop_zone(features, cfg.chop_zone_min_sigma):
+            failures.append(
+                _failure(
+                    "chop_zone",
+                    "spot is inside the strike dead zone (noise-dominated edge)",
+                    abs(features.z_distance_to_strike),
+                    cfg.chop_zone_min_sigma,
+                )
+            )
         required_confidence = cfg.minimum_confidence + (
             cfg.proxy_confidence_increment if benchmark.is_proxy else 0.0
         )
@@ -450,7 +464,7 @@ class DecisionEngine:
                     )
                 )
             side_depth = depth(market.orderbook, side, asks=True)
-            if side_depth < max(cfg.minimum_depth, cfg.quantity):
+            if cfg.require_orderbook_depth and side_depth < max(cfg.minimum_depth, cfg.quantity):
                 failures.append(
                     _failure(
                         f"{side.value.lower()}_liquidity",

@@ -43,6 +43,12 @@ from kalshi_bot.market.discovery import DiscoveryConfig, MarketDiscovery
 from kalshi_bot.models.ensemble import EnsembleProbabilityModel
 from kalshi_bot.models.regime import classify_regime
 from kalshi_bot.strategies.decision import DecisionConfig, DecisionEngine
+from kalshi_bot.strategies.entry_filters import (
+    EntrySignalTracker,
+    apply_signal_persistence_gate,
+    classify_window_regime,
+)
+from kalshi_bot.execution.position_reversal import reversal_config_from_risk
 from kalshi_bot.venues.kalshi import KalshiClient
 
 if TYPE_CHECKING:
@@ -173,7 +179,12 @@ class ForecastingScanner:
                 position_reversal=reversal_config_from_risk(config.risk),
                 poll=config.poll,
                 longshot=config.longshot,
+                chop_zone_min_sigma=config.strategy.chop_zone_min_sigma,
+                require_orderbook_depth=config.strategy.require_orderbook_depth,
             )
+        )
+        self.entry_tracker = EntrySignalTracker(
+            required_polls=config.strategy.entry_signal_persistence_polls,
         )
         self.position_lookup = position_lookup or (lambda _ticker: None)
         self.orders_lookup = orders_lookup or (lambda _ticker: ())
@@ -307,6 +318,11 @@ class ForecastingScanner:
             )
 
         regime = classify_regime(features)
+        window_regime = (
+            classify_window_regime(features)
+            if self.config.strategy.window_regime_enabled
+            else None
+        )
         enriched = self.enriched_engine.compute(
             features, market, regime, now=observed_at
         )
@@ -322,6 +338,7 @@ class ForecastingScanner:
             regime,
             options_volatility=options_vol,
             market_prior=market_prior,
+            window_regime=window_regime,
         )
         if benchmark.is_proxy:
             # Basis uncertainty is represented by shrinking both probability
@@ -370,6 +387,11 @@ class ForecastingScanner:
             risk_locked=risk_locked or intel_skip,
             duplicate_entry=duplicate_entry,
             risk_manager=risk_manager,
+        )
+        decision = apply_signal_persistence_gate(
+            decision,
+            ticker=market.ticker,
+            tracker=self.entry_tracker,
         )
         trade_quality = assess_trade_quality(
             forecast=trade_forecast,

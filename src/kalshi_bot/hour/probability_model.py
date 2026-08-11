@@ -66,12 +66,14 @@ class HourProbabilityModel:
         *,
         options_volatility: float | None = None,
         market_prior: float | None = None,
+        window_regime=None,
     ) -> ProbabilityEstimate:
         base = self.ensemble.estimate(
             features,
             regime,
             options_volatility=options_volatility,
             market_prior=market_prior,
+            window_regime=window_regime,
         )
 
         adjustment = (

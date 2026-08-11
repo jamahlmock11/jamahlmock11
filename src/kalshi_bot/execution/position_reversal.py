@@ -126,9 +126,9 @@ def evaluate_position_reversal(
             f"spot ${features.current_price:,.0f} on wrong side of "
             f"strike ${strike:,.0f} with {seconds:.0f}s left"
         )
-    if not momentum_supports and time_pressure >= 0.35:
+    if not momentum_supports and time_pressure >= 0.25:
         reasons.append("momentum is not moving toward the held target")
-    if not forecast_supports and time_pressure >= 0.50:
+    if not forecast_supports and time_pressure >= 0.40:
         held_prob = forecast.p_up if position_side is ContractSide.YES else forecast.p_down
         reasons.append(f"ensemble faded to {held_prob:.0%} on the held side")
 
@@ -138,14 +138,23 @@ def evaluate_position_reversal(
         and hold_probability + 1e-12 < required_hold
     )
     weak_path = hold_probability + 1e-12 < required_hold and (
-        not momentum_supports or z_support + 1e-12 < cfg.min_z_support
+        not momentum_supports
+        or z_support + 1e-12 < cfg.min_z_support
+        or (not spot_supports and time_pressure >= 0.20)
     )
     faded_forecast = (
         not forecast_supports
-        and time_pressure >= 0.50
-        and hold_probability + 1e-12 < required_hold + 0.05
+        and time_pressure >= 0.35
+        and hold_probability + 1e-12 < required_hold + 0.03
     )
-    should_reverse = cfg.enabled and (critical_wrong_side or weak_path or faded_forecast)
+    early_wrong_side = (
+        not spot_supports
+        and seconds + 1e-12 <= cfg.wrong_side_seconds
+        and hold_probability + 1e-12 < required_hold + 0.08
+    )
+    should_reverse = cfg.enabled and (
+        critical_wrong_side or weak_path or faded_forecast or early_wrong_side
+    )
 
     direction = "above" if distance >= 0 else "below"
     summary = (

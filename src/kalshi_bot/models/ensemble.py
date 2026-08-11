@@ -9,6 +9,7 @@ from statistics import NormalDist
 
 from kalshi_bot.domain import FeatureSnapshot, ProbabilityEstimate, Regime, TrajectoryState
 from kalshi_bot.models.strike_gravity import assess_strike_gravity
+from kalshi_bot.strategies.entry_filters import WindowRegimeKind
 
 Calibrator = Callable[[float], float]
 SECONDS_PER_YEAR = 365.25 * 24 * 60 * 60
@@ -143,6 +144,7 @@ def _regime_weights(
     seconds_remaining: float,
     *,
     settlement_window_seconds: float,
+    window_regime: WindowRegimeKind | None = None,
 ) -> dict[str, float]:
     weights = dict(BASE_WEIGHTS)
     if regime in {Regime.TREND_UP, Regime.TREND_DOWN, Regime.BREAKOUT, Regime.BREAKDOWN}:
@@ -173,6 +175,21 @@ def _regime_weights(
         weights["strike_distance"] *= 1.45
         weights["historical_prior"] *= 0.40
         weights["market_prior"] *= 0.70
+    if window_regime is WindowRegimeKind.CHOPPY:
+        weights["trajectory_momentum"] *= 0.55
+        weights["acceleration_reversal"] *= 0.70
+        weights["trend_mean_reversion"] *= 0.85
+        weights["brti_settlement_core"] *= 1.35
+        weights["orderbook"] *= 1.45
+        weights["strike_distance"] *= 1.15
+    elif window_regime is WindowRegimeKind.MEAN_REVERTING:
+        weights["trajectory_momentum"] *= 0.70
+        weights["trend_mean_reversion"] *= 1.35
+        weights["brti_settlement_core"] *= 1.20
+        weights["orderbook"] *= 1.25
+    elif window_regime is WindowRegimeKind.TRENDING:
+        weights["trajectory_momentum"] *= 1.15
+        weights["trend_mean_reversion"] *= 0.90
     return weights
 
 
@@ -206,6 +223,7 @@ class EnsembleProbabilityModel:
         options_volatility: float | None = None,
         market_prior: float | None = None,
         historical_prior: float | None = None,
+        window_regime: WindowRegimeKind | None = None,
     ) -> ProbabilityEstimate:
         """Blend independent probability views, then shrink uncertainty honestly."""
         cfg = self.config
@@ -292,6 +310,7 @@ class EnsembleProbabilityModel:
             regime,
             features.seconds_remaining,
             settlement_window_seconds=cfg.settlement_window_seconds,
+            window_regime=window_regime,
         )
         weight_total = sum(weights.values())
         weighted = sum(components[name] * weights[name] for name in weights) / weight_total

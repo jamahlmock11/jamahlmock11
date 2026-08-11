@@ -38,6 +38,11 @@ from kalshi_bot.hour.trajectory_model import TrajectoryForecast, forecast_trajec
 from kalshi_bot.hour.trend_engine import TrendSnapshot
 from kalshi_bot.intelligence.orchestrator import IntelligenceOrchestrator, IntelligenceReport
 from kalshi_bot.strategies.decision import DecisionEngine, decision_config_from_app
+from kalshi_bot.strategies.entry_filters import (
+    EntrySignalTracker,
+    apply_signal_persistence_gate,
+    classify_window_regime,
+)
 from kalshi_bot.venues.kalshi import KalshiClient
 
 if TYPE_CHECKING:
@@ -118,6 +123,9 @@ class HourForecastingScanner:
         self.orders_lookup = orders_lookup or (lambda _ticker: ())
         self.intelligence = intelligence or IntelligenceOrchestrator(
             confidence_threshold=config.strategy.min_confidence,
+        )
+        self.entry_tracker = EntrySignalTracker(
+            required_polls=config.strategy.entry_signal_persistence_polls,
         )
 
     @staticmethod
@@ -268,6 +276,11 @@ class HourForecastingScanner:
         trend = bundle.trend
         vol = bundle.volatility
         regime = classify_hour_regime(features, trend, vol)
+        window_regime = (
+            classify_window_regime(features)
+            if self.config.strategy.window_regime_enabled
+            else None
+        )
         trajectory = forecast_trajectory(
             current_price=features.current_price,
             strike=features.strike,
@@ -290,6 +303,7 @@ class HourForecastingScanner:
             vol,
             options_volatility=options_vol,
             market_prior=market_prior,
+            window_regime=window_regime,
         )
         if benchmark.is_proxy:
             proxy_p_up = 0.5 + (forecast.p_up - 0.5) * 0.80
@@ -327,6 +341,11 @@ class HourForecastingScanner:
             risk_locked=risk_locked or intel_skip,
             duplicate_entry=duplicate_entry,
             risk_manager=risk_manager,
+        )
+        decision = apply_signal_persistence_gate(
+            decision,
+            ticker=market.ticker,
+            tracker=self.entry_tracker,
         )
         if (
             intel_skip

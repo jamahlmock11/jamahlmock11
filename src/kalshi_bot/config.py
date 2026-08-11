@@ -265,6 +265,24 @@ class StrategyConfig(BaseModel):
     require_trade_quality: bool = True
     min_pattern_matches: int = Field(default=10, ge=0)
     external_data_enabled: bool = False
+    entry_signal_persistence_polls: int = Field(
+        default=3,
+        ge=1,
+        description="Consecutive polls where side+edge must hold before entry.",
+    )
+    chop_zone_min_sigma: float = Field(
+        default=0.35,
+        ge=0.0,
+        description="Block entries when |spot-strike| is inside this sigma dead zone.",
+    )
+    require_orderbook_depth: bool = Field(
+        default=False,
+        description="When false, skip the executable ask-depth entry gate.",
+    )
+    window_regime_enabled: bool = Field(
+        default=True,
+        description="Down-weight momentum in choppy realized-vol windows.",
+    )
 
 
 class RiskConfig(BaseModel):
@@ -287,11 +305,11 @@ class RiskConfig(BaseModel):
     min_hold_seconds: float = Field(default=0.0, ge=0.0)
     position_reversal_enabled: bool = True
     position_reversal_window_seconds: float = Field(default=420.0, ge=0.0)
-    position_reversal_min_hold_probability: float = Field(default=0.42, ge=0.0, le=1.0)
-    position_reversal_late_hold_probability: float = Field(default=0.55, ge=0.0, le=1.0)
-    position_reversal_min_z_support: float = Field(default=-0.50)
-    position_reversal_wrong_side_seconds: float = Field(default=180.0, ge=0.0)
-    position_reversal_min_forecast_probability: float = Field(default=0.40, ge=0.0, le=1.0)
+    position_reversal_min_hold_probability: float = Field(default=0.50, ge=0.0, le=1.0)
+    position_reversal_late_hold_probability: float = Field(default=0.62, ge=0.0, le=1.0)
+    position_reversal_min_z_support: float = Field(default=-0.30)
+    position_reversal_wrong_side_seconds: float = Field(default=120.0, ge=0.0)
+    position_reversal_min_forecast_probability: float = Field(default=0.48, ge=0.0, le=1.0)
     kelly_enabled: bool = True
     kelly_fraction: float = Field(
         default=0.25,
