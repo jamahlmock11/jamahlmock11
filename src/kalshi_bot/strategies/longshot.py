@@ -17,6 +17,11 @@ from kalshi_bot.domain import (
 )
 from kalshi_bot.execution.stop_loss import executable_exit_price
 from kalshi_bot.market.poll_alignment import PollConfig, PollSnapshot, has_counter_evidence
+from kalshi_bot.strategies.crowd_strike_hold import (
+    CrowdStrikeHoldAssessment,
+    crowd_strike_hold_gate,
+    evaluate_crowd_strike_hold,
+)
 
 
 @dataclass(frozen=True)
@@ -81,6 +86,7 @@ class LongshotEntryContext:
     forced_side: ContractSide | None
     extreme_poll_active: bool
     poll_confirm_threshold: float | None
+    strike_hold: CrowdStrikeHoldAssessment | None
     failures: tuple[GateFailure, ...]
 
 
@@ -158,6 +164,7 @@ def resolve_longshot_entries(
     seconds_remaining: float,
     cfg: LongshotConfig,
     poll_cfg: PollConfig | None = None,
+    features: FeatureSnapshot | None = None,
 ) -> LongshotEntryContext:
     """Apply longshot filters; strong favorites (85%+) follow the crowd, not momentary spikes."""
     failures: list[GateFailure] = []
@@ -173,6 +180,7 @@ def resolve_longshot_entries(
     )
     follow_favorite = crowd_mode.active
     poll_confirm_threshold = crowd_mode.poll_confirm_threshold
+    strike_hold: CrowdStrikeHoldAssessment | None = None
 
     if follow_favorite:
         dominant = poll.dominant_side
@@ -240,6 +248,16 @@ def resolve_longshot_entries(
                         dominant.value,
                     )
                 )
+            if crowd_mode.late_relaxed and features is not None:
+                strike_hold = evaluate_crowd_strike_hold(
+                    features,
+                    forecast,
+                    crowd_side=dominant,
+                    cfg=cfg,
+                )
+                hold_failure = crowd_strike_hold_gate(strike_hold, cfg=cfg)
+                if hold_failure is not None:
+                    failures.append(hold_failure)
     else:
         if cfg.favorite_only:
             failures.append(
@@ -278,6 +296,7 @@ def resolve_longshot_entries(
         forced_side=forced_side,
         extreme_poll_active=follow_favorite,
         poll_confirm_threshold=poll_confirm_threshold,
+        strike_hold=strike_hold,
         failures=tuple(failures),
     )
 

@@ -162,6 +162,21 @@ class LongshotConfig(BaseModel):
         le=1.0,
         description="Max executable price for the crowd favorite in the late window.",
     )
+    late_crowd_require_strike_hold: bool = Field(
+        default=True,
+        description="Require spot/strike distance and hold direction to support the crowd side.",
+    )
+    late_crowd_min_hold_probability: float = Field(
+        default=0.50,
+        ge=0.0,
+        le=1.0,
+        description="Minimum combined model/gravity probability on the crowd side.",
+    )
+    late_crowd_max_z_against: float = Field(
+        default=1.0,
+        ge=0.0,
+        description="Max sigma distance against the crowd side in the late window.",
+    )
 
 
 class HourStrategyConfig(BaseModel):

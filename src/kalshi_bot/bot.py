@@ -24,6 +24,7 @@ from kalshi_bot.intelligence.kill_switch import ConfidenceKillSwitch
 from kalshi_bot.intelligence.orchestrator import IntelligenceOrchestrator
 from kalshi_bot.journal import TradeJournal
 from kalshi_bot.learning.signal_weights import SignalWeightTracker
+from kalshi_bot.models.strike_gravity import assess_strike_gravity
 from kalshi_bot.strategies.alt_runner import AltStrategyRunner
 from kalshi_bot.strategies.forecasting import ForecastCycle, ForecastingScanner
 from kalshi_bot.strategies.decision import format_edge_gap
@@ -286,21 +287,34 @@ class TradingBot:
                 benchmark=cycle.benchmark,
             )
         traded = bool(report and report.ok) or any(r.ok for r in alt_reports)
+        journal_payload: dict = {
+            "execution": report.payload if report else None,
+            "alt_execution": [r.payload for r in alt_reports if r.payload],
+            "risk": {
+                "locked": self.risk.locked,
+                "reason": self.risk.state.halt_reason,
+                "realized_pnl": self.risk.state.realized_pnl,
+                "open_exposure_usd": self.risk.state.open_exposure_usd,
+                "consecutive_losses": self.risk.state.consecutive_losses,
+            },
+        }
+        if cycle.features is not None:
+            journal_payload["strike_context"] = {
+                "seconds_remaining": cycle.features.seconds_remaining,
+                "spot": cycle.features.current_price,
+                "strike": (
+                    cycle.features.settlement_effective_strike
+                    if cycle.features.settlement_effective_strike is not None
+                    else cycle.features.strike
+                ),
+                "z_distance": cycle.features.z_distance_to_strike,
+                "hold_up_probability": assess_strike_gravity(cycle.features).finish_probability_up,
+            }
         self.journal.log_decision(
             cycle,
             dry_run=self.engine.dry_run,
             traded=traded,
-            payload={
-                "execution": report.payload if report else None,
-                "alt_execution": [r.payload for r in alt_reports if r.payload],
-                "risk": {
-                    "locked": self.risk.locked,
-                    "reason": self.risk.state.halt_reason,
-                    "realized_pnl": self.risk.state.realized_pnl,
-                    "open_exposure_usd": self.risk.state.open_exposure_usd,
-                    "consecutive_losses": self.risk.state.consecutive_losses,
-                },
-            },
+            payload=journal_payload,
         )
         self.stats.decisions += 1
         if traded:
@@ -363,6 +377,39 @@ class TradingBot:
                 else "Primary BRTI"
             )
             table.add_row(label, f"${cycle.benchmark.price:,.2f}")
+        if cycle.features and cycle.market:
+            strike = (
+                cycle.features.settlement_effective_strike
+                if cycle.features.settlement_effective_strike is not None
+                else cycle.features.strike
+            )
+            distance = cycle.features.current_price - strike
+            direction = "above" if distance >= 0 else "below"
+            table.add_row(
+                "Spot vs strike",
+                (
+                    f"${cycle.features.current_price:,.2f} vs ${strike:,.2f} "
+                    f"({distance:+,.0f} · {distance / max(strike, 1.0):+.2%} {direction})"
+                ),
+            )
+            table.add_row(
+                "Strike distance",
+                f"{cycle.features.z_distance_to_strike:+.2f}σ · "
+                f"{cycle.features.seconds_remaining:.0f}s left",
+            )
+            gravity = assess_strike_gravity(cycle.features)
+            hold_side = "UP" if gravity.finish_probability_up >= 0.5 else "DOWN"
+            hold_prob = max(
+                gravity.finish_probability_up,
+                1.0 - gravity.finish_probability_up,
+            )
+            table.add_row(
+                "Path hold",
+                (
+                    f"{hold_side} {hold_prob:.0%} "
+                    f"(gravity UP {gravity.finish_probability_up:.0%})"
+                ),
+            )
         if cycle.forecast:
             table.add_row(
                 "Probability",

@@ -414,6 +414,7 @@ class HourDecisionEngine:
                 seconds_remaining=features.seconds_remaining,
                 cfg=cfg.longshot,
                 poll_cfg=poll_cfg,
+                features=features,
             )
             failures.extend(entry_ctx.failures)
             executions = entry_ctx.executions

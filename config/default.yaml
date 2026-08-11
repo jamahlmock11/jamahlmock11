@@ -90,6 +90,9 @@ longshot:
   late_crowd_min_model_prob: 0.50
   late_crowd_confirm_threshold: 0.50
   late_crowd_favorite_max_price: 0.86
+  late_crowd_require_strike_hold: true
+  late_crowd_min_hold_probability: 0.50
+  late_crowd_max_z_against: 1.0
 
 strategy:
   contract_duration_seconds: 900

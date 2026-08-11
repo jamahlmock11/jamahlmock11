@@ -165,6 +165,15 @@ def _failure(gate: str, reason: str, observed: object, required: object) -> Gate
     return GateFailure(gate=gate, reason=reason, observed=observed, required=required)
 
 
+def _crowd_context_suffix(entry_ctx: object | None) -> str:
+    if entry_ctx is None:
+        return ""
+    strike_hold = getattr(entry_ctx, "strike_hold", None)
+    if strike_hold is None:
+        return ""
+    return f"; {strike_hold.summary}"
+
+
 class DecisionEngine:
     def __init__(self, config: DecisionConfig | None = None) -> None:
         self.config = config or DecisionConfig()
@@ -514,6 +523,7 @@ class DecisionEngine:
                 seconds_remaining=(market.expiration - observed_now).total_seconds(),
                 cfg=cfg.longshot,
                 poll_cfg=poll_cfg,
+                features=features,
             )
             failures.extend(entry_ctx.failures)
             executions = entry_ctx.executions
@@ -608,7 +618,7 @@ class DecisionEngine:
         if failures:
             return DecisionResult(
                 action=DecisionAction.NO_TRADE,
-                reason="entry blocked by safety gates",
+                reason=f"entry blocked by safety gates{_crowd_context_suffix(entry_ctx)}",
                 gate_failures=tuple(failures),
                 current_direction=current_direction,
                 predicted_direction=predicted_direction,
@@ -633,7 +643,7 @@ class DecisionEngine:
         )
         return DecisionResult(
             action=action,
-            reason=f"{selected_side.value} {target_text}",
+            reason=f"{selected_side.value} {target_text}{_crowd_context_suffix(entry_ctx)}",
             gate_failures=(),
             current_direction=current_direction,
             predicted_direction=predicted_direction,
