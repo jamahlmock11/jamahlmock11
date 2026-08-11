@@ -22,6 +22,7 @@ from kalshi_bot.domain import (
 from kalshi_bot.hour.edge_engine import assess_edge, EdgeAssessment
 from kalshi_bot.hour.trend_engine import TrendSnapshot
 from kalshi_bot.hour.volatility_model import VolatilitySnapshot
+from kalshi_bot.execution.position_reversal import PositionReversalConfig, reversal_config_from_risk
 from kalshi_bot.execution.stop_loss import evaluate_position_exit
 from kalshi_bot.market.orderbook import (
     InsufficientDepthError,
@@ -70,6 +71,7 @@ class HourDecisionConfig:
     recovery_hold_min_confidence: float = 0.58
     recovery_hold_min_agreement: float = 0.58
     min_hold_seconds: float = 0.0
+    position_reversal: PositionReversalConfig = field(default_factory=PositionReversalConfig)
 
 
 class HourDecisionEngine:
@@ -324,6 +326,7 @@ class HourDecisionEngine:
                 market=market,
                 position=position,
                 forecast=forecast,
+                features=features,
                 failures=failures,
                 predicted_side=predicted_side,
                 quantity=trade_quantity,
@@ -337,6 +340,7 @@ class HourDecisionEngine:
                 recovery_hold_min_confidence=cfg.recovery_hold_min_confidence,
                 recovery_hold_min_agreement=cfg.recovery_hold_min_agreement,
                 min_hold_seconds=cfg.min_hold_seconds,
+                position_reversal=cfg.position_reversal,
                 now=observed_now,
             )
             if exit_signal is not None:
@@ -406,12 +410,15 @@ class HourDecisionEngine:
 
         entry_ctx = None
         if cfg.longshot.enabled:
+            poll_cfg = poll_gate_config_from_model(cfg.poll)
             entry_ctx = resolve_longshot_entries(
                 executions,
                 poll=market_poll_snapshot(market.orderbook),
                 forecast=forecast,
                 seconds_remaining=features.seconds_remaining,
                 cfg=cfg.longshot,
+                poll_cfg=poll_cfg,
+                features=features,
             )
             failures.extend(entry_ctx.failures)
             executions = entry_ctx.executions
@@ -549,7 +556,10 @@ class HourDecisionEngine:
             )
 
         poll_active = (not cfg.longshot.enabled) or cfg.longshot.poll_enabled
-        if poll_active and not (entry_ctx is not None and entry_ctx.extreme_poll_active):
+        bypass_poll = (
+            entry_ctx is not None and entry_ctx.extreme_poll_active
+        )
+        if poll_active and not bypass_poll:
             poll_cfg = poll_gate_config_from_model(cfg.poll)
             if cfg.longshot.enabled and poll_cfg.mode == "legacy":
                 poll_cfg = PollAlignmentConfig(

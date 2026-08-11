@@ -451,3 +451,78 @@ def test_existing_position_exits_before_opposite_entry():
     )
     assert result.action is DecisionAction.EXIT
     assert result.selected_side is ContractSide.YES
+
+
+def _late_favorite_config() -> DecisionConfig:
+    return DecisionConfig(
+        late_favorite_seconds=420.0,
+        late_favorite_poll_threshold=0.78,
+        late_favorite_min_edge=0.04,
+    )
+
+
+def test_last_minute_entry_blocked():
+    from kalshi_bot.strategies.decision import DecisionConfig, DecisionEngine
+
+    late_market = replace(market(), expiration=NOW + timedelta(seconds=45))
+    result = DecisionEngine(DecisionConfig(minimum_seconds_remaining=60)).decide(
+        late_market,
+        forecast(0.78),
+        features(),
+        benchmark(),
+        now=NOW,
+    )
+    assert result.action.value == "NO_TRADE"
+    assert any(failure.gate == "last_minute" for failure in result.gate_failures)
+
+
+def test_late_favorite_allows_four_cent_edge_on_poll_dominant_side():
+    late_market = replace(market(yes_ask=0.79), expiration=NOW + timedelta(seconds=300))
+    result = DecisionEngine(_late_favorite_config()).decide(
+        late_market,
+        forecast(0.84),
+        features(),
+        benchmark(),
+        now=NOW,
+    )
+    assert result.action is DecisionAction.BUY_UP
+    assert result.edge == pytest.approx(0.05, abs=0.01)
+
+
+def test_late_favorite_still_blocks_sub_four_cent_edge():
+    late_market = replace(market(yes_ask=0.79), expiration=NOW + timedelta(seconds=300))
+    result = DecisionEngine(_late_favorite_config()).decide(
+        late_market,
+        forecast(0.82),
+        features(),
+        benchmark(),
+        now=NOW,
+    )
+    assert result.action is DecisionAction.NO_TRADE
+    assert any(failure.gate == "minimum_edge" for failure in result.gate_failures)
+
+
+def test_late_favorite_does_not_apply_outside_window():
+    early_market = replace(market(yes_ask=0.79), expiration=NOW + timedelta(seconds=500))
+    result = DecisionEngine(_late_favorite_config()).decide(
+        early_market,
+        forecast(0.84),
+        features(),
+        benchmark(),
+        now=NOW,
+    )
+    assert result.action is DecisionAction.NO_TRADE
+    assert any(failure.gate == "minimum_edge" for failure in result.gate_failures)
+
+
+def test_late_favorite_keeps_twenty_cent_floor_for_contrarian_side():
+    late_market = replace(market(yes_ask=0.21), expiration=NOW + timedelta(seconds=300))
+    result = DecisionEngine(_late_favorite_config()).decide(
+        late_market,
+        forecast(0.26),
+        features(),
+        benchmark(),
+        now=NOW,
+    )
+    assert result.action is DecisionAction.NO_TRADE
+    assert any(failure.gate == "minimum_edge" for failure in result.gate_failures)

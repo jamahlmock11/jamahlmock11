@@ -2,35 +2,62 @@ horizon: 1h
 series:
   - KXBTCD
 
+# 1-hour contract metadata (discovery + feature history)
 hour:
   series_ticker: KXBTCD
   market_type: 1h
   contract_duration_seconds: 3600
-  min_seconds_remaining: 30
-  max_entry_seconds_remaining: 1200
-  late_window_seconds: 1200
+  min_seconds_remaining: 60
+  max_entry_seconds_remaining: 2400
+  late_window_seconds: 2400
   mid_window_seconds: 1800
   final_seconds: 60
   history_seconds: 3700
-  min_confidence: 0.52
-  min_signal_agreement: 0.52
-  tier_b_min_confidence: 0.52
-  tier_b_min_agreement: 0.52
-  min_data_completeness: 0.65
-  max_spread: 0.14
+  min_confidence: 0.0
+  min_signal_agreement: 0.48
+  tier_b_min_confidence: 0.0
+  tier_b_min_agreement: 0.48
+  min_data_completeness: 0.75
+  max_spread: 0.12
   order_quantity: 1
   poll_interval_sec: 5
   model_version: hour-v1.0.0
   require_forecast_alignment: false
   forecast_alignment_min_probability: 0.65
 
+# Same strategy rules as the 15-minute bot, with a 40-minute entry window.
+strategy:
+  contract_duration_seconds: 3600
+  min_edge: 0.20
+  target_edge: 0.20
+  min_confidence: 0.0
+  min_signal_agreement: 0.48
+  min_data_completeness: 0.75
+  max_spread: 0.12
+  min_seconds_remaining: 60
+  max_entry_seconds_remaining: 2400
+  late_seconds: 120
+  final_seconds: 60
+  final_min_edge: 0.20
+  late_favorite_seconds: 2400
+  late_favorite_poll_threshold: 0.78
+  late_favorite_min_edge: 0.04
+  min_entry_executable_cost: 0.08
+  minimum_dominant_poll: 0.78
+  require_dominant_poll_side: true
+  order_quantity: 1
+  entry_signal_persistence_polls: 3
+  chop_zone_min_sigma: 0.35
+  require_orderbook_depth: false
+  window_regime_enabled: true
+
 longshot:
-  enabled: true
+  enabled: false
   max_entry_price: 0.45
   min_edge: 0.06
-  min_confidence: 0.52
-  min_signal_agreement: 0.52
-  poll_enabled: true
+  min_confidence: 0.0
+  min_signal_agreement: 0.48
+  poll_enabled: false
   require_forecast_alignment: false
   position_size_mult: 0.5
   take_profit_cents: 0.06
@@ -41,17 +68,25 @@ longshot:
   time_stop_seconds: 900
   reversal_cents: 0.05
   reversal_window_seconds: 120
-  entry_window_seconds: 1200
-  follow_extreme_poll: true
+  entry_window_seconds: 2400
+  follow_extreme_poll: false
   extreme_poll_threshold: 0.85
   extreme_poll_late_seconds: 0
-  extreme_favorite_max_price: 0.99
-  extreme_poll_min_model_prob: 0.52
-  favorite_only: true
+  extreme_favorite_max_price: 0.85
+  extreme_poll_min_model_prob: 0.48
+  favorite_only: false
+  perfect_entry_only: false
+  late_crowd_follow_seconds: 0
+  late_crowd_poll_threshold: 0.84
+  late_crowd_min_model_prob: 0.50
+  late_crowd_confirm_threshold: 0.50
+  late_crowd_favorite_max_price: 0.86
+  late_crowd_require_strike_hold: false
+  late_crowd_min_hold_probability: 0.50
+  late_crowd_max_z_against: 1.0
 
 poll:
-  mode: confirm_aligned
-  confirm_threshold: 0.75
+  mode: disabled
   favorable_min: 0.85
   favorable_max: 0.90
   low_poll_threshold: 0.85
@@ -63,37 +98,25 @@ poll:
   low_poll_min_agreement: 0.68
 
 hour_edge:
-  minimum_edge: 0.10
-  preferred_edge: 0.12
-  strong_edge: 0.16
+  minimum_edge: 0.20
+  preferred_edge: 0.20
+  strong_edge: 0.20
   tier_b_size_mult: 0.5
   tier_a_size_mult: 0.75
   tier_a_plus_size_mult: 1.0
-  disable_tier_b: false
+  disable_tier_b: true
 
 execution:
   dry_run: false
   orders_enabled: true
   max_position_usd: 50
   max_contracts_per_trade: 25
+  min_trade_notional_usd: 0
   poll_interval_sec: 5.0
   fee_rate: 0.0
   fee_per_contract: 0.0
   slippage_bps: 5.0
   slippage_per_contract: 0.0
-
-strategy:
-  min_edge: 0.20
-  target_edge: 0.20
-  min_confidence: 0.52
-  min_signal_agreement: 0.52
-  min_data_completeness: 0.65
-  max_spread: 0.14
-  min_seconds_remaining: 30
-  late_seconds: 900
-  final_seconds: 60
-  final_min_edge: 0.20
-  order_quantity: 1
 
 risk:
   max_daily_loss: 100
@@ -103,16 +126,30 @@ risk:
   max_trades_per_contract: 1
   max_flips_per_contract: 0
   cooldown_seconds: 300
-  min_hold_seconds: 0
+  min_hold_seconds: 120
+  position_reversal_enabled: true
+  position_reversal_window_seconds: 420
+  position_reversal_min_hold_probability: 0.50
+  position_reversal_late_hold_probability: 0.62
+  position_reversal_min_z_support: -0.30
+  position_reversal_wrong_side_seconds: 120
+  position_reversal_min_forecast_probability: 0.48
+  kelly_enabled: true
+  kelly_fraction: 0.25
+  kelly_max_fraction: 0.25
   stop_loss_fraction: 0.55
   opposite_edge_shift: 0.25
   thesis_reversal_enabled: false
   opposite_edge_exit_enabled: false
+  recovery_hold_enabled: false
+  recovery_hold_min_probability: 0.58
+  recovery_hold_min_confidence: 0.58
+  recovery_hold_min_agreement: 0.58
 
 data:
   benchmark_mode: kalshi_passthrough
   cf_benchmark_url: ""
-  max_brti_age_seconds: 20
+  max_brti_age_seconds: 15
   min_supporting_venues: 2
   max_supporting_dispersion: 0.003
 

@@ -116,6 +116,8 @@ def test_dashboard_api(tmp_path: Path):
     decisions = client.get("/api/decisions").json()["decisions"]
     assert len(decisions) == 1
     assert decisions[0]["action"] == "NO_TRADE"
+    assert "requirements" in decisions[0]
+    assert decisions[0]["blocking_summary"]
     assert client.get("/").status_code == 200
     assert "Edge" in client.get("/").text
     assert client.get("/static/styles.css").status_code == 200

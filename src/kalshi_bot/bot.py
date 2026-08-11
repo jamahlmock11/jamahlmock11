@@ -14,9 +14,14 @@ from rich.table import Table
 from kalshi_bot.config import AppConfig, Settings
 from kalshi_bot.data.cf_benchmark import create_benchmark_feed
 from kalshi_bot.data.ibit_options import IBITOptionsProvider
+from kalshi_bot.data.spot_hub import SpotPriceHub
 from kalshi_bot.data.supporting_feeds import SupportingFeeds
 from kalshi_bot.domain import ContractSide, MarketPosition, OpenOrder, Regime
 from kalshi_bot.execution.engine import ExecutionEngine, ExecutionReport
+from kalshi_bot.execution.position_reversal import (
+    evaluate_position_reversal,
+    reversal_config_from_risk,
+)
 from kalshi_bot.execution.position_manager import PositionManager, PositionManagerConfig
 from kalshi_bot.execution.risk import RiskManager
 from kalshi_bot.intelligence.kill_switch import ConfidenceKillSwitch
@@ -27,6 +32,7 @@ from kalshi_bot.learning.trade_recorder import TradeRecorder
 from kalshi_bot.learning.pattern_matcher import PatternMatcher
 from kalshi_bot.strategies.forecasting import ForecastCycle, ForecastingScanner
 from kalshi_bot.strategies.decision import format_edge_gap
+from kalshi_bot.agents.pipeline import RomaPipeline, format_roma_report
 from kalshi_bot.venues.kalshi import KalshiClient
 
 logger = logging.getLogger(__name__)
@@ -119,6 +125,13 @@ class TradingBot:
             orders_lookup=self._orders_lookup,
             intelligence=self.intelligence,
         )
+        self.spot_hub = SpotPriceHub(
+            poll_interval_sec=config.spot_lag.poll_interval_sec,
+        )
+        if config.spot_lag.enabled:
+            self.spot_hub.start()
+        self.alt_runner = AltStrategyRunner(config, self.spot_hub)
+        self.roma = RomaPipeline(config.agents)
         self.stats = BotStats()
 
     def _hydrate_kill_switch(self) -> None:
@@ -228,6 +241,7 @@ class TradingBot:
             )
 
     def close(self) -> None:
+        self.spot_hub.close()
         self.kalshi.close()
         self.benchmark.close()
         self.supporting.close()
@@ -237,7 +251,38 @@ class TradingBot:
         self.stats.loops += 1
         self.risk.begin_cycle()
         mode = "DRY-RUN" if self.engine.dry_run else "LIVE"
-        cycle = self.forecasting.scan(risk_locked=self.risk.locked)
+        cycle = self.forecasting.scan(
+            risk_locked=self.risk.locked,
+            risk_manager=self.risk,
+        )
+        alt_reports: list[ExecutionReport] = []
+        if (
+            self.config.execution.orders_enabled
+            and cycle.market is not None
+            and (
+                self.config.spot_lag.enabled
+                or self.config.orderbook_skew.enabled
+                or self.config.mean_reversion.enabled
+            )
+        ):
+            seconds_remaining = max(
+                0.0, (cycle.market.expiration - cycle.timestamp).total_seconds()
+            )
+            spot_price = cycle.benchmark.price if cycle.benchmark else None
+            alt = self.alt_runner.evaluate(
+                cycle.market,
+                seconds_remaining=seconds_remaining,
+                position=cycle.market.current_position,
+                open_orders=cycle.market.open_orders,
+                spot_price=spot_price,
+            )
+            for signal in alt.signals:
+                alt_report = self.engine.execute_alt_signal(signal)
+                if alt_report:
+                    alt_reports.append(alt_report)
+                    console.print(
+                        f"[cyan]{alt_report.detail}[/cyan]"
+                    )
         report = None
         if (
             self.config.execution.orders_enabled
@@ -321,6 +366,10 @@ class TradingBot:
         if report:
             self.stats.reports.append(report)
         self._print_cycle(cycle, mode)
+        if not self.config.longshot.enabled and self.config.agents.enabled:
+            roma = self.roma.evaluate(cycle, risk_locked=self.risk.locked)
+            if roma is not None:
+                console.print(f"\n[bold cyan]{format_roma_report(roma)}[/bold cyan]")
         if report:
             color = "green" if report.ok else "red"
             console.print(f"[{color}]{report.detail}[/{color}]")
@@ -371,30 +420,91 @@ class TradingBot:
                 else "Primary BRTI"
             )
             table.add_row(label, f"${cycle.benchmark.price:,.2f}")
-        if cycle.forecast:
+        if cycle.features and cycle.market:
+            strike = (
+                cycle.features.settlement_effective_strike
+                if cycle.features.settlement_effective_strike is not None
+                else cycle.features.strike
+            )
+            distance = cycle.features.current_price - strike
+            direction = "above" if distance >= 0 else "below"
             table.add_row(
-                "Probability",
-                f"UP {cycle.forecast.p_up:.1%} · DOWN {cycle.forecast.p_down:.1%}",
+                "Spot vs strike",
+                (
+                    f"${cycle.features.current_price:,.2f} vs ${strike:,.2f} "
+                    f"({distance:+,.0f} · {distance / max(strike, 1.0):+.2%} {direction})"
+                ),
             )
             table.add_row(
-                "Confidence",
-                f"{cycle.forecast.confidence:.1%} · agreement {cycle.forecast.signal_agreement:.1%}",
+                "Strike distance",
+                f"{cycle.features.z_distance_to_strike:+.2f}σ · "
+                f"{cycle.features.seconds_remaining:.0f}s left",
             )
-        if cycle.regime:
-            table.add_row("Regime", cycle.regime.value)
-        if cycle.intelligence:
-            intel = cycle.intelligence
+            gravity = assess_strike_gravity(cycle.features)
+            hold_side = "UP" if gravity.finish_probability_up >= 0.5 else "DOWN"
+            hold_prob = max(
+                gravity.finish_probability_up,
+                1.0 - gravity.finish_probability_up,
+            )
             table.add_row(
-                "Monte Carlo",
-                f"UP {intel.monte_carlo.p_up:.1%} · DOWN {intel.monte_carlo.p_down:.1%}",
+                "Path hold",
+                f"{hold_side} {hold_prob:.0%}",
             )
-            table.add_row("Trading regime", intel.trading_regime.label)
-            if intel.kill_switch.halted:
-                table.add_row("Kill switch", f"ACTIVE: {intel.kill_switch.reason}")
+            position = (
+                cycle.market.current_position
+                if cycle.market and cycle.market.current_position
+                else None
+            )
+            if (
+                position is not None
+                and position.quantity > 0
+                and cycle.forecast is not None
+                and self.config.risk.position_reversal_enabled
+            ):
+                reversal = evaluate_position_reversal(
+                    position_side=position.side,
+                    features=cycle.features,
+                    forecast=cycle.forecast,
+                    cfg=reversal_config_from_risk(self.config.risk),
+                )
+                label = "Reversal risk" if reversal.should_reverse else "Position hold"
+                table.add_row(label, reversal.summary)
+        if not self.config.longshot.enabled:
+            if cycle.forecast:
+                table.add_row(
+                    "Probability",
+                    f"UP {cycle.forecast.p_up:.1%} · DOWN {cycle.forecast.p_down:.1%}",
+                )
+                core = cycle.forecast.component_probabilities.get("brti_settlement_core")
+                if core is not None:
+                    table.add_row(
+                        "BRTI settlement core",
+                        f"UP {core:.1%} (spot/strike · momentum · vol · time)",
+                    )
+                table.add_row(
+                    "Confidence",
+                    f"{cycle.forecast.confidence:.1%} · agreement {cycle.forecast.signal_agreement:.1%}",
+                )
+            if cycle.regime:
+                table.add_row("Regime", cycle.regime.value)
+            if self.config.intelligence.enabled and cycle.intelligence:
+                intel = cycle.intelligence
+                table.add_row(
+                    "Monte Carlo",
+                    f"UP {intel.monte_carlo.p_up:.1%} · DOWN {intel.monte_carlo.p_down:.1%}",
+                )
+                table.add_row("Trading regime", intel.trading_regime.label)
+                if intel.kill_switch.halted:
+                    table.add_row("Kill switch", f"ACTIVE: {intel.kill_switch.reason}")
         if decision:
             table.add_row("Decision", decision.action.value)
             if decision.edge is not None:
                 table.add_row("All-in edge", f"{decision.edge:.1%}")
+            if decision.quantity > 0 and decision.action in {
+                DecisionAction.BUY_UP,
+                DecisionAction.BUY_DOWN,
+            }:
+                table.add_row("Kelly size", f"{int(decision.quantity)} contracts")
             table.add_row("Edge gap", format_edge_gap(decision))
             if cycle.trade_quality:
                 tq = cycle.trade_quality
@@ -415,6 +525,11 @@ class TradingBot:
                     f"({len(ma.dissenting_models)} dissenting)",
                 )
             table.add_row("Why", cycle.reason)
-        if cycle.intelligence and cycle.intelligence.explainability:
+        if (
+            self.config.intelligence.enabled
+            and not self.config.longshot.enabled
+            and cycle.intelligence
+            and cycle.intelligence.explainability
+        ):
             console.print(cycle.intelligence.explainability.format_report())
         console.print(table)

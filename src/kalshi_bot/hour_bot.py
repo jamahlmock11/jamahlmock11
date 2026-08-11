@@ -16,9 +16,13 @@ from kalshi_bot.config import AppConfig, Settings
 from kalshi_bot.data.cf_benchmark import create_benchmark_feed
 from kalshi_bot.data.ibit_options import IBITOptionsProvider
 from kalshi_bot.data.supporting_feeds import SupportingFeeds
-from kalshi_bot.domain import ContractSide, MarketPosition, OpenOrder
+from kalshi_bot.domain import ContractSide, DecisionAction, MarketPosition, OpenOrder
 from kalshi_bot.execution.engine import ExecutionEngine, ExecutionReport
 from kalshi_bot.execution.position_manager import PositionManager, PositionManagerConfig
+from kalshi_bot.execution.position_reversal import (
+    evaluate_position_reversal,
+    reversal_config_from_risk,
+)
 from kalshi_bot.execution.risk import RiskManager
 from kalshi_bot.intelligence.kill_switch import ConfidenceKillSwitch
 from kalshi_bot.intelligence.orchestrator import IntelligenceOrchestrator
@@ -52,7 +56,7 @@ class HourTradingBot:
         self.intelligence = IntelligenceOrchestrator(
             kill_switch=self.kill_switch,
             signal_weights=self.signal_weights,
-            confidence_threshold=config.hour.min_confidence,
+            confidence_threshold=config.strategy.min_confidence,
         )
         self.kalshi = KalshiClient(
             base_url=settings.kalshi_url,
@@ -87,7 +91,7 @@ class HourTradingBot:
             hard_min_edge=(
                 config.longshot.min_edge
                 if config.longshot.enabled
-                else config.hour_edge.minimum_edge
+                else config.strategy.min_edge
             ),
         )
         self._hydrate_positions()
@@ -193,7 +197,10 @@ class HourTradingBot:
         self.stats.loops += 1
         self.risk.begin_cycle()
         mode = "DRY-RUN" if self.engine.dry_run else "LIVE"
-        cycle = self.forecasting.scan(risk_locked=self.risk.locked)
+        cycle = self.forecasting.scan(
+            risk_locked=self.risk.locked,
+            risk_manager=self.risk,
+        )
         report = None
         if (
             self.config.execution.orders_enabled
@@ -207,34 +214,83 @@ class HourTradingBot:
                 benchmark=cycle.benchmark,
             )
         traded = bool(report and report.ok)
+        position_reversal = None
+        if (
+            cycle.market is not None
+            and cycle.market.current_position is not None
+            and cycle.market.current_position.quantity > 0
+            and cycle.features is not None
+            and cycle.forecast is not None
+            and self.config.risk.position_reversal_enabled
+        ):
+            reversal = evaluate_position_reversal(
+                position_side=cycle.market.current_position.side,
+                features=cycle.features,
+                forecast=cycle.forecast,
+                cfg=reversal_config_from_risk(self.config.risk),
+            )
+            position_reversal = {
+                "should_reverse": reversal.should_reverse,
+                "summary": reversal.summary,
+                "reason": reversal.reason,
+            }
+        journal_payload: dict = {
+            "horizon": "1h",
+            "model_version": self.config.hour.model_version,
+            "required_edge": (
+                cycle.decision.required_edge if cycle.decision else None
+            ),
+            "execution": report.payload if report else None,
+            "position_reversal": position_reversal,
+            "kelly_contracts": (
+                int(cycle.decision.quantity)
+                if cycle.decision is not None
+                and cycle.decision.action in {DecisionAction.BUY_UP, DecisionAction.BUY_DOWN}
+                and cycle.decision.quantity > 0
+                else None
+            ),
+            "config": {
+                "min_edge": self.config.strategy.min_edge,
+                "min_seconds_remaining": self.config.strategy.min_seconds_remaining,
+                "max_entry_seconds_remaining": self.config.hour.max_entry_seconds_remaining,
+                "min_signal_agreement": self.config.strategy.min_signal_agreement,
+                "min_entry_executable_cost": self.config.strategy.min_entry_executable_cost,
+                "max_spread": self.config.strategy.max_spread,
+                "min_confidence": self.config.strategy.min_confidence,
+                "late_seconds": self.config.strategy.late_seconds,
+                "late_favorite_seconds": self.config.strategy.late_favorite_seconds,
+                "late_favorite_poll_threshold": self.config.strategy.late_favorite_poll_threshold,
+                "late_favorite_min_edge": self.config.strategy.late_favorite_min_edge,
+                "minimum_dominant_poll": self.config.strategy.minimum_dominant_poll,
+                "kelly_fraction": self.config.risk.kelly_fraction,
+                "min_hold_seconds": self.config.risk.min_hold_seconds,
+            },
+            "risk": {
+                "locked": self.risk.locked,
+                "reason": self.risk.state.halt_reason,
+                "realized_pnl": self.risk.state.realized_pnl,
+                "open_exposure_usd": self.risk.state.open_exposure_usd,
+            },
+        }
+        if cycle.features is not None:
+            from kalshi_bot.models.strike_gravity import assess_strike_gravity
+
+            journal_payload["strike_context"] = {
+                "seconds_remaining": cycle.features.seconds_remaining,
+                "spot": cycle.features.current_price,
+                "strike": (
+                    cycle.features.settlement_effective_strike
+                    if cycle.features.settlement_effective_strike is not None
+                    else cycle.features.strike
+                ),
+                "z_distance": cycle.features.z_distance_to_strike,
+                "hold_up_probability": assess_strike_gravity(cycle.features).finish_probability_up,
+            }
         self.journal.log_decision(
             cycle,
             dry_run=self.engine.dry_run,
             traded=traded,
-            payload={
-                "horizon": "1h",
-                "model_version": self.config.hour.model_version,
-                "trade_tier": (
-                    cycle.decision.trade_tier.value
-                    if cycle.decision and cycle.decision.trade_tier
-                    else None
-                ),
-                "required_edge": (
-                    cycle.decision.required_edge if cycle.decision else None
-                ),
-                "entry_timing": (
-                    str(cycle.decision.entry_timing.value)
-                    if cycle.decision and cycle.decision.entry_timing
-                    else None
-                ),
-                "execution": report.payload if report else None,
-                "risk": {
-                    "locked": self.risk.locked,
-                    "reason": self.risk.state.halt_reason,
-                    "realized_pnl": self.risk.state.realized_pnl,
-                    "open_exposure_usd": self.risk.state.open_exposure_usd,
-                },
-            },
+            payload=journal_payload,
         )
         self.stats.decisions += 1
         if traded:
@@ -322,7 +378,7 @@ class HourTradingBot:
             if decision.required_edge is not None:
                 table.add_row("Required edge", f"{decision.required_edge:.1%}")
             table.add_row("Edge gap", format_edge_gap(decision))
-            if decision.trade_tier.value != "NONE":
+            if decision.trade_tier is not None and decision.trade_tier.value != "NONE":
                 table.add_row("Trade tier", decision.trade_tier.value)
             if decision.entry_timing:
                 table.add_row("Entry timing", decision.entry_timing.value)

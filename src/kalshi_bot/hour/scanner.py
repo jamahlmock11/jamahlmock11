@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
 
 from kalshi_bot.config import AppConfig
 from kalshi_bot.data.cf_benchmark import BenchmarkDataError, CFBenchmarkClient
@@ -30,7 +30,6 @@ from kalshi_bot.domain import (
     SupportingAggregate,
 )
 from kalshi_bot.features.engine import FeatureEngineConfig
-from kalshi_bot.hour.decision import HourDecisionConfig, HourDecisionEngine
 from kalshi_bot.hour.discovery import HourDiscoveryConfig, discover_hour_market
 from kalshi_bot.hour.feature_engine import HourFeatureBundle, HourFeatureEngine
 from kalshi_bot.hour.probability_model import HourProbabilityModel, model_stability
@@ -38,7 +37,16 @@ from kalshi_bot.hour.regime_detector import classify_hour_regime
 from kalshi_bot.hour.trajectory_model import TrajectoryForecast, forecast_trajectory
 from kalshi_bot.hour.trend_engine import TrendSnapshot
 from kalshi_bot.intelligence.orchestrator import IntelligenceOrchestrator, IntelligenceReport
+from kalshi_bot.strategies.decision import DecisionEngine, decision_config_from_app
+from kalshi_bot.strategies.entry_filters import (
+    EntrySignalTracker,
+    apply_signal_persistence_gate,
+    classify_window_regime,
+)
 from kalshi_bot.venues.kalshi import KalshiClient
+
+if TYPE_CHECKING:
+    from kalshi_bot.execution.risk import RiskManager
 
 
 @dataclass(frozen=True)
@@ -82,7 +90,7 @@ class HourForecastingScanner:
         config: AppConfig,
         features: HourFeatureEngine | None = None,
         model: HourProbabilityModel | None = None,
-        decision_engine: HourDecisionEngine | None = None,
+        decision_engine: DecisionEngine | None = None,
         intelligence: IntelligenceOrchestrator | None = None,
         position_lookup: PositionLookup | None = None,
         orders_lookup: OrdersLookup | None = None,
@@ -93,17 +101,6 @@ class HourForecastingScanner:
         self.options = options
         self.config = config
         hour_cfg = config.hour
-        ls = config.longshot
-        decision_hour_cfg = hour_cfg
-        if ls.enabled:
-            decision_hour_cfg = hour_cfg.model_copy(
-                update={
-                    "max_entry_seconds_remaining": ls.entry_window_seconds,
-                    "min_confidence": ls.min_confidence,
-                    "min_signal_agreement": ls.min_signal_agreement,
-                    "require_forecast_alignment": ls.require_forecast_alignment,
-                }
-            )
         self.features = features or HourFeatureEngine(
             FeatureEngineConfig(
                 history_seconds=hour_cfg.history_seconds,
@@ -116,39 +113,19 @@ class HourForecastingScanner:
             minimum_depth=hour_cfg.order_quantity,
             maximum_spread=hour_cfg.max_spread,
         )
-        self.decision_engine = decision_engine or HourDecisionEngine(
-            HourDecisionConfig(
-                hour=decision_hour_cfg,
-                edge=config.hour_edge,
-                poll=config.poll,
-                longshot=config.longshot,
-                maximum_benchmark_age=config.data.max_brti_age_seconds,
-                fee_rate=config.execution.fee_rate,
-                fee_per_contract=config.execution.fee_per_contract,
-                slippage_bps=config.execution.slippage_bps,
-                slippage_per_contract=config.execution.slippage_per_contract,
-                allow_proxy_data=(
-                    config.execution.dry_run
-                    and config.data.benchmark_mode == "constituent_proxy"
-                ),
-                proxy_minimum_constituents=config.data.min_supporting_venues,
-                proxy_maximum_dispersion=config.data.max_supporting_dispersion,
-                stop_loss_fraction=config.risk.stop_loss_fraction,
-                opposite_edge_shift=config.risk.opposite_edge_shift,
-                thesis_reversal_margin=config.risk.thesis_reversal_margin,
-                thesis_reversal_enabled=config.risk.thesis_reversal_enabled,
-                opposite_edge_exit_enabled=config.risk.opposite_edge_exit_enabled,
-                recovery_hold_enabled=config.risk.recovery_hold_enabled,
-                recovery_hold_min_probability=config.risk.recovery_hold_min_probability,
-                recovery_hold_min_confidence=config.risk.recovery_hold_min_confidence,
-                recovery_hold_min_agreement=config.risk.recovery_hold_min_agreement,
-                min_hold_seconds=config.risk.min_hold_seconds,
+        self.decision_engine = decision_engine or DecisionEngine(
+            decision_config_from_app(
+                config,
+                maximum_seconds_remaining=hour_cfg.max_entry_seconds_remaining,
             )
         )
         self.position_lookup = position_lookup or (lambda _ticker: None)
         self.orders_lookup = orders_lookup or (lambda _ticker: ())
         self.intelligence = intelligence or IntelligenceOrchestrator(
-            confidence_threshold=hour_cfg.min_confidence,
+            confidence_threshold=config.strategy.min_confidence,
+        )
+        self.entry_tracker = EntrySignalTracker(
+            required_polls=config.strategy.entry_signal_persistence_polls,
         )
 
     @staticmethod
@@ -184,6 +161,7 @@ class HourForecastingScanner:
         now: datetime | None = None,
         risk_locked: bool = False,
         duplicate_entry: bool = False,
+        risk_manager: RiskManager | None = None,
     ) -> HourForecastCycle:
         observed_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
         series = self.config.hour.series_ticker
@@ -298,6 +276,11 @@ class HourForecastingScanner:
         trend = bundle.trend
         vol = bundle.volatility
         regime = classify_hour_regime(features, trend, vol)
+        window_regime = (
+            classify_window_regime(features)
+            if self.config.strategy.window_regime_enabled
+            else None
+        )
         trajectory = forecast_trajectory(
             current_price=features.current_price,
             strike=features.strike,
@@ -320,6 +303,7 @@ class HourForecastingScanner:
             vol,
             options_volatility=options_vol,
             market_prior=market_prior,
+            window_regime=window_regime,
         )
         if benchmark.is_proxy:
             proxy_p_up = 0.5 + (forecast.p_up - 0.5) * 0.80
@@ -334,32 +318,43 @@ class HourForecastingScanner:
             )
 
         stability = model_stability(forecast)
-        intel_report = self.intelligence.enrich(
-            forecast,
-            features,
-            market,
-            regime,
-            supporting=supporting,
-        )
-        trade_forecast = intel_report.adjusted_forecast or forecast
+        intel_report: IntelligenceReport | None = None
+        trade_forecast = forecast
+        intel_skip = False
+        if self.config.intelligence.enabled:
+            intel_report = self.intelligence.enrich(
+                forecast,
+                features,
+                market,
+                regime,
+                supporting=supporting,
+            )
+            trade_forecast = intel_report.adjusted_forecast or forecast
+            intel_skip = intel_report.skip_trade
 
         decision = self.decision_engine.decide(
             market,
             trade_forecast,
             features,
             benchmark,
-            trend,
-            vol,
-            regime,
-            stability,
             now=observed_at,
-            risk_locked=risk_locked or intel_report.skip_trade,
+            risk_locked=risk_locked or intel_skip,
             duplicate_entry=duplicate_entry,
+            risk_manager=risk_manager,
         )
-        if intel_report.skip_trade and decision.action in {
-            DecisionAction.BUY_UP,
-            DecisionAction.BUY_DOWN,
-        }:
+        decision = apply_signal_persistence_gate(
+            decision,
+            ticker=market.ticker,
+            tracker=self.entry_tracker,
+        )
+        if (
+            intel_skip
+            and self.config.intelligence.enabled
+            and decision.action in {
+                DecisionAction.BUY_UP,
+                DecisionAction.BUY_DOWN,
+            }
+        ):
             decision = replace(
                 decision,
                 action=DecisionAction.NO_TRADE,
@@ -386,7 +381,7 @@ class HourForecastingScanner:
             reason = f"{reason}; unofficial constituent proxy (PAPER only)"
         if supporting_reason:
             reason = f"{reason}; supporting feeds: {supporting_reason}"
-        if intel_report.skip_trade:
+        if intel_report is not None and intel_report.skip_trade:
             reason = f"{reason}; {intel_report.skip_reason}"
 
         return HourForecastCycle(

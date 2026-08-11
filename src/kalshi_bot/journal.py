@@ -255,7 +255,7 @@ class TradeJournal:
         count: float,
         price: float,
         notional: float,
-        edge: float,
+        edge: float | None,
         confidence: str,
         dry_run: bool,
         ok: bool,

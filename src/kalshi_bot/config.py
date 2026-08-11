@@ -25,6 +25,48 @@ class CrossVenueConfig(BaseModel):
     order_size: int = 5
 
 
+class SpotLagArbConfig(BaseModel):
+    enabled: bool = False
+    min_spot_move_usd: float = Field(default=50.0, ge=0.0)
+    lookback_seconds: float = Field(default=30.0, gt=0.0)
+    min_implied_lag: float = Field(default=0.03, ge=0.0, le=1.0)
+    min_edge: float = Field(default=0.03, ge=0.0, le=1.0)
+    poll_interval_sec: float = Field(default=1.0, gt=0.0)
+
+
+class OrderbookSkewConfig(BaseModel):
+    enabled: bool = False
+    top_levels: int = Field(default=5, ge=1, le=20)
+    max_seconds_remaining: float = Field(default=180.0, ge=0.0)
+    min_skew: float = Field(default=0.25, ge=0.0, le=1.0)
+    min_z_distance: float = Field(default=1.5, ge=0.0)
+    min_edge: float = Field(default=0.05, ge=0.0, le=1.0)
+
+
+class MeanReversionConfig(BaseModel):
+    enabled: bool = False
+    cheap_threshold: float = Field(default=0.20, gt=0.0, le=1.0)
+    rich_threshold: float = Field(default=0.80, gt=0.0, le=1.0)
+    maker_offset_cents: float = Field(default=0.01, ge=0.0, le=0.5)
+    revert_exit_cents: float = Field(default=0.15, gt=0.0, le=1.0)
+    max_resting_orders: int = Field(default=2, ge=0)
+    time_in_force: str = "good_til_canceled"
+
+
+class AgentsConfig(BaseModel):
+    enabled: bool = True
+    min_edge: float = Field(default=0.03, ge=0.0, le=1.0)
+    momentum_weight: float = Field(default=0.5, ge=0.0, le=1.0)
+    skew_weight: float = Field(default=0.5, ge=0.0, le=1.0)
+
+
+class IntelligenceConfig(BaseModel):
+    enabled: bool = Field(
+        default=True,
+        description="Monte Carlo blend, flow/manipulation overlays, and intelligence gates.",
+    )
+
+
 class ExecutionConfig(BaseModel):
     dry_run: bool = True
     orders_enabled: bool = True
@@ -94,6 +136,54 @@ class LongshotConfig(BaseModel):
         default=False,
         description="Plan B: only enter when poll >= extreme_poll_threshold (follow favorite).",
     )
+    perfect_entry_only: bool = Field(
+        default=False,
+        description="Require full edge, model, and poll gates; no crowd edge waiver.",
+    )
+    late_crowd_follow_seconds: float = Field(
+        default=0.0,
+        ge=0.0,
+        description="In the final N seconds, relax crowd-follow poll/model gates (15m).",
+    )
+    late_crowd_poll_threshold: float = Field(
+        default=0.84,
+        ge=0.0,
+        le=1.0,
+        description="Minimum dominant poll to follow the crowd in the late window.",
+    )
+    late_crowd_min_model_prob: float = Field(
+        default=0.50,
+        ge=0.0,
+        le=1.0,
+        description="Minimum model probability on the crowd side in the late window.",
+    )
+    late_crowd_confirm_threshold: float = Field(
+        default=0.50,
+        ge=0.0,
+        le=1.0,
+        description="Poll-confirm threshold for high poll in the late window.",
+    )
+    late_crowd_favorite_max_price: float = Field(
+        default=0.86,
+        gt=0.0,
+        le=1.0,
+        description="Max executable price for the crowd favorite in the late window.",
+    )
+    late_crowd_require_strike_hold: bool = Field(
+        default=True,
+        description="Require spot/strike distance and hold direction to support the crowd side.",
+    )
+    late_crowd_min_hold_probability: float = Field(
+        default=0.50,
+        ge=0.0,
+        le=1.0,
+        description="Minimum combined model/gravity probability on the crowd side.",
+    )
+    late_crowd_max_z_against: float = Field(
+        default=1.0,
+        ge=0.0,
+        description="Max sigma distance against the crowd side in the late window.",
+    )
 
 
 class HourStrategyConfig(BaseModel):
@@ -127,17 +217,72 @@ class StrategyConfig(BaseModel):
     min_signal_agreement: float = Field(default=0.60, ge=0.0, le=1.0)
     min_data_completeness: float = Field(default=0.75, ge=0.0, le=1.0)
     max_spread: float = Field(default=0.12, ge=0.0, le=1.0)
-    min_seconds_remaining: float = Field(default=30.0, ge=0.0)
+    min_seconds_remaining: float = Field(
+        default=60.0,
+        ge=0.0,
+        description="No new entries inside the final N seconds before expiry.",
+    )
     max_entry_seconds_remaining: float = Field(default=600.0, ge=0.0)
     late_seconds: float = Field(default=120.0, ge=0.0)
     final_seconds: float = Field(default=60.0, ge=0.0)
     final_min_edge: float = Field(default=0.25, ge=0.20)
+    late_favorite_seconds: float = Field(
+        default=420.0,
+        ge=0.0,
+        description="Final N seconds where a strong poll favorite can use a lower edge floor.",
+    )
+    late_favorite_poll_threshold: float = Field(
+        default=0.78,
+        ge=0.0,
+        le=1.0,
+        description="Dominant market poll required for the late favorite edge floor.",
+    )
+    late_favorite_min_edge: float = Field(
+        default=0.04,
+        ge=0.0,
+        le=0.20,
+        description="Minimum edge (e.g. 4¢) when late favorite poll threshold is met.",
+    )
+    min_entry_executable_cost: float = Field(
+        default=0.08,
+        ge=0.0,
+        le=1.0,
+        description="Minimum executable entry price (e.g. 8¢) to avoid penny-ticket churn.",
+    )
+    minimum_dominant_poll: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description="Require market poll favorite at or above this level before entry.",
+    )
+    require_dominant_poll_side: bool = Field(
+        default=False,
+        description="Only enter on the market poll favorite side.",
+    )
     order_quantity: float = Field(default=1.0, gt=0.0)
     min_trade_quality_score: float = Field(default=65.0, ge=0.0, le=100.0)
     max_do_not_trade_score: float = Field(default=40.0, ge=0.0, le=100.0)
     require_trade_quality: bool = True
     min_pattern_matches: int = Field(default=10, ge=0)
     external_data_enabled: bool = False
+    entry_signal_persistence_polls: int = Field(
+        default=3,
+        ge=1,
+        description="Consecutive polls where side+edge must hold before entry.",
+    )
+    chop_zone_min_sigma: float = Field(
+        default=0.35,
+        ge=0.0,
+        description="Block entries when |spot-strike| is inside this sigma dead zone.",
+    )
+    require_orderbook_depth: bool = Field(
+        default=False,
+        description="When false, skip the executable ask-depth entry gate.",
+    )
+    window_regime_enabled: bool = Field(
+        default=True,
+        description="Down-weight momentum in choppy realized-vol windows.",
+    )
 
 
 class RiskConfig(BaseModel):
@@ -158,6 +303,31 @@ class RiskConfig(BaseModel):
     recovery_hold_min_confidence: float = Field(default=0.58, ge=0.0, le=1.0)
     recovery_hold_min_agreement: float = Field(default=0.58, ge=0.0, le=1.0)
     min_hold_seconds: float = Field(default=0.0, ge=0.0)
+    position_reversal_enabled: bool = True
+    position_reversal_window_seconds: float = Field(default=420.0, ge=0.0)
+    position_reversal_min_hold_probability: float = Field(default=0.50, ge=0.0, le=1.0)
+    position_reversal_late_hold_probability: float = Field(default=0.62, ge=0.0, le=1.0)
+    position_reversal_min_z_support: float = Field(default=-0.30)
+    position_reversal_wrong_side_seconds: float = Field(default=120.0, ge=0.0)
+    position_reversal_min_forecast_probability: float = Field(default=0.48, ge=0.0, le=1.0)
+    kelly_enabled: bool = True
+    kelly_fraction: float = Field(
+        default=0.25,
+        gt=0.0,
+        le=1.0,
+        description="Quarter-Kelly multiplier applied to edge / (1 - edge).",
+    )
+    kelly_max_fraction: float = Field(
+        default=0.25,
+        gt=0.0,
+        le=1.0,
+        description="Hard cap on bankroll fraction so sizing never goes all-in.",
+    )
+    kelly_bankroll_usd: float | None = Field(
+        default=None,
+        gt=0.0,
+        description="Bankroll for Kelly sizing; defaults to max_position_size.",
+    )
 
 
 class DataConfig(BaseModel):
@@ -193,6 +363,11 @@ class AppConfig(BaseModel):
     hour_edge: HourEdgeConfig = Field(default_factory=HourEdgeConfig)
     tiers: TierConfig = Field(default_factory=TierConfig)
     cross_venue: CrossVenueConfig = Field(default_factory=CrossVenueConfig)
+    spot_lag: SpotLagArbConfig = Field(default_factory=SpotLagArbConfig)
+    orderbook_skew: OrderbookSkewConfig = Field(default_factory=OrderbookSkewConfig)
+    mean_reversion: MeanReversionConfig = Field(default_factory=MeanReversionConfig)
+    agents: AgentsConfig = Field(default_factory=AgentsConfig)
+    intelligence: IntelligenceConfig = Field(default_factory=IntelligenceConfig)
     execution: ExecutionConfig = Field(default_factory=ExecutionConfig)
     strategy: StrategyConfig = Field(default_factory=StrategyConfig)
     risk: RiskConfig = Field(default_factory=RiskConfig)

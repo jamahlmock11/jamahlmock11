@@ -107,11 +107,17 @@ def test_size_decision_honors_min_trade_notional():
             max_contracts_per_trade=25,
             min_trade_notional_usd=2.0,
         ),
-        risk=RiskConfig(max_position_size=100, max_contract_exposure=100),
+        risk=RiskConfig(
+            max_position_size=100,
+            max_contract_exposure=100,
+            kelly_enabled=True,
+            kelly_fraction=0.25,
+            kelly_bankroll_usd=100,
+        ),
     )
-    decision = replace(buy_decision(), executable_cost=0.30, quantity=1)
+    decision = replace(buy_decision(), executable_cost=0.30, quantity=12)
     size = RiskManager(cfg, max_per_ticker_usd=100).size_decision(decision)
-    assert size == 7
+    assert size >= 7
 
 
 def test_legacy_path_cannot_bypass_hard_edge():

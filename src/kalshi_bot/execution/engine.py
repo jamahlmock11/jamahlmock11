@@ -370,7 +370,7 @@ class ExecutionEngine:
                     count=position.quantity,
                     price=exit_price,
                     notional=position.quantity * exit_price,
-                    edge=(decision.edge or 0.0) * 100,
+                    edge=None,
                     confidence="EXIT",
                     dry_run=self.dry_run,
                     ok=True,
@@ -456,3 +456,121 @@ class ExecutionEngine:
             payload=payload,
         )
         return ExecutionReport(ok, self.dry_run, "cross_venue_arb", detail, payload, trade_id)
+
+    def execute_alt_signal(self, signal) -> ExecutionReport | None:
+        """Execute spot-lag, skew, or mean-reversion signals with slippage logging."""
+        from kalshi_bot.strategies.alt_signal import AltTradeSignal
+
+        if not isinstance(signal, AltTradeSignal):
+            return None
+        if signal.quantity <= 0:
+            return None
+
+        size = self.risk.size_alt_signal(signal.edge, signal.limit_price)
+        if size <= 0:
+            return None
+
+        side_text = "yes" if signal.side.value == "YES" else "no"
+        price_cents = max(1, min(99, int(round(signal.limit_price * 100))))
+        notional = size * signal.limit_price
+        min_edge = {
+            "spot_lag": self.config.spot_lag.min_edge,
+            "orderbook_skew": self.config.orderbook_skew.min_edge,
+            "mean_reversion": 0.01,
+        }.get(signal.strategy, self.risk.hard_min_edge)
+        allowed, reason = self.risk.alt_entry_allowed(
+            ticker=signal.ticker,
+            edge=signal.edge,
+            notional=notional,
+            intent_id=signal.intent_id,
+            min_edge=min_edge,
+        )
+        if not allowed:
+            return ExecutionReport(False, self.dry_run, signal.strategy, reason, {})
+
+        payload: dict[str, Any] = {
+            "ticker": signal.ticker,
+            "side": side_text,
+            "action": signal.action,
+            "count": size,
+            "price_cents": price_cents,
+            "edge": signal.edge,
+            "time_in_force": signal.time_in_force,
+            "rationale": signal.rationale,
+            "client_order_id": signal.intent_id,
+        }
+        detail = (
+            f"[{'DRY-RUN' if self.dry_run else 'LIVE'}] {signal.strategy.upper()} "
+            f"{signal.action.upper()} {size} {side_text.upper()} {signal.ticker} "
+            f"@{price_cents}¢ | {signal.reason}"
+        )
+        logger.info("%s — %s", detail, signal.rationale)
+
+        if self.dry_run:
+            if signal.action == "buy":
+                self.risk.register_fill(signal.ticker, notional)
+            self.risk.register_intent(signal.intent_id)
+            trade_id = self._persist_trade(
+                strategy=signal.strategy,
+                ticker=signal.ticker,
+                side=side_text,
+                count=size,
+                price=signal.limit_price,
+                notional=notional,
+                edge=signal.edge * 100,
+                confidence=signal.strategy,
+                dry_run=True,
+                ok=True,
+                detail=detail,
+                payload=payload,
+            )
+            return ExecutionReport(True, True, signal.strategy, detail, payload, trade_id)
+
+        try:
+            if signal.action == "sell":
+                resp = self.kalshi.create_order(
+                    ticker=signal.ticker,
+                    side=side_text,
+                    action="sell",
+                    count=size,
+                    yes_price=price_cents if side_text == "yes" else None,
+                    no_price=price_cents if side_text == "no" else None,
+                    client_order_id=signal.intent_id,
+                    time_in_force=signal.time_in_force,
+                )
+            else:
+                resp = self.kalshi.create_order(
+                    ticker=signal.ticker,
+                    side=side_text,
+                    action="buy",
+                    count=size,
+                    yes_price=price_cents if side_text == "yes" else None,
+                    no_price=price_cents if side_text == "no" else None,
+                    client_order_id=signal.intent_id,
+                    time_in_force=signal.time_in_force,
+                )
+            payload["response"] = resp
+            if signal.action == "buy":
+                self.risk.register_fill(signal.ticker, notional)
+            self.risk.register_intent(signal.intent_id)
+            trade_id = self._persist_trade(
+                strategy=signal.strategy,
+                ticker=signal.ticker,
+                side=side_text,
+                count=size,
+                price=signal.limit_price,
+                notional=notional,
+                edge=signal.edge * 100,
+                confidence=signal.strategy,
+                dry_run=False,
+                ok=True,
+                detail=detail,
+                payload=payload,
+            )
+            return ExecutionReport(True, False, signal.strategy, detail, payload, trade_id)
+        except Exception as exc:
+            detail = f"[LIVE] {signal.strategy} failed {signal.ticker}: {exc}"
+            logger.error(detail)
+            return ExecutionReport(
+                False, False, signal.strategy, detail, {"error": str(exc)}
+            )

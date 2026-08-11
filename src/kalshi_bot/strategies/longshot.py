@@ -9,6 +9,7 @@ from kalshi_bot.config import LongshotConfig
 from kalshi_bot.domain import (
     ContractSide,
     ExecutionEstimate,
+    FeatureSnapshot,
     GateFailure,
     MarketPosition,
     MarketSnapshot,
@@ -16,7 +17,12 @@ from kalshi_bot.domain import (
     utc_datetime,
 )
 from kalshi_bot.execution.stop_loss import executable_exit_price
-from kalshi_bot.market.poll_alignment import PollSnapshot, market_poll_snapshot
+from kalshi_bot.market.poll_alignment import PollSnapshot
+from kalshi_bot.strategies.crowd_strike_hold import (
+    CrowdStrikeHoldAssessment,
+    crowd_strike_hold_gate,
+    evaluate_crowd_strike_hold,
+)
 
 
 @dataclass(frozen=True)
@@ -63,13 +69,55 @@ def filter_longshot_executions(
 
 
 @dataclass(frozen=True)
+class CrowdFollowMode:
+    active: bool = False
+    late_relaxed: bool = False
+    favorite_max_price: float | None = None
+
+
+@dataclass(frozen=True)
 class LongshotEntryContext:
     executions: dict[ContractSide, ExecutionEstimate]
     max_entry_price: float
     min_edge_override: float | None
     forced_side: ContractSide | None
     extreme_poll_active: bool
+    strike_hold: CrowdStrikeHoldAssessment | None
     failures: tuple[GateFailure, ...]
+
+
+def resolve_crowd_follow_mode(
+    *,
+    poll: PollSnapshot,
+    seconds_remaining: float,
+    cfg: LongshotConfig,
+) -> CrowdFollowMode:
+    """Resolve whether crowd-follow is active (poll + time only, no model gates)."""
+    inactive = CrowdFollowMode()
+    if not cfg.follow_extreme_poll:
+        return inactive
+    if poll.dominant_poll is None or poll.dominant_side is None:
+        return inactive
+
+    in_late = (
+        cfg.late_crowd_follow_seconds > 0
+        and seconds_remaining + 1e-9 <= cfg.late_crowd_follow_seconds
+    )
+    if in_late and poll.dominant_poll + 1e-12 >= cfg.late_crowd_poll_threshold:
+        return CrowdFollowMode(
+            active=True,
+            late_relaxed=True,
+            favorite_max_price=cfg.late_crowd_favorite_max_price,
+        )
+
+    if poll.dominant_poll + 1e-12 >= cfg.extreme_poll_threshold:
+        if cfg.extreme_poll_late_seconds <= 0 or seconds_remaining + 1e-9 <= cfg.extreme_poll_late_seconds:
+            return CrowdFollowMode(
+                active=True,
+                late_relaxed=False,
+                favorite_max_price=cfg.extreme_favorite_max_price,
+            )
+    return inactive
 
 
 def extreme_poll_active(
@@ -78,15 +126,11 @@ def extreme_poll_active(
     seconds_remaining: float,
     cfg: LongshotConfig,
 ) -> bool:
-    if not cfg.follow_extreme_poll:
-        return False
-    if poll.dominant_poll is None or poll.dominant_side is None:
-        return False
-    if poll.dominant_poll + 1e-12 < cfg.extreme_poll_threshold:
-        return False
-    if cfg.extreme_poll_late_seconds <= 0:
-        return True
-    return seconds_remaining + 1e-9 <= cfg.extreme_poll_late_seconds
+    return resolve_crowd_follow_mode(
+        poll=poll,
+        seconds_remaining=seconds_remaining,
+        cfg=cfg,
+    ).active
 
 
 def resolve_longshot_entries(
@@ -96,81 +140,62 @@ def resolve_longshot_entries(
     forecast: ProbabilityEstimate,
     seconds_remaining: float,
     cfg: LongshotConfig,
+    poll_cfg: object | None = None,
+    features: FeatureSnapshot | None = None,
 ) -> LongshotEntryContext:
-    """Apply longshot filters; strong favorites (85%+) follow the crowd, not momentary spikes."""
+    """Apply crowd-follow filters from market poll, time, price, and strike path."""
+    del forecast, poll_cfg
     failures: list[GateFailure] = []
     max_price = cfg.max_entry_price
     min_edge_override: float | None = None
     forced_side: ContractSide | None = None
 
-    follow_favorite = extreme_poll_active(
+    crowd_mode = resolve_crowd_follow_mode(
         poll=poll,
         seconds_remaining=seconds_remaining,
         cfg=cfg,
     )
+    follow_favorite = crowd_mode.active
+    strike_hold: CrowdStrikeHoldAssessment | None = None
 
     if follow_favorite:
         dominant = poll.dominant_side
         assert dominant is not None
-        dominant_prob = (
-            forecast.p_up if dominant is ContractSide.YES else forecast.p_down
-        )
-        contrarian = {
-            side: execution
-            for side, execution in executions.items()
-            if side is not dominant
-        }
-        if contrarian:
-            failures.append(
-                _failure(
-                    "favorite_poll_contrarian",
-                    "strong market favorite blocks contrarian entries on momentary spikes",
-                    (
-                        poll.dominant_poll,
-                        dominant.value,
-                        sorted(contrarian.keys(), key=lambda side: side.value),
-                    ),
-                    cfg.extreme_poll_threshold,
-                )
-            )
         executions = {
             side: execution
             for side, execution in executions.items()
             if side is dominant
         }
-        max_price = cfg.extreme_favorite_max_price
+        max_price = (
+            crowd_mode.favorite_max_price
+            if crowd_mode.favorite_max_price is not None
+            else cfg.extreme_favorite_max_price
+        )
         forced_side = dominant
-        min_edge_override = cfg.min_edge
-        if dominant in executions:
-            cost = executions[dominant].executable_cost
-            remaining_upside = max(0.0, 1.0 - cost)
-            min_edge_override = min(cfg.min_edge, max(0.01, remaining_upside * 0.5))
-        if poll.dominant_poll is not None and poll.dominant_poll + 1e-12 >= cfg.extreme_poll_threshold:
-            min_edge_override = -1.0
-        elif dominant_prob + 1e-12 < cfg.extreme_poll_min_model_prob:
-            failures.append(
-                _failure(
-                    "favorite_poll_model",
-                    "model does not support the market favorite",
-                    dominant_prob,
-                    cfg.extreme_poll_min_model_prob,
-                )
+        min_edge_override = -1.0
+        if crowd_mode.late_relaxed and features is not None:
+            strike_hold = evaluate_crowd_strike_hold(
+                features,
+                crowd_side=dominant,
+                cfg=cfg,
             )
+            hold_failure = crowd_strike_hold_gate(strike_hold, cfg=cfg)
+            if hold_failure is not None:
+                failures.append(hold_failure)
+    elif cfg.favorite_only:
+        failures.append(
+            _failure(
+                "favorite_only",
+                "plan B only: entries require market favorite at or above poll threshold",
+                poll.dominant_poll,
+                cfg.extreme_poll_threshold,
+            )
+        )
+        executions = {}
     else:
-        if cfg.favorite_only:
-            failures.append(
-                _failure(
-                    "favorite_only",
-                    "plan B only: entries require market favorite at or above poll threshold",
-                    poll.dominant_poll,
-                    cfg.extreme_poll_threshold,
-                )
-            )
-            executions = {}
-        else:
-            price_failure = longshot_price_gate(executions, cfg=cfg)
-            if price_failure is not None:
-                failures.append(price_failure)
+        price_failure = longshot_price_gate(executions, cfg=cfg)
+        if price_failure is not None:
+            failures.append(price_failure)
 
     filtered = filter_longshot_executions(
         executions,
@@ -193,6 +218,7 @@ def resolve_longshot_entries(
         min_edge_override=min_edge_override,
         forced_side=forced_side,
         extreme_poll_active=follow_favorite,
+        strike_hold=strike_hold,
         failures=tuple(failures),
     )
 

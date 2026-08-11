@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
 
 from kalshi_bot.config import AppConfig
 from kalshi_bot.data.cf_benchmark import BenchmarkDataError, CFBenchmarkClient
@@ -43,7 +43,16 @@ from kalshi_bot.market.discovery import DiscoveryConfig, MarketDiscovery
 from kalshi_bot.models.ensemble import EnsembleProbabilityModel
 from kalshi_bot.models.regime import classify_regime
 from kalshi_bot.strategies.decision import DecisionConfig, DecisionEngine
+from kalshi_bot.strategies.entry_filters import (
+    EntrySignalTracker,
+    apply_signal_persistence_gate,
+    classify_window_regime,
+)
+from kalshi_bot.execution.position_reversal import reversal_config_from_risk
 from kalshi_bot.venues.kalshi import KalshiClient
+
+if TYPE_CHECKING:
+    from kalshi_bot.execution.risk import RiskManager
 
 
 @dataclass(frozen=True)
@@ -141,6 +150,10 @@ class ForecastingScanner:
                 late_minimum_edge=ls.min_edge if ls.enabled else config.strategy.target_edge,
                 final_seconds=config.strategy.final_seconds,
                 final_minimum_edge=ls.min_edge if ls.enabled else config.strategy.final_min_edge,
+                late_favorite_seconds=config.strategy.late_favorite_seconds,
+                late_favorite_poll_threshold=config.strategy.late_favorite_poll_threshold,
+                late_favorite_min_edge=config.strategy.late_favorite_min_edge,
+                min_entry_executable_cost=config.strategy.min_entry_executable_cost,
                 allow_proxy_data=(
                     config.execution.dry_run
                     and config.data.benchmark_mode == "constituent_proxy"
@@ -163,9 +176,15 @@ class ForecastingScanner:
                 recovery_hold_min_confidence=config.risk.recovery_hold_min_confidence,
                 recovery_hold_min_agreement=config.risk.recovery_hold_min_agreement,
                 min_hold_seconds=config.risk.min_hold_seconds,
+                position_reversal=reversal_config_from_risk(config.risk),
                 poll=config.poll,
                 longshot=config.longshot,
+                chop_zone_min_sigma=config.strategy.chop_zone_min_sigma,
+                require_orderbook_depth=config.strategy.require_orderbook_depth,
             )
+        )
+        self.entry_tracker = EntrySignalTracker(
+            required_polls=config.strategy.entry_signal_persistence_polls,
         )
         self.position_lookup = position_lookup or (lambda _ticker: None)
         self.orders_lookup = orders_lookup or (lambda _ticker: ())
@@ -212,6 +231,7 @@ class ForecastingScanner:
         now: datetime | None = None,
         risk_locked: bool = False,
         duplicate_entry: bool = False,
+        risk_manager: RiskManager | None = None,
     ) -> ForecastCycle:
         observed_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
         try:
@@ -298,6 +318,11 @@ class ForecastingScanner:
             )
 
         regime = classify_regime(features)
+        window_regime = (
+            classify_window_regime(features)
+            if self.config.strategy.window_regime_enabled
+            else None
+        )
         enriched = self.enriched_engine.compute(
             features, market, regime, now=observed_at
         )
@@ -313,6 +338,7 @@ class ForecastingScanner:
             regime,
             options_volatility=options_vol,
             market_prior=market_prior,
+            window_regime=window_regime,
         )
         if benchmark.is_proxy:
             # Basis uncertainty is represented by shrinking both probability
@@ -329,14 +355,19 @@ class ForecastingScanner:
                 ),
             )
 
-        intel_report = self.intelligence.enrich(
-            forecast,
-            features,
-            market,
-            regime,
-            supporting=supporting,
-        )
-        trade_forecast = intel_report.adjusted_forecast or forecast
+        intel_report: IntelligenceReport | None = None
+        trade_forecast = forecast
+        intel_skip = False
+        if self.config.intelligence.enabled:
+            intel_report = self.intelligence.enrich(
+                forecast,
+                features,
+                market,
+                regime,
+                supporting=supporting,
+            )
+            trade_forecast = intel_report.adjusted_forecast or forecast
+            intel_skip = intel_report.skip_trade
 
         model_agreement = assess_model_agreement(
             trade_forecast,
@@ -353,8 +384,14 @@ class ForecastingScanner:
             features,
             benchmark,
             now=observed_at,
-            risk_locked=risk_locked or intel_report.skip_trade,
+            risk_locked=risk_locked or intel_skip,
             duplicate_entry=duplicate_entry,
+            risk_manager=risk_manager,
+        )
+        decision = apply_signal_persistence_gate(
+            decision,
+            ticker=market.ticker,
+            tracker=self.entry_tracker,
         )
         trade_quality = assess_trade_quality(
             forecast=trade_forecast,
@@ -406,26 +443,27 @@ class ForecastingScanner:
             decision = replace(
                 decision,
                 action=DecisionAction.NO_TRADE,
-                reason=f"intelligence gate: {intel_report.skip_reason}",
+                reason=f"intelligence gate: {intel_report.skip_reason if intel_report else ''}",
                 gate_failures=decision.gate_failures + (
                     GateFailure(
                         gate="intelligence",
-                        reason=intel_report.skip_reason,
+                        reason=intel_report.skip_reason if intel_report else "",
                         observed=trade_forecast.confidence,
                         required=self.config.strategy.min_confidence,
                     ),
                 ),
             )
 
-        intel_report = self.intelligence.enrich(
-            trade_forecast,
-            features,
-            market,
-            regime,
-            decision_action=decision.action.value,
-            decision_edge=decision.edge,
-            supporting=supporting,
-        )
+        if self.config.intelligence.enabled and intel_report is not None:
+            intel_report = self.intelligence.enrich(
+                trade_forecast,
+                features,
+                market,
+                regime,
+                decision_action=decision.action.value,
+                decision_edge=decision.edge,
+                supporting=supporting,
+            )
         health = (
             "PROXY"
             if benchmark.is_proxy
@@ -438,7 +476,7 @@ class ForecastingScanner:
             reason = f"{reason}; unofficial constituent proxy (PAPER only)"
         if supporting_reason:
             reason = f"{reason}; supporting feeds: {supporting_reason}"
-        if intel_report.skip_trade:
+        if intel_report is not None and intel_report.skip_trade:
             reason = f"{reason}; {intel_report.skip_reason}"
         if external.uncertainty_score > 0.7:
             reason = f"{reason}; elevated external uncertainty"
