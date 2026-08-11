@@ -20,7 +20,7 @@
   "ports": [
     {
       "name": "edge-desk",
-      "port": 8787
+      "port": 8790
     }
   ]
 }

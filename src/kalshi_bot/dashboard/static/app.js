@@ -426,7 +426,7 @@
       $("mode").textContent = "OFFLINE";
       $("offlineBanner").hidden = false;
       $("decisionReason").textContent =
-        "Cannot reach the dashboard API. Open port 8787 from the Cursor Ports tab.";
+        "Cannot reach the dashboard API. In Cursor, open the plug icon (top-right) and forward port 8790.";
       console.error(err);
     }
   }
