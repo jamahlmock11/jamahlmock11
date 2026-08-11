@@ -249,6 +249,16 @@ class StrategyConfig(BaseModel):
         le=1.0,
         description="Minimum executable entry price (e.g. 8¢) to avoid penny-ticket churn.",
     )
+    minimum_dominant_poll: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description="Require market poll favorite at or above this level before entry.",
+    )
+    require_dominant_poll_side: bool = Field(
+        default=False,
+        description="Only enter on the market poll favorite side.",
+    )
     order_quantity: float = Field(default=1.0, gt=0.0)
 
 

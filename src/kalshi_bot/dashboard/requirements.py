@@ -57,6 +57,7 @@ GATE_LABELS: dict[str, str] = {
     "duplicate": "Duplicate intent",
     "open_order": "Resting orders",
     "poll_alignment": "Poll alignment",
+    "poll_favorite": "High-probability favorite",
     "intelligence": "Intelligence gate",
 }
 
@@ -95,6 +96,7 @@ GATE_TO_REQUIREMENT: dict[str, str] = {
     "duplicate": "duplicate",
     "open_order": "open_orders",
     "poll_alignment": "poll",
+    "poll_favorite": "poll",
     "intelligence": "intelligence",
 }
 

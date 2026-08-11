@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
-from kalshi_bot.config import LongshotConfig, PollConfig
+from kalshi_bot.config import AppConfig, LongshotConfig, PollConfig
 from kalshi_bot.domain import (
     BenchmarkQuote,
     ContractSide,
@@ -137,6 +137,8 @@ class DecisionConfig:
     late_favorite_poll_threshold: float = 0.78
     late_favorite_min_edge: float = 0.04
     min_entry_executable_cost: float = 0.08
+    minimum_dominant_poll: float | None = None
+    require_dominant_poll_side: bool = False
     late_confidence_increment: float = 0.10
     allow_replay_data: bool = False
     allow_proxy_data: bool = False
@@ -165,6 +167,70 @@ class DecisionConfig:
         if self.longshot.enabled:
             return Decimal(str(self.longshot.min_edge))
         return max(ABSOLUTE_MINIMUM_EDGE, Decimal(str(self.minimum_edge)))
+
+
+def decision_config_from_app(
+    config: AppConfig,
+    *,
+    maximum_seconds_remaining: float | None = None,
+) -> DecisionConfig:
+    """Build a DecisionConfig from application settings (shared by 15m and 1h bots)."""
+    ls = config.longshot
+    strategy = config.strategy
+    entry_window = (
+        ls.entry_window_seconds
+        if ls.enabled
+        else (maximum_seconds_remaining or strategy.max_entry_seconds_remaining)
+    )
+    return DecisionConfig(
+        minimum_edge=ls.min_edge if ls.enabled else strategy.min_edge,
+        target_edge=strategy.target_edge,
+        quantity=strategy.order_quantity,
+        maximum_benchmark_age=config.data.max_brti_age_seconds,
+        minimum_seconds_remaining=strategy.min_seconds_remaining,
+        maximum_seconds_remaining=entry_window,
+        minimum_confidence=ls.min_confidence if ls.enabled else strategy.min_confidence,
+        minimum_agreement=(
+            ls.min_signal_agreement if ls.enabled else strategy.min_signal_agreement
+        ),
+        minimum_data_completeness=strategy.min_data_completeness,
+        minimum_depth=strategy.order_quantity,
+        maximum_spread=strategy.max_spread,
+        fee_rate=config.execution.fee_rate,
+        fee_per_contract=config.execution.fee_per_contract,
+        slippage_bps=config.execution.slippage_bps,
+        slippage_per_contract=config.execution.slippage_per_contract,
+        late_seconds=strategy.late_seconds,
+        late_minimum_edge=ls.min_edge if ls.enabled else strategy.target_edge,
+        final_seconds=strategy.final_seconds,
+        final_minimum_edge=ls.min_edge if ls.enabled else strategy.final_min_edge,
+        late_favorite_seconds=strategy.late_favorite_seconds,
+        late_favorite_poll_threshold=strategy.late_favorite_poll_threshold,
+        late_favorite_min_edge=strategy.late_favorite_min_edge,
+        min_entry_executable_cost=strategy.min_entry_executable_cost,
+        minimum_dominant_poll=strategy.minimum_dominant_poll,
+        require_dominant_poll_side=strategy.require_dominant_poll_side,
+        allow_proxy_data=(
+            config.execution.dry_run and config.data.benchmark_mode == "constituent_proxy"
+        ),
+        proxy_minimum_constituents=config.data.min_supporting_venues,
+        proxy_maximum_dispersion=config.data.max_supporting_dispersion,
+        stop_loss_fraction=config.risk.stop_loss_fraction,
+        opposite_edge_shift=config.risk.opposite_edge_shift,
+        thesis_reversal_margin=config.risk.thesis_reversal_margin,
+        thesis_reversal_enabled=False if ls.enabled else config.risk.thesis_reversal_enabled,
+        opposite_edge_exit_enabled=(
+            False if ls.enabled else config.risk.opposite_edge_exit_enabled
+        ),
+        recovery_hold_enabled=False if ls.enabled else config.risk.recovery_hold_enabled,
+        recovery_hold_min_probability=config.risk.recovery_hold_min_probability,
+        recovery_hold_min_confidence=config.risk.recovery_hold_min_confidence,
+        recovery_hold_min_agreement=config.risk.recovery_hold_min_agreement,
+        min_hold_seconds=config.risk.min_hold_seconds,
+        position_reversal=reversal_config_from_risk(config.risk),
+        poll=config.poll,
+        longshot=config.longshot,
+    )
 
 
 def _direction_for_side(side: ContractSide | None) -> Direction:
@@ -600,6 +666,33 @@ class DecisionEngine:
         )
         seconds_remaining = (market.expiration - observed_now).total_seconds()
         poll_snapshot = market_poll_snapshot(market.orderbook)
+        if cfg.minimum_dominant_poll is not None:
+            min_poll = cfg.minimum_dominant_poll
+            if (
+                poll_snapshot.dominant_poll is None
+                or poll_snapshot.dominant_poll + 1e-12 < min_poll
+            ):
+                failures.append(
+                    _failure(
+                        "poll_favorite",
+                        "market has no high-probability favorite at required poll level",
+                        poll_snapshot.dominant_poll,
+                        min_poll,
+                    )
+                )
+            elif (
+                cfg.require_dominant_poll_side
+                and poll_snapshot.dominant_side is not None
+                and selected_side is not poll_snapshot.dominant_side
+            ):
+                failures.append(
+                    _failure(
+                        "poll_favorite",
+                        "entry must be on the market poll favorite side",
+                        selected_side.value,
+                        poll_snapshot.dominant_side.value,
+                    )
+                )
         required_edge = cfg.effective_minimum_edge
         if entry_ctx is not None and entry_ctx.min_edge_override is not None:
             required_edge = Decimal(str(entry_ctx.min_edge_override))
