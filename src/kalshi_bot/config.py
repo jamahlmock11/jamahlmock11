@@ -260,6 +260,24 @@ class RiskConfig(BaseModel):
     recovery_hold_min_confidence: float = Field(default=0.58, ge=0.0, le=1.0)
     recovery_hold_min_agreement: float = Field(default=0.58, ge=0.0, le=1.0)
     min_hold_seconds: float = Field(default=0.0, ge=0.0)
+    kelly_enabled: bool = True
+    kelly_fraction: float = Field(
+        default=0.25,
+        gt=0.0,
+        le=1.0,
+        description="Quarter-Kelly multiplier applied to edge / (1 - edge).",
+    )
+    kelly_max_fraction: float = Field(
+        default=0.25,
+        gt=0.0,
+        le=1.0,
+        description="Hard cap on bankroll fraction so sizing never goes all-in.",
+    )
+    kelly_bankroll_usd: float | None = Field(
+        default=None,
+        gt=0.0,
+        description="Bankroll for Kelly sizing; defaults to max_position_size.",
+    )
 
 
 class DataConfig(BaseModel):

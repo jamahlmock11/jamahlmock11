@@ -6,6 +6,7 @@ import math
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
+from typing import TYPE_CHECKING
 
 from kalshi_bot.config import LongshotConfig, PollConfig
 from kalshi_bot.domain import (
@@ -39,6 +40,9 @@ from kalshi_bot.market.poll_alignment import (
     market_poll_snapshot,
     poll_gate_config_from_model,
 )
+
+if TYPE_CHECKING:
+    from kalshi_bot.execution.risk import RiskManager
 
 ABSOLUTE_MINIMUM_EDGE = Decimal("0.20")
 EDGE_TOLERANCE = Decimal("0.000000000001")
@@ -408,6 +412,7 @@ class DecisionEngine:
         risk_locked: bool = False,
         duplicate_entry: bool = False,
         quantity: float | None = None,
+        risk_manager: RiskManager | None = None,
     ) -> DecisionResult:
         observed_now = utc_datetime(now or datetime.now(timezone.utc))
         cfg = self.config
@@ -613,6 +618,75 @@ class DecisionEngine:
                     )
                 )
 
+        size_multiplier = (
+            cfg.longshot.position_size_mult if cfg.longshot.enabled else 1.0
+        )
+        if risk_manager is not None and risk_manager.config.risk.kelly_enabled:
+            kelly_qty = risk_manager.kelly_contracts_for_entry(
+                edge=selected_edge,
+                executable_cost=selected_execution.executable_cost,
+                size_multiplier=size_multiplier,
+                ticker=market.ticker,
+                min_edge=float(required_edge),
+            )
+            if kelly_qty <= 0:
+                failures.append(
+                    _failure(
+                        "kelly_sizing",
+                        "Kelly sizing produced zero affordable contracts",
+                        selected_edge,
+                        float(required_edge),
+                    )
+                )
+            elif kelly_qty != trade_quantity:
+                try:
+                    selected_execution = estimate_buy_execution(
+                        market.orderbook,
+                        selected_side,
+                        kelly_qty,
+                        fee_rate=cfg.fee_rate,
+                        fee_per_contract=cfg.fee_per_contract,
+                        slippage_bps=cfg.slippage_bps,
+                        slippage_per_contract=cfg.slippage_per_contract,
+                    )
+                    trade_quantity = float(kelly_qty)
+                    selected_edge = (
+                        side_probabilities[selected_side]
+                        - selected_execution.executable_cost
+                    )
+                    edge_decimal = Decimal(str(side_probabilities[selected_side])) - Decimal(
+                        str(selected_execution.executable_cost)
+                    )
+                    if edge_decimal + EDGE_TOLERANCE < required_edge:
+                        failures.append(
+                            _failure(
+                                "minimum_edge",
+                                "Kelly-sized entry no longer meets edge floor after book walk",
+                                selected_edge,
+                                float(required_edge),
+                            )
+                        )
+                except InsufficientDepthError as exc:
+                    failures.append(
+                        _failure(
+                            f"{selected_side.value.lower()}_kelly_execution",
+                            str(exc),
+                            depth(market.orderbook, selected_side, asks=True),
+                            kelly_qty,
+                        )
+                    )
+
+        exit_bid_depth = depth(market.orderbook, selected_side, asks=False)
+        if exit_bid_depth + 1e-12 < trade_quantity:
+            failures.append(
+                _failure(
+                    "exit_liquidity",
+                    "order book lacks bid depth to exit the proposed position",
+                    exit_bid_depth,
+                    trade_quantity,
+                )
+            )
+
         poll_active = (not cfg.longshot.enabled) or cfg.longshot.poll_enabled
         bypass_poll = (
             entry_ctx is not None and entry_ctx.extreme_poll_active
@@ -655,6 +729,7 @@ class DecisionEngine:
                 executable_cost=selected_execution.executable_cost,
                 edge=selected_edge,
                 target_edge=cfg.target_edge,
+                required_edge=float(required_edge),
                 quantity=trade_quantity,
                 execution=selected_execution,
             )
@@ -680,9 +755,10 @@ class DecisionEngine:
             executable_cost=selected_execution.executable_cost,
             edge=selected_edge,
             target_edge=cfg.target_edge,
+            required_edge=float(required_edge),
             quantity=trade_quantity,
             execution=selected_execution,
-            size_multiplier=cfg.longshot.position_size_mult if cfg.longshot.enabled else 1.0,
+            size_multiplier=size_multiplier,
         )
 
 

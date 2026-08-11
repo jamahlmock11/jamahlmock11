@@ -136,6 +136,9 @@ risk:
   max_flips_per_contract: 0
   cooldown_seconds: 300
   min_hold_seconds: 0
+  kelly_enabled: true
+  kelly_fraction: 0.25
+  kelly_max_fraction: 0.25
   stop_loss_fraction: 0.55
   opposite_edge_shift: 0.25
   thesis_reversal_enabled: false

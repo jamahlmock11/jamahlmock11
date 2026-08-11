@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
 
 from kalshi_bot.config import AppConfig
 from kalshi_bot.data.cf_benchmark import BenchmarkDataError, CFBenchmarkClient
@@ -39,6 +39,9 @@ from kalshi_bot.models.ensemble import EnsembleProbabilityModel
 from kalshi_bot.models.regime import classify_regime
 from kalshi_bot.strategies.decision import DecisionConfig, DecisionEngine
 from kalshi_bot.venues.kalshi import KalshiClient
+
+if TYPE_CHECKING:
+    from kalshi_bot.execution.risk import RiskManager
 
 
 @dataclass(frozen=True)
@@ -201,6 +204,7 @@ class ForecastingScanner:
         now: datetime | None = None,
         risk_locked: bool = False,
         duplicate_entry: bool = False,
+        risk_manager: RiskManager | None = None,
     ) -> ForecastCycle:
         observed_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
         try:
@@ -336,6 +340,7 @@ class ForecastingScanner:
             now=observed_at,
             risk_locked=risk_locked or intel_skip,
             duplicate_entry=duplicate_entry,
+            risk_manager=risk_manager,
         )
         if (
             intel_skip

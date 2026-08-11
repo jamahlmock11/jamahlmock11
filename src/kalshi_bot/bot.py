@@ -16,7 +16,7 @@ from kalshi_bot.data.cf_benchmark import create_benchmark_feed
 from kalshi_bot.data.ibit_options import IBITOptionsProvider
 from kalshi_bot.data.spot_hub import SpotPriceHub
 from kalshi_bot.data.supporting_feeds import SupportingFeeds
-from kalshi_bot.domain import ContractSide, MarketPosition, OpenOrder
+from kalshi_bot.domain import ContractSide, DecisionAction, MarketPosition, OpenOrder
 from kalshi_bot.execution.engine import ExecutionEngine, ExecutionReport
 from kalshi_bot.execution.position_manager import PositionManager, PositionManagerConfig
 from kalshi_bot.execution.risk import RiskManager
@@ -245,7 +245,10 @@ class TradingBot:
         self.stats.loops += 1
         self.risk.begin_cycle()
         mode = "DRY-RUN" if self.engine.dry_run else "LIVE"
-        cycle = self.forecasting.scan(risk_locked=self.risk.locked)
+        cycle = self.forecasting.scan(
+            risk_locked=self.risk.locked,
+            risk_manager=self.risk,
+        )
         alt_reports: list[ExecutionReport] = []
         if (
             self.config.execution.orders_enabled
@@ -433,6 +436,11 @@ class TradingBot:
             table.add_row("Decision", decision.action.value)
             if decision.edge is not None:
                 table.add_row("All-in edge", f"{decision.edge:.1%}")
+            if decision.quantity > 0 and decision.action in {
+                DecisionAction.BUY_UP,
+                DecisionAction.BUY_DOWN,
+            }:
+                table.add_row("Kelly size", f"{int(decision.quantity)} contracts")
             table.add_row("Edge gap", format_edge_gap(decision))
             table.add_row("Why", cycle.reason)
         if (
