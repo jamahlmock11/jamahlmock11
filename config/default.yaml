@@ -103,7 +103,7 @@ strategy:
   target_edge: 0.20
   min_confidence: 0.0
   min_signal_agreement: 0.48
-  min_data_completeness: 0.75
+  min_data_completeness: 0.60
   max_spread: 0.12
   min_seconds_remaining: 60
   max_entry_seconds_remaining: 900
@@ -115,12 +115,12 @@ strategy:
   late_favorite_min_edge: 0.04
   min_entry_executable_cost: 0.08
   order_quantity: 1
-  min_trade_quality_score: 65
+  min_trade_quality_score: 60
   max_do_not_trade_score: 40
   require_trade_quality: true
   min_pattern_matches: 10
   external_data_enabled: false
-  entry_signal_persistence_polls: 3
+  entry_signal_persistence_polls: 2
   chop_zone_min_sigma: 0.35
   require_orderbook_depth: false
   window_regime_enabled: true
