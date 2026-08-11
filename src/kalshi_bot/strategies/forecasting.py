@@ -32,8 +32,13 @@ from kalshi_bot.domain import (
     Regime,
     SupportingAggregate,
 )
+from kalshi_bot.data.external import ExternalDataProvider
 from kalshi_bot.features.engine import FeatureEngine, FeatureEngineConfig
+from kalshi_bot.features.enriched import EnrichedFeatureEngine, EnrichedFeatures
+from kalshi_bot.intelligence.model_agreement import ModelAgreementAssessment, assess_model_agreement
 from kalshi_bot.intelligence.orchestrator import IntelligenceOrchestrator, IntelligenceReport
+from kalshi_bot.intelligence.trade_quality import TradeQualityAssessment, assess_trade_quality
+from kalshi_bot.learning.pattern_matcher import PatternMatcher, PatternMatchResult
 from kalshi_bot.market.discovery import DiscoveryConfig, MarketDiscovery
 from kalshi_bot.models.ensemble import EnsembleProbabilityModel
 from kalshi_bot.models.regime import classify_regime
@@ -53,12 +58,16 @@ class ForecastCycle:
     benchmark: BenchmarkQuote | None = None
     supporting: SupportingAggregate | None = None
     features: FeatureSnapshot | None = None
+    enriched: EnrichedFeatures | None = None
     regime: Regime | None = None
     forecast: ProbabilityEstimate | None = None
     decision: DecisionResult | None = None
     options_volatility: float | None = None
     market_rejections: dict[str, tuple[str, ...]] | None = None
     intelligence: IntelligenceReport | None = None
+    model_agreement: ModelAgreementAssessment | None = None
+    pattern_match: PatternMatchResult | None = None
+    trade_quality: TradeQualityAssessment | None = None
 
 
 PositionLookup = Callable[[str], MarketPosition | None]
@@ -170,6 +179,11 @@ class ForecastingScanner:
         self.orders_lookup = orders_lookup or (lambda _ticker: ())
         self.intelligence = intelligence or IntelligenceOrchestrator(
             confidence_threshold=ls.min_confidence if ls.enabled else config.strategy.min_confidence,
+        )
+        self.enriched_engine = EnrichedFeatureEngine()
+        self.pattern_matcher = PatternMatcher()
+        self.external_data = ExternalDataProvider(
+            enabled=config.strategy.external_data_enabled,
         )
 
     @staticmethod
@@ -293,6 +307,10 @@ class ForecastingScanner:
             )
 
         regime = classify_regime(features)
+        enriched = self.enriched_engine.compute(
+            features, market, regime, now=observed_at
+        )
+        external = self.external_data.fetch(observed_at)
         options_vol = self._option_volatility(features.seconds_remaining)
         market_prior = (
             (market.yes_bid + market.yes_ask) / 2
@@ -334,6 +352,15 @@ class ForecastingScanner:
             trade_forecast = intel_report.adjusted_forecast or forecast
             intel_skip = intel_report.skip_trade
 
+        model_agreement = assess_model_agreement(
+            trade_forecast,
+            features,
+            enriched,
+            regime,
+            min_agreement=self.config.strategy.min_signal_agreement,
+        )
+        pattern_match = self.pattern_matcher.match(features, enriched, regime)
+
         decision = self.decision_engine.decide(
             market,
             trade_forecast,
@@ -344,15 +371,53 @@ class ForecastingScanner:
             duplicate_entry=duplicate_entry,
             risk_manager=risk_manager,
         )
+        trade_quality = assess_trade_quality(
+            forecast=trade_forecast,
+            features=features,
+            market=market,
+            enriched=enriched,
+            model_agreement=model_agreement,
+            pattern_match=pattern_match,
+            edge=decision.edge,
+            regime=regime,
+            min_quality_score=self.config.strategy.min_trade_quality_score,
+            max_dnt_score=self.config.strategy.max_do_not_trade_score,
+        )
         if (
-            intel_skip
-            and self.config.intelligence.enabled
-            and not self.config.longshot.enabled
-            and decision.action in {
-                DecisionAction.BUY_UP,
-                DecisionAction.BUY_DOWN,
-            }
+            self.config.strategy.require_trade_quality
+            and decision.action in {DecisionAction.BUY_UP, DecisionAction.BUY_DOWN}
+            and not trade_quality.should_execute
         ):
+            skip_reason = (
+                f"trade quality {trade_quality.trade_quality_score:.0f}/100 "
+                f"(DNT {trade_quality.do_not_trade_score:.0f}); "
+                f"{', '.join(trade_quality.reasons) or 'mediocre opportunity'}"
+            )
+            decision = replace(
+                decision,
+                action=DecisionAction.NO_TRADE,
+                reason=f"trade quality gate: {skip_reason}",
+                gate_failures=decision.gate_failures + (
+                    GateFailure(
+                        gate="trade_quality",
+                        reason=skip_reason,
+                        observed=trade_quality.trade_quality_score,
+                        required=self.config.strategy.min_trade_quality_score,
+                    ),
+                ),
+                trade_tier=trade_quality.trade_tier,
+                size_multiplier=0.0,
+            )
+        elif decision.action in {DecisionAction.BUY_UP, DecisionAction.BUY_DOWN}:
+            decision = replace(
+                decision,
+                trade_tier=trade_quality.trade_tier,
+                size_multiplier=trade_quality.size_multiplier,
+            )
+        if intel_report.skip_trade and decision.action in {
+            DecisionAction.BUY_UP,
+            DecisionAction.BUY_DOWN,
+        }:
             decision = replace(
                 decision,
                 action=DecisionAction.NO_TRADE,
@@ -391,6 +456,12 @@ class ForecastingScanner:
             reason = f"{reason}; supporting feeds: {supporting_reason}"
         if intel_report is not None and intel_report.skip_trade:
             reason = f"{reason}; {intel_report.skip_reason}"
+        if external.uncertainty_score > 0.7:
+            reason = f"{reason}; elevated external uncertainty"
+        if pattern_match and not pattern_match.similar_setup_found:
+            reason = f"{reason}; {pattern_match.recommendation}"
+        elif pattern_match and pattern_match.match_count < self.config.strategy.min_pattern_matches:
+            reason = f"{reason}; {pattern_match.recommendation}"
         return ForecastCycle(
             timestamp=observed_at,
             data_health=health,
@@ -399,10 +470,14 @@ class ForecastingScanner:
             benchmark=benchmark,
             supporting=supporting,
             features=features,
+            enriched=enriched,
             regime=regime,
             forecast=trade_forecast,
             decision=decision,
             options_volatility=options_vol,
             market_rejections=dict(discovered.rejections),
             intelligence=intel_report,
+            model_agreement=model_agreement,
+            pattern_match=pattern_match,
+            trade_quality=trade_quality,
         )

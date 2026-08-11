@@ -16,7 +16,7 @@ from kalshi_bot.data.cf_benchmark import create_benchmark_feed
 from kalshi_bot.data.ibit_options import IBITOptionsProvider
 from kalshi_bot.data.spot_hub import SpotPriceHub
 from kalshi_bot.data.supporting_feeds import SupportingFeeds
-from kalshi_bot.domain import ContractSide, DecisionAction, MarketPosition, OpenOrder
+from kalshi_bot.domain import ContractSide, MarketPosition, OpenOrder, Regime
 from kalshi_bot.execution.engine import ExecutionEngine, ExecutionReport
 from kalshi_bot.execution.position_reversal import (
     evaluate_position_reversal,
@@ -28,8 +28,8 @@ from kalshi_bot.intelligence.kill_switch import ConfidenceKillSwitch
 from kalshi_bot.intelligence.orchestrator import IntelligenceOrchestrator
 from kalshi_bot.journal import TradeJournal
 from kalshi_bot.learning.signal_weights import SignalWeightTracker
-from kalshi_bot.models.strike_gravity import assess_strike_gravity
-from kalshi_bot.strategies.alt_runner import AltStrategyRunner
+from kalshi_bot.learning.trade_recorder import TradeRecorder
+from kalshi_bot.learning.pattern_matcher import PatternMatcher
 from kalshi_bot.strategies.forecasting import ForecastCycle, ForecastingScanner
 from kalshi_bot.strategies.decision import format_edge_gap
 from kalshi_bot.agents.pipeline import RomaPipeline, format_roma_report
@@ -64,6 +64,8 @@ class TradingBot:
             if signal_weights_path.exists()
             else SignalWeightTracker()
         )
+        self.trade_recorder = TradeRecorder()
+        self.pattern_matcher = PatternMatcher()
         self.kill_switch = ConfidenceKillSwitch()
         self._hydrate_kill_switch()
         self.intelligence = IntelligenceOrchestrator(
@@ -293,30 +295,9 @@ class TradingBot:
                 timestamp=cycle.timestamp,
                 benchmark=cycle.benchmark,
             )
-        traded = bool(report and report.ok) or any(r.ok for r in alt_reports)
-        position_reversal = None
-        if (
-            cycle.market is not None
-            and cycle.market.current_position is not None
-            and cycle.market.current_position.quantity > 0
-            and cycle.features is not None
-            and cycle.forecast is not None
-            and self.config.risk.position_reversal_enabled
-        ):
-            reversal = evaluate_position_reversal(
-                position_side=cycle.market.current_position.side,
-                features=cycle.features,
-                forecast=cycle.forecast,
-                cfg=reversal_config_from_risk(self.config.risk),
-            )
-            position_reversal = {
-                "should_reverse": reversal.should_reverse,
-                "summary": reversal.summary,
-                "reason": reversal.reason,
-            }
-        journal_payload: dict = {
+        traded = bool(report and report.ok)
+        payload: dict = {
             "execution": report.payload if report else None,
-            "alt_execution": [r.payload for r in alt_reports if r.payload],
             "risk": {
                 "locked": self.risk.locked,
                 "reason": self.risk.state.halt_reason,
@@ -324,52 +305,59 @@ class TradingBot:
                 "open_exposure_usd": self.risk.state.open_exposure_usd,
                 "consecutive_losses": self.risk.state.consecutive_losses,
             },
-            "position_reversal": position_reversal,
-            "kelly_contracts": (
-                int(cycle.decision.quantity)
-                if cycle.decision is not None
-                and cycle.decision.action in {DecisionAction.BUY_UP, DecisionAction.BUY_DOWN}
-                and cycle.decision.quantity > 0
-                else None
-            ),
-            "required_edge": (
-                cycle.decision.required_edge if cycle.decision is not None else None
-            ),
-            "config": {
-                "min_edge": self.config.strategy.min_edge,
-                "min_seconds_remaining": self.config.strategy.min_seconds_remaining,
-                "max_entry_seconds_remaining": self.config.strategy.max_entry_seconds_remaining,
-                "min_signal_agreement": self.config.strategy.min_signal_agreement,
-                "min_data_completeness": self.config.strategy.min_data_completeness,
-                "min_entry_executable_cost": self.config.strategy.min_entry_executable_cost,
-                "max_spread": self.config.strategy.max_spread,
-                "min_confidence": self.config.strategy.min_confidence,
-                "late_seconds": self.config.strategy.late_seconds,
-                "late_favorite_seconds": self.config.strategy.late_favorite_seconds,
-                "late_favorite_poll_threshold": self.config.strategy.late_favorite_poll_threshold,
-                "late_favorite_min_edge": self.config.strategy.late_favorite_min_edge,
-                "kelly_fraction": self.config.risk.kelly_fraction,
-                "min_hold_seconds": self.config.risk.min_hold_seconds,
-            },
+            "horizon": "15m",
+            "strategy": "forecast",
         }
-        if cycle.features is not None:
-            journal_payload["strike_context"] = {
-                "seconds_remaining": cycle.features.seconds_remaining,
-                "spot": cycle.features.current_price,
-                "strike": (
-                    cycle.features.settlement_effective_strike
-                    if cycle.features.settlement_effective_strike is not None
-                    else cycle.features.strike
-                ),
-                "z_distance": cycle.features.z_distance_to_strike,
-                "hold_up_probability": assess_strike_gravity(cycle.features).finish_probability_up,
+        if cycle.trade_quality is not None:
+            tq = cycle.trade_quality
+            payload["trade_quality"] = {
+                "score": tq.trade_quality_score,
+                "do_not_trade_score": tq.do_not_trade_score,
+                "recommendation": tq.recommendation,
+                "liquidity_label": tq.liquidity_label,
+                "historical_match_count": tq.historical_match_count,
+                "trade_tier": tq.trade_tier.value,
             }
+        if cycle.model_agreement is not None:
+            payload["model_agreement"] = {
+                "agreement": cycle.model_agreement.agreement,
+                "consensus": cycle.model_agreement.consensus_direction,
+                "models_agree": cycle.model_agreement.models_agree,
+            }
+        if cycle.enriched is not None:
+            payload["enriched_features"] = cycle.enriched.as_dict()
+            payload["entry_features"] = cycle.enriched.as_dict().get("price_action", {})
         self.journal.log_decision(
             cycle,
             dry_run=self.engine.dry_run,
             traded=traded,
-            payload=journal_payload,
+            payload=payload,
         )
+        if (
+            traded
+            and cycle.market is not None
+            and cycle.decision is not None
+            and cycle.enriched is not None
+            and cycle.forecast is not None
+        ):
+            self.trade_recorder.record_entry(
+                ticker=cycle.market.ticker,
+                features=cycle.enriched.as_dict(),
+                prediction=cycle.forecast.p_up,
+                confidence=cycle.forecast.confidence,
+                edge=cycle.decision.edge or 0.0,
+                action=cycle.decision.action.value,
+                reason=cycle.decision.reason,
+            )
+            self.pattern_matcher.save_entry(
+                cycle.features,
+                cycle.enriched,
+                cycle.regime or Regime.UNCERTAIN,
+                prediction=cycle.forecast.p_up,
+                confidence=cycle.forecast.confidence,
+                edge=cycle.decision.edge or 0.0,
+                action=cycle.decision.action.value,
+            )
         self.stats.decisions += 1
         if traded:
             self.stats.trades += 1
@@ -518,6 +506,24 @@ class TradingBot:
             }:
                 table.add_row("Kelly size", f"{int(decision.quantity)} contracts")
             table.add_row("Edge gap", format_edge_gap(decision))
+            if cycle.trade_quality:
+                tq = cycle.trade_quality
+                table.add_row(
+                    "Trade quality",
+                    f"{tq.trade_quality_score:.0f}/100 · {tq.recommendation} · "
+                    f"DNT {tq.do_not_trade_score:.0f}",
+                )
+                table.add_row(
+                    "Liquidity",
+                    f"{tq.liquidity_label} · tier {tq.trade_tier.value}",
+                )
+            if cycle.model_agreement:
+                ma = cycle.model_agreement
+                table.add_row(
+                    "Model agreement",
+                    f"{ma.agreement:.0%} {ma.consensus_direction} "
+                    f"({len(ma.dissenting_models)} dissenting)",
+                )
             table.add_row("Why", cycle.reason)
         if (
             self.config.intelligence.enabled

@@ -10,7 +10,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from kalshi_bot.dashboard.requirements import enrich_decision
+from kalshi_bot.dashboard.analytics import analytics_to_dict, build_analytics
 from kalshi_bot.journal import CombinedTradeJournal, TradeJournal
 
 BASE = Path(__file__).resolve().parent
@@ -103,6 +103,30 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
     @app.get("/api/decisions")
     def api_decisions(limit: int = Query(100, ge=1, le=500)) -> dict:
         return {"decisions": _decisions(limit)}
+
+    @app.get("/api/analytics")
+    def api_analytics() -> dict:
+        if isinstance(store, CombinedTradeJournal):
+            paths = [Path(p) for p in store.stats().get("journals", [])]
+        else:
+            paths = [store.path]
+        report = build_analytics(paths)
+        return analytics_to_dict(report)
+
+    @app.get("/api/trade-quality")
+    def api_trade_quality() -> dict:
+        decisions = _decisions(1)
+        if not decisions:
+            return {"trade_quality": None}
+        d = decisions[0]
+        payload = {}
+        try:
+            import json
+
+            payload = json.loads(d.get("payload") or "{}")
+        except Exception:
+            pass
+        return {"trade_quality": payload.get("trade_quality"), "decision": d}
 
     @app.get("/api/health")
     def health() -> dict:
