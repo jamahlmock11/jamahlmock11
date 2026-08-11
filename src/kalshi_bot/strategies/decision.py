@@ -180,11 +180,7 @@ def decision_config_from_app(
     """Build a DecisionConfig from application settings (shared by 15m and 1h bots)."""
     ls = config.longshot
     strategy = config.strategy
-    entry_window = (
-        ls.entry_window_seconds
-        if ls.enabled
-        else (maximum_seconds_remaining or strategy.max_entry_seconds_remaining)
-    )
+    entry_window = strategy.contract_duration_seconds
     return DecisionConfig(
         minimum_edge=ls.min_edge if ls.enabled else strategy.min_edge,
         target_edge=strategy.target_edge,
@@ -308,25 +304,15 @@ class DecisionEngine:
         if market.status.lower() not in {"open", "active"}:
             failures.append(_failure("market_status", "market is not open", market.status, "open/active"))
         seconds = (market.expiration - now).total_seconds()
-        if seconds < cfg.minimum_seconds_remaining or seconds > cfg.maximum_seconds_remaining:
-            if seconds < cfg.minimum_seconds_remaining:
-                failures.append(
-                    _failure(
-                        "last_minute",
-                        "entries are blocked in the final minute before expiry",
-                        seconds,
-                        cfg.minimum_seconds_remaining,
-                    )
+        if seconds < cfg.minimum_seconds_remaining:
+            failures.append(
+                _failure(
+                    "last_minute",
+                    "entries are blocked in the final 1:50 before expiry",
+                    seconds,
+                    cfg.minimum_seconds_remaining,
                 )
-            else:
-                failures.append(
-                    _failure(
-                        "time_window",
-                        "contract is outside the safe entry window",
-                        seconds,
-                        (cfg.minimum_seconds_remaining, cfg.maximum_seconds_remaining),
-                    )
-                )
+            )
         source = benchmark.source.lower()
         is_brti = "brti" in source or "bitcoin real time index" in source
         official_brti = benchmark.primary and not benchmark.is_proxy and is_brti

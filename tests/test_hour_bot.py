@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
+from dataclasses import replace
+
 import pytest
 
 from kalshi_bot.config import HourEdgeConfig, HourStrategyConfig
@@ -356,7 +358,7 @@ def test_assess_edge_below_minimum():
     assert assessment.trade_tier is TradeTier.NONE
 
 
-def test_time_window_blocks_entries_before_last_20_minutes():
+def test_entries_allowed_throughout_contract_except_final_ninety_seconds():
     engine = make_engine()
     features = hour_features()
     trend = classify_trend(dict(features.changes))
@@ -369,7 +371,7 @@ def test_time_window_blocks_entries_before_last_20_minutes():
         prices=[65000, 65010, 65020],
         timestamps_span=3600,
     )
-    decision = engine.decide(
+    early = engine.decide(
         hour_market(0.54, minutes_remaining=35),
         forecast(0.65),
         features,
@@ -380,8 +382,28 @@ def test_time_window_blocks_entries_before_last_20_minutes():
         0.8,
         now=NOW,
     )
-    assert decision.action is DecisionAction.NO_TRADE
-    assert any(f.gate == "time_window" for f in decision.gate_failures)
+    assert not any(f.gate == "time_window" for f in early.gate_failures)
+
+    late_engine = HourDecisionEngine(
+        HourDecisionConfig(
+            hour=HOUR_CFG.model_copy(update={"min_seconds_remaining": 110}),
+            edge=EDGE_CFG,
+            allow_proxy_data=True,
+        )
+    )
+    late = late_engine.decide(
+        hour_market(0.54, minutes_remaining=1),
+        forecast(0.65),
+        replace(features, seconds_remaining=100),
+        benchmark(),
+        trend,
+        vol,
+        Regime.TREND_UP,
+        0.8,
+        now=NOW,
+    )
+    assert late.action is DecisionAction.NO_TRADE
+    assert any(f.gate == "last_minute" for f in late.gate_failures)
 
 
 def test_1h_yaml_loads_without_validation_error():
@@ -391,7 +413,7 @@ def test_1h_yaml_loads_without_validation_error():
     assert cfg.horizon == "1h"
     assert cfg.hour.series_ticker == "KXBTCD"
     assert cfg.longshot.enabled is False
-    assert cfg.hour.max_entry_seconds_remaining == pytest.approx(2400)
+    assert cfg.hour.max_entry_seconds_remaining == pytest.approx(3600)
     assert cfg.strategy.minimum_dominant_poll == pytest.approx(0.78)
     assert cfg.strategy.require_dominant_poll_side is True
     assert cfg.strategy.min_edge == pytest.approx(0.20)

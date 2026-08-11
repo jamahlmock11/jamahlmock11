@@ -7,8 +7,8 @@ hour:
   series_ticker: KXBTCD
   market_type: 1h
   contract_duration_seconds: 3600
-  min_seconds_remaining: 60
-  max_entry_seconds_remaining: 2400
+  min_seconds_remaining: 110
+  max_entry_seconds_remaining: 3600
   late_window_seconds: 2400
   mid_window_seconds: 1800
   final_seconds: 60
@@ -25,7 +25,7 @@ hour:
   require_forecast_alignment: false
   forecast_alignment_min_probability: 0.65
 
-# Same strategy rules as the 15-minute bot, with a 40-minute entry window.
+# Same strategy rules as the 15-minute bot across the full hourly contract.
 strategy:
   contract_duration_seconds: 3600
   min_edge: 0.20
@@ -34,8 +34,8 @@ strategy:
   min_signal_agreement: 0.48
   min_data_completeness: 0.75
   max_spread: 0.12
-  min_seconds_remaining: 60
-  max_entry_seconds_remaining: 2400
+  min_seconds_remaining: 110
+  max_entry_seconds_remaining: 3600
   late_seconds: 120
   final_seconds: 60
   final_min_edge: 0.20

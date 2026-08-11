@@ -111,11 +111,7 @@ class ForecastingScanner:
         self.model = model or EnsembleProbabilityModel()
         ls = config.longshot
         strategy = config.strategy
-        entry_window = (
-            ls.entry_window_seconds
-            if ls.enabled
-            else strategy.max_entry_seconds_remaining
-        )
+        entry_window = strategy.contract_duration_seconds
         self.discovery = MarketDiscovery(
             DiscoveryConfig(
                 series_ticker="KXBTC15M",
