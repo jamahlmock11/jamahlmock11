@@ -60,6 +60,13 @@ class AgentsConfig(BaseModel):
     skew_weight: float = Field(default=0.5, ge=0.0, le=1.0)
 
 
+class IntelligenceConfig(BaseModel):
+    enabled: bool = Field(
+        default=True,
+        description="Monte Carlo blend, flow/manipulation overlays, and intelligence gates.",
+    )
+
+
 class ExecutionConfig(BaseModel):
     dry_run: bool = True
     orders_enabled: bool = True
@@ -275,6 +282,7 @@ class AppConfig(BaseModel):
     orderbook_skew: OrderbookSkewConfig = Field(default_factory=OrderbookSkewConfig)
     mean_reversion: MeanReversionConfig = Field(default_factory=MeanReversionConfig)
     agents: AgentsConfig = Field(default_factory=AgentsConfig)
+    intelligence: IntelligenceConfig = Field(default_factory=IntelligenceConfig)
     execution: ExecutionConfig = Field(default_factory=ExecutionConfig)
     strategy: StrategyConfig = Field(default_factory=StrategyConfig)
     risk: RiskConfig = Field(default_factory=RiskConfig)

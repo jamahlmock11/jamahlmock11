@@ -420,7 +420,7 @@ class TradingBot:
                 )
             if cycle.regime:
                 table.add_row("Regime", cycle.regime.value)
-            if cycle.intelligence:
+            if self.config.intelligence.enabled and cycle.intelligence:
                 intel = cycle.intelligence
                 table.add_row(
                     "Monte Carlo",
@@ -436,7 +436,8 @@ class TradingBot:
             table.add_row("Edge gap", format_edge_gap(decision))
             table.add_row("Why", cycle.reason)
         if (
-            not self.config.longshot.enabled
+            self.config.intelligence.enabled
+            and not self.config.longshot.enabled
             and cycle.intelligence
             and cycle.intelligence.explainability
         ):

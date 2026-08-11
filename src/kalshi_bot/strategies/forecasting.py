@@ -311,14 +311,19 @@ class ForecastingScanner:
                 ),
             )
 
-        intel_report = self.intelligence.enrich(
-            forecast,
-            features,
-            market,
-            regime,
-            supporting=supporting,
-        )
-        trade_forecast = intel_report.adjusted_forecast or forecast
+        intel_report: IntelligenceReport | None = None
+        trade_forecast = forecast
+        intel_skip = False
+        if self.config.intelligence.enabled:
+            intel_report = self.intelligence.enrich(
+                forecast,
+                features,
+                market,
+                regime,
+                supporting=supporting,
+            )
+            trade_forecast = intel_report.adjusted_forecast or forecast
+            intel_skip = intel_report.skip_trade
 
         decision = self.decision_engine.decide(
             market,
@@ -326,40 +331,42 @@ class ForecastingScanner:
             features,
             benchmark,
             now=observed_at,
-            risk_locked=risk_locked or intel_report.skip_trade,
+            risk_locked=risk_locked or intel_skip,
             duplicate_entry=duplicate_entry,
         )
         if (
-            intel_report.skip_trade
+            intel_skip
+            and self.config.intelligence.enabled
             and not self.config.longshot.enabled
             and decision.action in {
-            DecisionAction.BUY_UP,
-            DecisionAction.BUY_DOWN,
-        }
+                DecisionAction.BUY_UP,
+                DecisionAction.BUY_DOWN,
+            }
         ):
             decision = replace(
                 decision,
                 action=DecisionAction.NO_TRADE,
-                reason=f"intelligence gate: {intel_report.skip_reason}",
+                reason=f"intelligence gate: {intel_report.skip_reason if intel_report else ''}",
                 gate_failures=decision.gate_failures + (
                     GateFailure(
                         gate="intelligence",
-                        reason=intel_report.skip_reason,
+                        reason=intel_report.skip_reason if intel_report else "",
                         observed=trade_forecast.confidence,
                         required=self.config.strategy.min_confidence,
                     ),
                 ),
             )
 
-        intel_report = self.intelligence.enrich(
-            trade_forecast,
-            features,
-            market,
-            regime,
-            decision_action=decision.action.value,
-            decision_edge=decision.edge,
-            supporting=supporting,
-        )
+        if self.config.intelligence.enabled and intel_report is not None:
+            intel_report = self.intelligence.enrich(
+                trade_forecast,
+                features,
+                market,
+                regime,
+                decision_action=decision.action.value,
+                decision_edge=decision.edge,
+                supporting=supporting,
+            )
         health = (
             "PROXY"
             if benchmark.is_proxy
@@ -372,7 +379,7 @@ class ForecastingScanner:
             reason = f"{reason}; unofficial constituent proxy (PAPER only)"
         if supporting_reason:
             reason = f"{reason}; supporting feeds: {supporting_reason}"
-        if intel_report.skip_trade:
+        if intel_report is not None and intel_report.skip_trade:
             reason = f"{reason}; {intel_report.skip_reason}"
         return ForecastCycle(
             timestamp=observed_at,

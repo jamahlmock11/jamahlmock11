@@ -334,14 +334,19 @@ class HourForecastingScanner:
             )
 
         stability = model_stability(forecast)
-        intel_report = self.intelligence.enrich(
-            forecast,
-            features,
-            market,
-            regime,
-            supporting=supporting,
-        )
-        trade_forecast = intel_report.adjusted_forecast or forecast
+        intel_report: IntelligenceReport | None = None
+        trade_forecast = forecast
+        intel_skip = False
+        if self.config.intelligence.enabled:
+            intel_report = self.intelligence.enrich(
+                forecast,
+                features,
+                market,
+                regime,
+                supporting=supporting,
+            )
+            trade_forecast = intel_report.adjusted_forecast or forecast
+            intel_skip = intel_report.skip_trade
 
         decision = self.decision_engine.decide(
             market,
@@ -353,13 +358,17 @@ class HourForecastingScanner:
             regime,
             stability,
             now=observed_at,
-            risk_locked=risk_locked or intel_report.skip_trade,
+            risk_locked=risk_locked or intel_skip,
             duplicate_entry=duplicate_entry,
         )
-        if intel_report.skip_trade and decision.action in {
-            DecisionAction.BUY_UP,
-            DecisionAction.BUY_DOWN,
-        }:
+        if (
+            intel_skip
+            and self.config.intelligence.enabled
+            and decision.action in {
+                DecisionAction.BUY_UP,
+                DecisionAction.BUY_DOWN,
+            }
+        ):
             decision = replace(
                 decision,
                 action=DecisionAction.NO_TRADE,
@@ -386,7 +395,7 @@ class HourForecastingScanner:
             reason = f"{reason}; unofficial constituent proxy (PAPER only)"
         if supporting_reason:
             reason = f"{reason}; supporting feeds: {supporting_reason}"
-        if intel_report.skip_trade:
+        if intel_report is not None and intel_report.skip_trade:
             reason = f"{reason}; {intel_report.skip_reason}"
 
         return HourForecastCycle(

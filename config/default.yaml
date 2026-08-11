@@ -47,6 +47,9 @@ agents:
   momentum_weight: 0.5
   skew_weight: 0.5
 
+intelligence:
+  enabled: false
+
 execution:
   dry_run: false
   orders_enabled: true
