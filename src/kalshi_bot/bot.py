@@ -30,6 +30,7 @@ from kalshi_bot.journal import TradeJournal
 from kalshi_bot.learning.signal_weights import SignalWeightTracker
 from kalshi_bot.learning.trade_recorder import TradeRecorder
 from kalshi_bot.learning.pattern_matcher import PatternMatcher
+from kalshi_bot.models.strike_gravity import assess_strike_gravity
 from kalshi_bot.strategies.alt_runner import AltStrategyRunner
 from kalshi_bot.strategies.forecasting import ForecastCycle, ForecastingScanner
 from kalshi_bot.strategies.decision import format_edge_gap
