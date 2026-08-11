@@ -66,17 +66,21 @@ def _failure(gate: str, reason: str, observed: object, required: object) -> Gate
     return GateFailure(gate=gate, reason=reason, observed=observed, required=required)
 
 
-def _has_counter_evidence(
+def has_counter_evidence(
     forecast: ProbabilityEstimate,
     side: ContractSide,
     cfg: PollConfig,
 ) -> bool:
+    """True when the model strongly favors a side against an extreme crowd poll."""
     prob = forecast.p_up if side is ContractSide.YES else forecast.p_down
     return (
         prob + 1e-12 >= cfg.counter_evidence_min_probability
         and forecast.confidence + 1e-12 >= cfg.counter_evidence_min_confidence
         and forecast.signal_agreement + 1e-12 >= cfg.counter_evidence_min_agreement
     )
+
+
+_has_counter_evidence = has_counter_evidence
 
 
 def _has_low_poll_evidence(

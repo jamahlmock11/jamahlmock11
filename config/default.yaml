@@ -33,7 +33,7 @@ orderbook_skew:
   min_edge: 0.05
 
 mean_reversion:
-  enabled: true
+  enabled: false
   cheap_threshold: 0.20
   rich_threshold: 0.80
   maker_offset_cents: 0.01
@@ -67,7 +67,7 @@ longshot:
   min_confidence: 0.0
   min_signal_agreement: 0.48
   poll_enabled: true
-  require_forecast_alignment: false
+  require_forecast_alignment: true
   position_size_mult: 0.5
   take_profit_cents: 0.06
   take_profit_pct: 0.10
@@ -81,10 +81,10 @@ longshot:
   follow_extreme_poll: true
   extreme_poll_threshold: 0.85
   extreme_poll_late_seconds: 0
-  extreme_favorite_max_price: 0.99
+  extreme_favorite_max_price: 0.85
   extreme_poll_min_model_prob: 0.48
   favorite_only: true
-  perfect_entry_only: false
+  perfect_entry_only: true
 
 strategy:
   contract_duration_seconds: 900
@@ -103,7 +103,7 @@ strategy:
 
 poll:
   mode: confirm_aligned
-  confirm_threshold: 0.48
+  confirm_threshold: 0.85
   favorable_min: 0.85
   favorable_max: 0.90
   low_poll_threshold: 0.85

@@ -16,7 +16,7 @@ from kalshi_bot.domain import (
     utc_datetime,
 )
 from kalshi_bot.execution.stop_loss import executable_exit_price
-from kalshi_bot.market.poll_alignment import PollSnapshot, market_poll_snapshot
+from kalshi_bot.market.poll_alignment import PollConfig, PollSnapshot, has_counter_evidence
 
 
 @dataclass(frozen=True)
@@ -89,6 +89,18 @@ def extreme_poll_active(
     return seconds_remaining + 1e-9 <= cfg.extreme_poll_late_seconds
 
 
+def _contrarian_side(dominant: ContractSide) -> ContractSide:
+    return ContractSide.NO if dominant is ContractSide.YES else ContractSide.YES
+
+
+def _model_dominant_side(forecast: ProbabilityEstimate) -> ContractSide:
+    return (
+        ContractSide.YES
+        if forecast.p_up + 1e-12 >= forecast.p_down
+        else ContractSide.NO
+    )
+
+
 def resolve_longshot_entries(
     executions: dict[ContractSide, ExecutionEstimate],
     *,
@@ -96,12 +108,14 @@ def resolve_longshot_entries(
     forecast: ProbabilityEstimate,
     seconds_remaining: float,
     cfg: LongshotConfig,
+    poll_cfg: PollConfig | None = None,
 ) -> LongshotEntryContext:
     """Apply longshot filters; strong favorites (85%+) follow the crowd, not momentary spikes."""
     failures: list[GateFailure] = []
     max_price = cfg.max_entry_price
     min_edge_override: float | None = None
     forced_side: ContractSide | None = None
+    reversal_cfg = poll_cfg or PollConfig()
 
     follow_favorite = extreme_poll_active(
         poll=poll,
@@ -112,58 +126,78 @@ def resolve_longshot_entries(
     if follow_favorite:
         dominant = poll.dominant_side
         assert dominant is not None
+        opposite = _contrarian_side(dominant)
         dominant_prob = (
             forecast.p_up if dominant is ContractSide.YES else forecast.p_down
         )
-        contrarian = {
-            side: execution
-            for side, execution in executions.items()
-            if side is not dominant
-        }
-        if contrarian:
-            failures.append(
-                _failure(
-                    "favorite_poll_contrarian",
-                    "strong market favorite blocks contrarian entries on momentary spikes",
-                    (
-                        poll.dominant_poll,
+        reversal = has_counter_evidence(forecast, opposite, reversal_cfg)
+
+        if reversal:
+            contrarian = {
+                side: execution
+                for side, execution in executions.items()
+                if side is not dominant
+            }
+            if not contrarian:
+                failures.append(
+                    _failure(
+                        "poll_reversal",
+                        "full reversal evidence but no executable contrarian quote",
+                        opposite.value,
+                        "executable contrarian depth",
+                    )
+                )
+                executions = {}
+            else:
+                executions = contrarian
+                max_price = cfg.max_entry_price
+                forced_side = opposite
+                min_edge_override = cfg.min_edge
+        else:
+            contrarian = {
+                side: execution
+                for side, execution in executions.items()
+                if side is not dominant
+            }
+            if contrarian:
+                failures.append(
+                    _failure(
+                        "favorite_poll_contrarian",
+                        "crowd-follow blocks contrarian entries without full reversal evidence",
+                        (
+                            poll.dominant_poll,
+                            dominant.value,
+                            sorted(contrarian.keys(), key=lambda side: side.value),
+                        ),
+                        reversal_cfg.counter_evidence_min_probability,
+                    )
+                )
+            executions = {
+                side: execution
+                for side, execution in executions.items()
+                if side is dominant
+            }
+            max_price = cfg.extreme_favorite_max_price
+            forced_side = dominant
+            min_edge_override = cfg.min_edge
+            if dominant_prob + 1e-12 < cfg.extreme_poll_min_model_prob:
+                failures.append(
+                    _failure(
+                        "favorite_poll_model",
+                        "model does not support the market favorite",
+                        dominant_prob,
+                        cfg.extreme_poll_min_model_prob,
+                    )
+                )
+            if _model_dominant_side(forecast) is not dominant:
+                failures.append(
+                    _failure(
+                        "crowd_model_direction",
+                        "model direction must follow the crowd favorite",
+                        _model_dominant_side(forecast).value,
                         dominant.value,
-                        sorted(contrarian.keys(), key=lambda side: side.value),
-                    ),
-                    cfg.extreme_poll_threshold,
+                    )
                 )
-            )
-        executions = {
-            side: execution
-            for side, execution in executions.items()
-            if side is dominant
-        }
-        max_price = cfg.extreme_favorite_max_price
-        forced_side = dominant
-        min_edge_override = cfg.min_edge
-        if dominant in executions:
-            cost = executions[dominant].executable_cost
-            remaining_upside = max(0.0, 1.0 - cost)
-            min_edge_override = min(cfg.min_edge, max(0.01, remaining_upside * 0.5))
-        waive_edge = (
-            not cfg.perfect_entry_only
-            and poll.dominant_poll is not None
-            and poll.dominant_poll + 1e-12 >= cfg.extreme_poll_threshold
-        )
-        if waive_edge:
-            min_edge_override = -1.0
-        if (
-            cfg.perfect_entry_only
-            and dominant_prob + 1e-12 < cfg.extreme_poll_min_model_prob
-        ):
-            failures.append(
-                _failure(
-                    "favorite_poll_model",
-                    "model does not support the market favorite",
-                    dominant_prob,
-                    cfg.extreme_poll_min_model_prob,
-                )
-            )
     else:
         if cfg.favorite_only:
             failures.append(

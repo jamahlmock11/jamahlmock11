@@ -406,12 +406,14 @@ class HourDecisionEngine:
 
         entry_ctx = None
         if cfg.longshot.enabled:
+            poll_cfg = poll_gate_config_from_model(cfg.poll)
             entry_ctx = resolve_longshot_entries(
                 executions,
                 poll=market_poll_snapshot(market.orderbook),
                 forecast=forecast,
                 seconds_remaining=features.seconds_remaining,
                 cfg=cfg.longshot,
+                poll_cfg=poll_cfg,
             )
             failures.extend(entry_ctx.failures)
             executions = entry_ctx.executions
@@ -549,11 +551,7 @@ class HourDecisionEngine:
             )
 
         poll_active = (not cfg.longshot.enabled) or cfg.longshot.poll_enabled
-        bypass_poll = (
-            entry_ctx is not None
-            and entry_ctx.extreme_poll_active
-            and not cfg.longshot.perfect_entry_only
-        )
+        bypass_poll = False
         if poll_active and not bypass_poll:
             poll_cfg = poll_gate_config_from_model(cfg.poll)
             if cfg.longshot.enabled and poll_cfg.mode == "legacy":
