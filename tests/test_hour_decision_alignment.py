@@ -80,6 +80,7 @@ def test_decision_config_from_app_uses_hour_entry_window():
         maximum_seconds_remaining=cfg.hour.max_entry_seconds_remaining,
     )
     assert decision_cfg.maximum_seconds_remaining == pytest.approx(2400)
-    assert decision_cfg.minimum_dominant_poll == pytest.approx(0.78)
+    assert decision_cfg.minimum_dominant_poll is None
+    assert decision_cfg.require_dominant_poll_side is False
     assert decision_cfg.longshot.enabled is False
     assert decision_cfg.minimum_edge == pytest.approx(0.20)
