@@ -63,13 +63,66 @@ def filter_longshot_executions(
 
 
 @dataclass(frozen=True)
+class CrowdFollowMode:
+    active: bool = False
+    late_relaxed: bool = False
+    min_model_prob: float = 0.52
+    require_model_direction: bool = True
+    poll_confirm_threshold: float | None = None
+    waive_edge: bool = False
+    favorite_max_price: float | None = None
+
+
+@dataclass(frozen=True)
 class LongshotEntryContext:
     executions: dict[ContractSide, ExecutionEstimate]
     max_entry_price: float
     min_edge_override: float | None
     forced_side: ContractSide | None
     extreme_poll_active: bool
+    poll_confirm_threshold: float | None
     failures: tuple[GateFailure, ...]
+
+
+def resolve_crowd_follow_mode(
+    *,
+    poll: PollSnapshot,
+    seconds_remaining: float,
+    cfg: LongshotConfig,
+) -> CrowdFollowMode:
+    """Resolve whether crowd-follow is active and which thresholds apply."""
+    inactive = CrowdFollowMode()
+    if not cfg.follow_extreme_poll:
+        return inactive
+    if poll.dominant_poll is None or poll.dominant_side is None:
+        return inactive
+
+    in_late = (
+        cfg.late_crowd_follow_seconds > 0
+        and seconds_remaining + 1e-9 <= cfg.late_crowd_follow_seconds
+    )
+    if in_late and poll.dominant_poll + 1e-12 >= cfg.late_crowd_poll_threshold:
+        return CrowdFollowMode(
+            active=True,
+            late_relaxed=True,
+            min_model_prob=cfg.late_crowd_min_model_prob,
+            require_model_direction=False,
+            poll_confirm_threshold=cfg.late_crowd_confirm_threshold,
+            waive_edge=True,
+            favorite_max_price=cfg.late_crowd_favorite_max_price,
+        )
+
+    if poll.dominant_poll + 1e-12 >= cfg.extreme_poll_threshold:
+        if cfg.extreme_poll_late_seconds <= 0 or seconds_remaining + 1e-9 <= cfg.extreme_poll_late_seconds:
+            return CrowdFollowMode(
+                active=True,
+                late_relaxed=False,
+                min_model_prob=cfg.extreme_poll_min_model_prob,
+                require_model_direction=True,
+                poll_confirm_threshold=None,
+                waive_edge=not cfg.perfect_entry_only,
+            )
+    return inactive
 
 
 def extreme_poll_active(
@@ -78,15 +131,11 @@ def extreme_poll_active(
     seconds_remaining: float,
     cfg: LongshotConfig,
 ) -> bool:
-    if not cfg.follow_extreme_poll:
-        return False
-    if poll.dominant_poll is None or poll.dominant_side is None:
-        return False
-    if poll.dominant_poll + 1e-12 < cfg.extreme_poll_threshold:
-        return False
-    if cfg.extreme_poll_late_seconds <= 0:
-        return True
-    return seconds_remaining + 1e-9 <= cfg.extreme_poll_late_seconds
+    return resolve_crowd_follow_mode(
+        poll=poll,
+        seconds_remaining=seconds_remaining,
+        cfg=cfg,
+    ).active
 
 
 def _contrarian_side(dominant: ContractSide) -> ContractSide:
@@ -117,11 +166,13 @@ def resolve_longshot_entries(
     forced_side: ContractSide | None = None
     reversal_cfg = poll_cfg or PollConfig()
 
-    follow_favorite = extreme_poll_active(
+    crowd_mode = resolve_crowd_follow_mode(
         poll=poll,
         seconds_remaining=seconds_remaining,
         cfg=cfg,
     )
+    follow_favorite = crowd_mode.active
+    poll_confirm_threshold = crowd_mode.poll_confirm_threshold
 
     if follow_favorite:
         dominant = poll.dominant_side
@@ -154,42 +205,33 @@ def resolve_longshot_entries(
                 forced_side = opposite
                 min_edge_override = cfg.min_edge
         else:
-            contrarian = {
-                side: execution
-                for side, execution in executions.items()
-                if side is not dominant
-            }
-            if contrarian:
-                failures.append(
-                    _failure(
-                        "favorite_poll_contrarian",
-                        "crowd-follow blocks contrarian entries without full reversal evidence",
-                        (
-                            poll.dominant_poll,
-                            dominant.value,
-                            sorted(contrarian.keys(), key=lambda side: side.value),
-                        ),
-                        reversal_cfg.counter_evidence_min_probability,
-                    )
-                )
             executions = {
                 side: execution
                 for side, execution in executions.items()
                 if side is dominant
             }
-            max_price = cfg.extreme_favorite_max_price
+            max_price = (
+                crowd_mode.favorite_max_price
+                if crowd_mode.favorite_max_price is not None
+                else cfg.extreme_favorite_max_price
+            )
             forced_side = dominant
             min_edge_override = cfg.min_edge
-            if dominant_prob + 1e-12 < cfg.extreme_poll_min_model_prob:
+            if crowd_mode.waive_edge:
+                min_edge_override = -1.0
+            if dominant_prob + 1e-12 < crowd_mode.min_model_prob:
                 failures.append(
                     _failure(
                         "favorite_poll_model",
                         "model does not support the market favorite",
                         dominant_prob,
-                        cfg.extreme_poll_min_model_prob,
+                        crowd_mode.min_model_prob,
                     )
                 )
-            if _model_dominant_side(forecast) is not dominant:
+            if (
+                crowd_mode.require_model_direction
+                and _model_dominant_side(forecast) is not dominant
+            ):
                 failures.append(
                     _failure(
                         "crowd_model_direction",
@@ -235,6 +277,7 @@ def resolve_longshot_entries(
         min_edge_override=min_edge_override,
         forced_side=forced_side,
         extreme_poll_active=follow_favorite,
+        poll_confirm_threshold=poll_confirm_threshold,
         failures=tuple(failures),
     )
 

@@ -133,6 +133,35 @@ class LongshotConfig(BaseModel):
         default=False,
         description="Require full edge, model, and poll gates; no crowd edge waiver.",
     )
+    late_crowd_follow_seconds: float = Field(
+        default=0.0,
+        ge=0.0,
+        description="In the final N seconds, relax crowd-follow poll/model gates (15m).",
+    )
+    late_crowd_poll_threshold: float = Field(
+        default=0.84,
+        ge=0.0,
+        le=1.0,
+        description="Minimum dominant poll to follow the crowd in the late window.",
+    )
+    late_crowd_min_model_prob: float = Field(
+        default=0.50,
+        ge=0.0,
+        le=1.0,
+        description="Minimum model probability on the crowd side in the late window.",
+    )
+    late_crowd_confirm_threshold: float = Field(
+        default=0.50,
+        ge=0.0,
+        le=1.0,
+        description="Poll-confirm threshold for high poll in the late window.",
+    )
+    late_crowd_favorite_max_price: float = Field(
+        default=0.86,
+        gt=0.0,
+        le=1.0,
+        description="Max executable price for the crowd favorite in the late window.",
+    )
 
 
 class HourStrategyConfig(BaseModel):
