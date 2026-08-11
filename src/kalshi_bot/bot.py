@@ -16,7 +16,7 @@ from kalshi_bot.data.cf_benchmark import create_benchmark_feed
 from kalshi_bot.data.ibit_options import IBITOptionsProvider
 from kalshi_bot.data.spot_hub import SpotPriceHub
 from kalshi_bot.data.supporting_feeds import SupportingFeeds
-from kalshi_bot.domain import ContractSide, MarketPosition, OpenOrder, Regime
+from kalshi_bot.domain import ContractSide, DecisionAction, MarketPosition, OpenOrder, Regime
 from kalshi_bot.execution.engine import ExecutionEngine, ExecutionReport
 from kalshi_bot.execution.position_reversal import (
     evaluate_position_reversal,
