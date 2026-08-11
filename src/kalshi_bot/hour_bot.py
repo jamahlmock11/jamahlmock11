@@ -254,6 +254,8 @@ class HourTradingBot:
                 "min_seconds_remaining": self.config.strategy.min_seconds_remaining,
                 "max_entry_seconds_remaining": self.config.hour.max_entry_seconds_remaining,
                 "min_signal_agreement": self.config.strategy.min_signal_agreement,
+                "min_data_completeness": self.config.strategy.min_data_completeness,
+                "late_confidence_increment": self.config.strategy.late_confidence_increment,
                 "min_entry_executable_cost": self.config.strategy.min_entry_executable_cost,
                 "max_spread": self.config.strategy.max_spread,
                 "min_confidence": self.config.strategy.min_confidence,
