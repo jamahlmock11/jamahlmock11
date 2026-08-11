@@ -222,6 +222,23 @@ class StrategyConfig(BaseModel):
     late_seconds: float = Field(default=120.0, ge=0.0)
     final_seconds: float = Field(default=60.0, ge=0.0)
     final_min_edge: float = Field(default=0.25, ge=0.20)
+    late_favorite_seconds: float = Field(
+        default=420.0,
+        ge=0.0,
+        description="Final N seconds where a strong poll favorite can use a lower edge floor.",
+    )
+    late_favorite_poll_threshold: float = Field(
+        default=0.78,
+        ge=0.0,
+        le=1.0,
+        description="Dominant market poll required for the late favorite edge floor.",
+    )
+    late_favorite_min_edge: float = Field(
+        default=0.04,
+        ge=0.0,
+        le=0.20,
+        description="Minimum edge (e.g. 4¢) when late favorite poll threshold is met.",
+    )
     order_quantity: float = Field(default=1.0, gt=0.0)
 
 

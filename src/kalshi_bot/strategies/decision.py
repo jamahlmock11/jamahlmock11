@@ -34,6 +34,7 @@ from kalshi_bot.strategies.longshot import (
 )
 from kalshi_bot.market.poll_alignment import (
     PollConfig as PollAlignmentConfig,
+    PollSnapshot,
     evaluate_poll_gate,
     market_poll_snapshot,
     poll_gate_config_from_model,
@@ -124,6 +125,9 @@ class DecisionConfig:
     late_minimum_edge: float = 0.25
     final_seconds: float = 60.0
     final_minimum_edge: float = 0.25
+    late_favorite_seconds: float = 420.0
+    late_favorite_poll_threshold: float = 0.78
+    late_favorite_min_edge: float = 0.04
     late_confidence_increment: float = 0.10
     allow_replay_data: bool = False
     allow_proxy_data: bool = False
@@ -172,6 +176,26 @@ def _crowd_context_suffix(entry_ctx: object | None) -> str:
     if strike_hold is None:
         return ""
     return f"; {strike_hold.summary}"
+
+
+def _late_favorite_edge_floor(
+    *,
+    seconds_remaining: float,
+    poll: PollSnapshot,
+    selected_side: ContractSide,
+    cfg: DecisionConfig,
+) -> float | None:
+    if cfg.late_favorite_seconds <= 0:
+        return None
+    if seconds_remaining > cfg.late_favorite_seconds:
+        return None
+    if poll.dominant_poll is None or poll.dominant_side is None:
+        return None
+    if poll.dominant_poll + 1e-12 < cfg.late_favorite_poll_threshold:
+        return None
+    if selected_side is not poll.dominant_side:
+        return None
+    return cfg.late_favorite_min_edge
 
 
 class DecisionEngine:
@@ -552,12 +576,21 @@ class DecisionEngine:
             str(selected_execution.executable_cost)
         )
         seconds_remaining = (market.expiration - observed_now).total_seconds()
+        poll_snapshot = market_poll_snapshot(market.orderbook)
         required_edge = cfg.effective_minimum_edge
         if entry_ctx is not None and entry_ctx.min_edge_override is not None:
             required_edge = Decimal(str(entry_ctx.min_edge_override))
         if benchmark.is_proxy and not cfg.longshot.enabled:
             required_edge = max(required_edge, Decimal(str(cfg.proxy_minimum_edge)))
-        if not cfg.longshot.enabled:
+        late_favorite_edge = _late_favorite_edge_floor(
+            seconds_remaining=seconds_remaining,
+            poll=poll_snapshot,
+            selected_side=selected_side,
+            cfg=cfg,
+        )
+        if late_favorite_edge is not None:
+            required_edge = Decimal(str(late_favorite_edge))
+        elif not cfg.longshot.enabled:
             if seconds_remaining <= cfg.late_seconds:
                 required_edge = max(required_edge, Decimal(str(cfg.late_minimum_edge)))
             if seconds_remaining <= cfg.final_seconds:
@@ -603,7 +636,7 @@ class DecisionEngine:
             poll_failure = evaluate_poll_gate(
                 selected_side=selected_side,
                 forecast=forecast,
-                poll=market_poll_snapshot(market.orderbook),
+                poll=poll_snapshot,
                 cfg=poll_cfg,
             )
             if poll_failure is not None:

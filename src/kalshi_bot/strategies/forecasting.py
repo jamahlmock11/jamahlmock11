@@ -132,6 +132,9 @@ class ForecastingScanner:
                 late_minimum_edge=ls.min_edge if ls.enabled else config.strategy.target_edge,
                 final_seconds=config.strategy.final_seconds,
                 final_minimum_edge=ls.min_edge if ls.enabled else config.strategy.final_min_edge,
+                late_favorite_seconds=config.strategy.late_favorite_seconds,
+                late_favorite_poll_threshold=config.strategy.late_favorite_poll_threshold,
+                late_favorite_min_edge=config.strategy.late_favorite_min_edge,
                 allow_proxy_data=(
                     config.execution.dry_run
                     and config.data.benchmark_mode == "constituent_proxy"
