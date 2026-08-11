@@ -10,6 +10,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from kalshi_bot.dashboard.requirements import enrich_decision
 from kalshi_bot.journal import CombinedTradeJournal, TradeJournal
 
 BASE = Path(__file__).resolve().parent
@@ -49,8 +50,10 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
 
     def _decisions(limit: int) -> list[dict]:
         if isinstance(store, CombinedTradeJournal):
-            return store.recent_decisions(limit)
-        return store.recent_decisions(limit)
+            rows = store.recent_decisions(limit)
+        else:
+            rows = store.recent_decisions(limit)
+        return [enrich_decision(row) for row in rows]
 
     @app.get("/", response_class=HTMLResponse)
     def index(request: Request) -> HTMLResponse:
@@ -58,7 +61,11 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
 
     @app.get("/api/stats")
     def api_stats() -> dict:
-        return _stats()
+        stats = _stats()
+        last = stats.get("last_decision")
+        if last:
+            stats["last_decision"] = enrich_decision(last)
+        return stats
 
     @app.get("/api/summary")
     def api_summary() -> dict:

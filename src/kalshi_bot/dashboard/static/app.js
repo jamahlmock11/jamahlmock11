@@ -88,6 +88,64 @@
     });
   }
 
+  function requirementStatusClass(status, blocking) {
+    if (blocking) return "req-blocked";
+    if (status === "pass") return "req-pass";
+    if (status === "fail") return "req-fail";
+    return "req-na";
+  }
+
+  function renderRequirementsList(requirements) {
+    if (!requirements || !requirements.length) return "";
+    return requirements
+      .map(
+        (r) => `
+        <div class="req-row ${requirementStatusClass(r.status, r.blocking)}">
+          <span class="req-icon">${r.blocking ? "✕" : r.status === "pass" ? "✓" : r.status === "fail" ? "!" : "·"}</span>
+          <div class="req-copy">
+            <strong>${r.label}</strong>
+            <span>${r.detail || ""}</span>
+          </div>
+        </div>`
+      )
+      .join("");
+  }
+
+  function renderRequirementsCell(d) {
+    const reqs = d.requirements || [];
+    if (!reqs.length) return '<span class="req-muted">—</span>';
+    const action = (d.action || "NO_TRADE").toUpperCase();
+    if (action === "NO_TRADE" && d.blocking_summary) {
+      return `<div class="req-cell blocked"><span class="req-blocked-label">Blocked</span><span class="req-blocked-list">${d.blocking_summary}</span></div>`;
+    }
+    const pass = d.pass_count ?? reqs.filter((r) => r.status === "pass").length;
+    const fail = d.fail_count ?? reqs.filter((r) => r.status === "fail").length;
+    const blocked = reqs.filter((r) => r.blocking);
+    if (blocked.length) {
+      return `<div class="req-cell blocked"><span class="req-blocked-label">Blocked</span><span class="req-blocked-list">${blocked.map((r) => r.label).join(", ")}</span></div>`;
+    }
+    return `<div class="req-cell ok"><span class="req-score">${pass}/${pass + fail} pass</span></div>`;
+  }
+
+  function renderRequirementsPanel(d) {
+    const panel = $("requirementsPanel");
+    const grid = $("requirementsGrid");
+    const score = $("requirementsScore");
+    if (!d || !d.requirements || !d.requirements.length) {
+      panel.hidden = true;
+      return;
+    }
+    panel.hidden = false;
+    const pass = d.pass_count ?? d.requirements.filter((r) => r.status === "pass").length;
+    const fail = d.fail_count ?? d.requirements.filter((r) => r.status === "fail").length;
+    const blocked = d.blocking_summary || "all clear";
+    score.textContent =
+      (d.action || "NO_TRADE").toUpperCase() === "NO_TRADE"
+        ? `Blocked: ${blocked}`
+        : `${pass}/${pass + fail} requirements met`;
+    grid.innerHTML = renderRequirementsList(d.requirements);
+  }
+
   function edgeGapText(d) {
     if (!d) return "—";
     let observed = d.edge != null ? Number(d.edge) * 100 : null;
@@ -225,6 +283,10 @@
       action === "EXIT" ? "WHY EXIT" :
       action === "HOLD" ? "WHY HOLD" : "WHY BUY";
     $("decisionReason").textContent = d.reason || "No explanation recorded.";
+    if (d.blocking_summary && action === "NO_TRADE") {
+      $("decisionReason").textContent = `${d.reason || "No trade."} · Blocked by: ${d.blocking_summary}`;
+    }
+    renderRequirementsPanel(d);
   }
 
   function renderDecisions(decisions) {
@@ -241,6 +303,7 @@
         <td class="mono">${pct(d.confidence)}</td>
         <td>${d.regime || "—"}</td>
         <td>${d.data_health || "—"}</td>
+        <td class="requirements-cell">${renderRequirementsCell(d)}</td>
         <td class="reason-cell">${d.reason || "—"}</td>
       </tr>`).join("");
   }

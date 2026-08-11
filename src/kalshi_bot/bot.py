@@ -294,6 +294,26 @@ class TradingBot:
                 benchmark=cycle.benchmark,
             )
         traded = bool(report and report.ok) or any(r.ok for r in alt_reports)
+        position_reversal = None
+        if (
+            cycle.market is not None
+            and cycle.market.current_position is not None
+            and cycle.market.current_position.quantity > 0
+            and cycle.features is not None
+            and cycle.forecast is not None
+            and self.config.risk.position_reversal_enabled
+        ):
+            reversal = evaluate_position_reversal(
+                position_side=cycle.market.current_position.side,
+                features=cycle.features,
+                forecast=cycle.forecast,
+                cfg=reversal_config_from_risk(self.config.risk),
+            )
+            position_reversal = {
+                "should_reverse": reversal.should_reverse,
+                "summary": reversal.summary,
+                "reason": reversal.reason,
+            }
         journal_payload: dict = {
             "execution": report.payload if report else None,
             "alt_execution": [r.payload for r in alt_reports if r.payload],
@@ -303,6 +323,30 @@ class TradingBot:
                 "realized_pnl": self.risk.state.realized_pnl,
                 "open_exposure_usd": self.risk.state.open_exposure_usd,
                 "consecutive_losses": self.risk.state.consecutive_losses,
+            },
+            "position_reversal": position_reversal,
+            "kelly_contracts": (
+                int(cycle.decision.quantity)
+                if cycle.decision is not None
+                and cycle.decision.action in {DecisionAction.BUY_UP, DecisionAction.BUY_DOWN}
+                and cycle.decision.quantity > 0
+                else None
+            ),
+            "config": {
+                "min_edge": self.config.strategy.min_edge,
+                "min_seconds_remaining": self.config.strategy.min_seconds_remaining,
+                "max_entry_seconds_remaining": self.config.strategy.max_entry_seconds_remaining,
+                "min_signal_agreement": self.config.strategy.min_signal_agreement,
+                "min_data_completeness": self.config.strategy.min_data_completeness,
+                "min_entry_executable_cost": self.config.strategy.min_entry_executable_cost,
+                "max_spread": self.config.strategy.max_spread,
+                "min_confidence": self.config.strategy.min_confidence,
+                "late_seconds": self.config.strategy.late_seconds,
+                "late_favorite_seconds": self.config.strategy.late_favorite_seconds,
+                "late_favorite_poll_threshold": self.config.strategy.late_favorite_poll_threshold,
+                "late_favorite_min_edge": self.config.strategy.late_favorite_min_edge,
+                "kelly_fraction": self.config.risk.kelly_fraction,
+                "min_hold_seconds": self.config.risk.min_hold_seconds,
             },
         }
         if cycle.features is not None:
