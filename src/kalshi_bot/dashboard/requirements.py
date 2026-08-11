@@ -18,7 +18,7 @@ DEFAULT_THRESHOLDS: dict[str, Any] = {
     "late_favorite_poll_threshold": 0.78,
     "late_favorite_min_edge": 0.04,
     "min_confidence": 0.0,
-    "late_confidence_increment": 0.0,
+    "late_confidence_increment": 0.10,
     "late_seconds": 120.0,
 }
 
