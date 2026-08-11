@@ -57,8 +57,15 @@ def _feature_vector(
     ]
 
 
+def _as_float(value: object) -> float:
+    try:
+        return float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def _distance(a: list[float], b: list[float]) -> float:
-    return math.sqrt(sum((x - y) ** 2 for x, y in zip(a, b)))
+    return math.sqrt(sum((_as_float(x) - _as_float(y)) ** 2 for x, y in zip(a, b)))
 
 
 class PatternMatcher:

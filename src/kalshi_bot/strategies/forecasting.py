@@ -10,7 +10,12 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Callable
 
 from kalshi_bot.config import AppConfig
-from kalshi_bot.data.cf_benchmark import BenchmarkDataError, CFBenchmarkClient
+from kalshi_bot.data.cf_benchmark import (
+    BenchmarkDataError,
+    CFBenchmarkClient,
+    KalshiCFBenchmarkClient,
+    parse_kalshi_cfbenchmarks_history,
+)
 from kalshi_bot.data.ibit_options import IBITOptionsProvider
 from kalshi_bot.data.supporting_feeds import (
     ConstituentBRTIProxy,
@@ -286,7 +291,26 @@ class ForecastingScanner:
                 decision=self._no_trade(reason, "primary_brti", str(exc)),
                 market_rejections=dict(discovered.rejections),
             )
-        self.features.add_quote(benchmark)
+        if isinstance(self.benchmark, KalshiCFBenchmarkClient):
+            try:
+                raw = self.benchmark.kalshi.get(
+                    "/cfbenchmarks/values",
+                    params={"id": self.benchmark.index_id},
+                )
+                envelope = raw.get("data", raw) if isinstance(raw, dict) else raw
+                history = parse_kalshi_cfbenchmarks_history(
+                    envelope,
+                    now=observed_at,
+                    history_seconds=self.features.config.history_seconds,
+                )
+                if history:
+                    self.features.add_quotes(history)
+                else:
+                    self.features.add_quote(benchmark)
+            except Exception:
+                self.features.add_quote(benchmark)
+        else:
+            self.features.add_quote(benchmark)
 
         supporting: SupportingAggregate | None = None
         supporting_reason = ""

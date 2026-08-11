@@ -228,6 +228,8 @@ def parse_kalshi_cfbenchmarks_values_payload(
         raise BenchmarkPayloadError(
             f"BRTI quote is {abs(age.total_seconds()):.3f}s in the future"
         )
+    if age < timedelta(0):
+        timestamp = now
     return BenchmarkQuote(
         price=price,
         timestamp=timestamp,
@@ -236,6 +238,51 @@ def parse_kalshi_cfbenchmarks_values_payload(
         is_live=True,
         replay=False,
     )
+
+
+def parse_kalshi_cfbenchmarks_history(
+    payload: Any,
+    *,
+    now: datetime,
+    history_seconds: float = 600.0,
+    future_tolerance: timedelta = timedelta(seconds=5),
+) -> list[BenchmarkQuote]:
+    """Return causal BRTI history from Kalshi /cfbenchmarks/values payload."""
+    if not isinstance(payload, Mapping):
+        return []
+    points = payload.get("payload")
+    if not isinstance(points, list):
+        return []
+    observed_now = utc_datetime(now)
+    cutoff = observed_now - timedelta(seconds=history_seconds)
+    quotes: list[BenchmarkQuote] = []
+    for point in points:
+        if not isinstance(point, Mapping):
+            continue
+        time_value = point.get("time")
+        if time_value is None:
+            continue
+        try:
+            timestamp = _parse_timestamp(int(time_value))
+            price = float(point.get("value"))
+        except (TypeError, ValueError, BenchmarkPayloadError):
+            continue
+        if not math.isfinite(price) or price <= 0:
+            continue
+        if timestamp < cutoff or timestamp > observed_now + future_tolerance:
+            continue
+        quotes.append(
+            BenchmarkQuote(
+                price=price,
+                timestamp=timestamp,
+                source=BRTI_SOURCE,
+                primary=True,
+                is_live=True,
+                replay=False,
+            )
+        )
+    quotes.sort(key=lambda quote: quote.timestamp)
+    return quotes
 
 
 class KalshiCFBenchmarkClient:

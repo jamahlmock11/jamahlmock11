@@ -5,8 +5,9 @@ from __future__ import annotations
 import bisect
 import math
 import statistics
+from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from kalshi_bot.domain import (
     BenchmarkQuote,
@@ -120,6 +121,13 @@ class FeatureEngine:
         self._history = [item for item in self._history if item.timestamp.timestamp() >= cutoff]
 
     ingest = add_quote
+
+    def add_quotes(self, quotes: Iterable[BenchmarkQuote]) -> None:
+        for quote in quotes:
+            try:
+                self.add_quote(quote)
+            except ValueError:
+                continue
 
     @staticmethod
     def _at_or_before(
