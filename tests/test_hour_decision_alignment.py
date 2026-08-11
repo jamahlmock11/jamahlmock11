@@ -71,7 +71,7 @@ def test_poll_favorite_gate_blocks_low_probability_market():
     assert any(f.gate == "poll_favorite" for f in decision.gate_failures)
 
 
-def test_decision_config_from_app_uses_hour_entry_window():
+def test_decision_config_from_app_uses_full_contract_window():
     from kalshi_bot.strategies.decision import decision_config_from_app
 
     cfg = load_yaml_config("config/1h.yaml")
@@ -79,7 +79,8 @@ def test_decision_config_from_app_uses_hour_entry_window():
         cfg,
         maximum_seconds_remaining=cfg.hour.max_entry_seconds_remaining,
     )
-    assert decision_cfg.maximum_seconds_remaining == pytest.approx(2400)
+    assert decision_cfg.maximum_seconds_remaining == pytest.approx(3600)
+    assert decision_cfg.minimum_seconds_remaining == pytest.approx(110)
     assert decision_cfg.minimum_dominant_poll == pytest.approx(0.78)
     assert decision_cfg.longshot.enabled is False
     assert decision_cfg.minimum_edge == pytest.approx(0.20)

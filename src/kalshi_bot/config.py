@@ -190,8 +190,8 @@ class HourStrategyConfig(BaseModel):
     series_ticker: str = "KXBTCD"
     market_type: str = "1h"
     contract_duration_seconds: float = Field(default=3600.0, gt=0.0)
-    min_seconds_remaining: float = Field(default=30.0, ge=0.0)
-    max_entry_seconds_remaining: float = Field(default=900.0, ge=0.0)
+    min_seconds_remaining: float = Field(default=110.0, ge=0.0)
+    max_entry_seconds_remaining: float = Field(default=3600.0, ge=0.0)
     late_window_seconds: float = Field(default=900.0, ge=0.0)
     mid_window_seconds: float = Field(default=1800.0, ge=0.0)
     final_seconds: float = Field(default=60.0, ge=0.0)
@@ -218,7 +218,7 @@ class StrategyConfig(BaseModel):
     min_data_completeness: float = Field(default=0.75, ge=0.0, le=1.0)
     max_spread: float = Field(default=0.12, ge=0.0, le=1.0)
     min_seconds_remaining: float = Field(
-        default=60.0,
+        default=110.0,
         ge=0.0,
         description="No new entries inside the final N seconds before expiry.",
     )

@@ -57,6 +57,22 @@ def _feature_vector(
     ]
 
 
+def _vector_as_list(vector: object) -> list[float] | None:
+    if isinstance(vector, dict):
+        try:
+            return [float(vector.get(k, 0.0)) for k in FEATURE_KEYS]
+        except (TypeError, ValueError):
+            return None
+    if isinstance(vector, list):
+        if len(vector) != len(FEATURE_KEYS):
+            return None
+        try:
+            return [float(v) for v in vector]
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
 def _distance(a: list[float], b: list[float]) -> float:
     return math.sqrt(sum((x - y) ** 2 for x, y in zip(a, b)))
 
@@ -134,8 +150,8 @@ class PatternMatcher:
 
         matches: list[dict] = []
         for candidate in candidates:
-            vector = candidate.get("vector", [])
-            if len(vector) != len(query):
+            vector = _vector_as_list(candidate.get("vector"))
+            if vector is None:
                 continue
             dist = _distance(query, vector)
             if dist <= self.similarity_threshold:

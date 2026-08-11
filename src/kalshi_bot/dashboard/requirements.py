@@ -10,7 +10,7 @@ DEFAULT_THRESHOLDS: dict[str, Any] = {
     "min_edge": 0.20,
     "min_signal_agreement": 0.48,
     "min_data_completeness": 0.75,
-    "min_seconds_remaining": 60.0,
+    "min_seconds_remaining": 110.0,
     "max_entry_seconds_remaining": 900.0,
     "max_spread": 0.12,
     "min_entry_executable_cost": 0.08,
@@ -291,16 +291,10 @@ def build_trade_requirements(row: dict[str, Any]) -> dict[str, Any]:
     )
     min_secs = float(thresholds["min_seconds_remaining"])
     max_secs = float(thresholds["max_entry_seconds_remaining"])
-    time_ok = (
-        seconds is not None
-        and float(seconds) >= min_secs
-        and float(seconds) <= max_secs
-    )
-    time_blocking = blocked("time_window")
+    time_ok = seconds is not None and float(seconds) >= min_secs
+    time_blocking = blocked("time_window") or blocked("last_minute")
     if seconds is not None and float(seconds) < min_secs:
-        time_detail = f"{float(seconds):.0f}s left · need ≥{min_secs:.0f}s (no final minute)"
-    elif seconds is not None and float(seconds) > max_secs:
-        time_detail = f"{float(seconds):.0f}s left · max {max_secs:.0f}s"
+        time_detail = f"{float(seconds):.0f}s left · need ≥{min_secs:.0f}s (no final 1:50)"
     else:
         time_detail = (
             f"{float(seconds):.0f}s left"
