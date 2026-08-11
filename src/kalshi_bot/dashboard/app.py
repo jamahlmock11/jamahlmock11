@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from kalshi_bot.dashboard.analytics import analytics_to_dict, build_analytics
+from kalshi_bot.dashboard.requirements import enrich_decision
 from kalshi_bot.journal import CombinedTradeJournal, TradeJournal
 
 BASE = Path(__file__).resolve().parent
