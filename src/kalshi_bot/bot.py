@@ -24,6 +24,7 @@ from kalshi_bot.intelligence.kill_switch import ConfidenceKillSwitch
 from kalshi_bot.intelligence.orchestrator import IntelligenceOrchestrator
 from kalshi_bot.journal import TradeJournal
 from kalshi_bot.learning.signal_weights import SignalWeightTracker
+from kalshi_bot.strategies.alt_runner import AltStrategyRunner
 from kalshi_bot.strategies.forecasting import ForecastCycle, ForecastingScanner
 from kalshi_bot.strategies.decision import format_edge_gap
 from kalshi_bot.agents.pipeline import RomaPipeline, format_roma_report
