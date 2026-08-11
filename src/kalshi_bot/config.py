@@ -123,7 +123,7 @@ class LongshotConfig(BaseModel):
     reversal_cents: float = Field(default=0.05, gt=0.0, le=1.0)
     reversal_window_seconds: float = Field(default=120.0, ge=0.0)
     entry_window_seconds: float = Field(default=1200.0, ge=0.0)
-    follow_extreme_poll: bool = True
+    follow_extreme_poll: bool = False
     extreme_poll_threshold: float = Field(default=0.85, ge=0.0, le=1.0)
     extreme_poll_late_seconds: float = Field(
         default=0.0,
@@ -226,6 +226,12 @@ class StrategyConfig(BaseModel):
     late_seconds: float = Field(default=120.0, ge=0.0)
     final_seconds: float = Field(default=60.0, ge=0.0)
     final_min_edge: float = Field(default=0.25, ge=0.20)
+    late_confidence_increment: float = Field(
+        default=0.10,
+        ge=0.0,
+        le=1.0,
+        description="Extra confidence required in the late_seconds window (0 disables bump).",
+    )
     late_favorite_seconds: float = Field(
         default=420.0,
         ge=0.0,

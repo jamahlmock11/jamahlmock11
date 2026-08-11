@@ -9,7 +9,7 @@ from typing import Any
 DEFAULT_THRESHOLDS: dict[str, Any] = {
     "min_edge": 0.20,
     "min_signal_agreement": 0.48,
-    "min_data_completeness": 0.60,
+    "min_data_completeness": 0.65,
     "min_seconds_remaining": 60.0,
     "max_entry_seconds_remaining": 900.0,
     "max_spread": 0.12,
@@ -18,7 +18,7 @@ DEFAULT_THRESHOLDS: dict[str, Any] = {
     "late_favorite_poll_threshold": 0.78,
     "late_favorite_min_edge": 0.04,
     "min_confidence": 0.0,
-    "late_confidence_increment": 0.10,
+    "late_confidence_increment": 0.0,
     "late_seconds": 120.0,
 }
 

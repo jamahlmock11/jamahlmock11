@@ -32,7 +32,7 @@ def test_poll_favorite_gate_blocks_low_probability_market():
     from tests.test_hour_bot import benchmark, forecast, hour_market
 
     cfg = DecisionConfig(
-        minimum_dominant_poll=0.78,
+        minimum_dominant_poll=0.79,
         require_dominant_poll_side=True,
         maximum_seconds_remaining=2400,
         minimum_seconds_remaining=60,
@@ -80,7 +80,7 @@ def test_decision_config_from_app_uses_hour_entry_window():
         maximum_seconds_remaining=cfg.hour.max_entry_seconds_remaining,
     )
     assert decision_cfg.maximum_seconds_remaining == pytest.approx(2400)
-    assert decision_cfg.minimum_dominant_poll is None
-    assert decision_cfg.require_dominant_poll_side is False
+    assert decision_cfg.minimum_dominant_poll == pytest.approx(0.79)
+    assert decision_cfg.require_dominant_poll_side is True
     assert decision_cfg.longshot.enabled is False
     assert decision_cfg.minimum_edge == pytest.approx(0.20)

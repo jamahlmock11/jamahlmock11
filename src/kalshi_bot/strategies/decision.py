@@ -207,6 +207,7 @@ def decision_config_from_app(
         late_minimum_edge=ls.min_edge if ls.enabled else strategy.target_edge,
         final_seconds=strategy.final_seconds,
         final_minimum_edge=ls.min_edge if ls.enabled else strategy.final_min_edge,
+        late_confidence_increment=strategy.late_confidence_increment,
         late_favorite_seconds=strategy.late_favorite_seconds,
         late_favorite_poll_threshold=strategy.late_favorite_poll_threshold,
         late_favorite_min_edge=strategy.late_favorite_min_edge,
@@ -641,7 +642,7 @@ class DecisionEngine:
                 )
 
         entry_ctx = None
-        if cfg.longshot.enabled:
+        if cfg.longshot.enabled or cfg.longshot.follow_extreme_poll:
             poll_cfg = poll_gate_config_from_model(cfg.poll)
             entry_ctx = resolve_longshot_entries(
                 executions,

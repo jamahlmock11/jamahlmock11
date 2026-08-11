@@ -17,7 +17,7 @@ from kalshi_bot.market.poll_alignment import PollConfig, market_poll_snapshot
 from kalshi_bot.strategies.longshot import resolve_longshot_entries
 
 NOW = datetime(2026, 8, 8, 12, 0, tzinfo=timezone.utc)
-CFG = LongshotConfig(enabled=True, extreme_favorite_max_price=0.85)
+CFG = LongshotConfig(enabled=True, follow_extreme_poll=True, extreme_favorite_max_price=0.85)
 POLL_CFG = PollConfig()
 
 
@@ -124,7 +124,7 @@ def test_crowd_follow_waives_edge_and_ignores_model_direction():
         ContractSide.YES: estimate_buy_execution(book_obj, ContractSide.YES, 1),
         ContractSide.NO: estimate_buy_execution(book_obj, ContractSide.NO, 1),
     }
-    cfg = LongshotConfig(enabled=True, extreme_favorite_max_price=0.86)
+    cfg = LongshotConfig(enabled=True, follow_extreme_poll=True, extreme_favorite_max_price=0.86)
     ctx = resolve_longshot_entries(
         executions,
         poll=market_poll_snapshot(book_obj),
@@ -172,6 +172,7 @@ def test_late_crowd_follow_allows_84_percent_no_without_model():
     }
     cfg = LongshotConfig(
         enabled=True,
+        follow_extreme_poll=True,
         favorite_only=True,
         extreme_favorite_max_price=0.85,
         late_crowd_follow_seconds=540,
