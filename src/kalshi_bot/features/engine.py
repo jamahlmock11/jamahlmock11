@@ -46,7 +46,7 @@ FEATURE_RATIONALE: dict[str, str] = {
     "oldest_sample_age": "History span verifies that nominal long-horizon features have genuine temporal coverage.",
     "settlement_effective_strike": "Inside the final 60-second BRTI averaging window, already observed index values change the average required over the remaining seconds.",
     "settlement_locked_fraction": "The elapsed fraction of Kalshi's final 60-second settlement average measures how much of the outcome path is already fixed.",
-    "late_momentum_pattern": "In the final two minutes, classify fade, drift, or hammer using distance, vol, time, and momentum.",
+    "late_momentum_pattern": "In the late entry window, classify fade, drift, or hammer using distance, vol, time, and momentum.",
     "late_momentum_finish_bias": "Signed adjustment toward finishing above strike from the active late momentum pattern.",
 }
 
@@ -58,7 +58,7 @@ class FeatureEngineConfig:
     venue_neutral_band: float = 0.0002
     venue_dispersion_limit: float = 0.002
     allow_proxy: bool = False
-    late_momentum_window_seconds: float = 120.0
+    late_momentum_window_seconds: float = 360.0
 
 
 def classify_trajectory(

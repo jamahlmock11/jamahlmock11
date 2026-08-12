@@ -57,11 +57,11 @@ def _finish_direction_signals(features: FeatureSnapshot) -> tuple[float, float, 
 def assess_late_momentum(
     features: FeatureSnapshot,
     *,
-    late_window_seconds: float = 120.0,
+    late_window_seconds: float = 360.0,
     activation_threshold: float = 0.18,
 ) -> LateMomentumAssessment:
     """
-    Detect fade, drift, or hammer in the final minutes of a 15m contract.
+    Detect fade, drift, or hammer during the configured late entry window.
 
     Uses distance (z), volatility, time remaining, and short-horizon momentum.
     """

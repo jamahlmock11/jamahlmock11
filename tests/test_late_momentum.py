@@ -40,7 +40,10 @@ def _features(**overrides) -> FeatureSnapshot:
 
 
 def test_late_momentum_inactive_outside_window():
-    assessment = assess_late_momentum(_features(seconds_remaining=240.0))
+    assessment = assess_late_momentum(
+        _features(seconds_remaining=400.0),
+        late_window_seconds=360.0,
+    )
     assert assessment.active is False
     assert assessment.pattern is LateMomentumPattern.NONE
 
@@ -54,7 +57,8 @@ def test_detects_drift_with_steady_above_strike_move():
             velocities={5: 0.000025, 10: 0.000024, 15: 0.000023, 30: 0.000025, 60: 0.000024},
             trajectory=TrajectoryState.ACCELERATING_UP,
             z_distance_to_strike=0.45,
-        )
+        ),
+        late_window_seconds=360.0,
     )
     assert assessment.pattern is LateMomentumPattern.DRIFT
     assert assessment.finish_bias > 0
@@ -70,7 +74,8 @@ def test_detects_hammer_with_late_acceleration():
             trajectory=TrajectoryState.ACCELERATING_UP,
             z_distance_to_strike=0.35,
             seconds_remaining=45.0,
-        )
+        ),
+        late_window_seconds=360.0,
     )
     assert assessment.pattern is LateMomentumPattern.HAMMER
     assert assessment.finish_bias > 0
@@ -85,7 +90,8 @@ def test_detects_fade_when_momentum_weakens():
             velocities={5: 0.00001, 10: 0.00002, 15: 0.00004, 30: 0.00005},
             trajectory=TrajectoryState.DECELERATING_UP,
             z_distance_to_strike=1.4,
-        )
+        ),
+        late_window_seconds=360.0,
     )
     assert assessment.pattern is LateMomentumPattern.FADE
 
@@ -108,6 +114,8 @@ def test_momentum_probability_shifts_with_hammer():
             trajectory=TrajectoryState.ACCELERATING_UP,
             z_distance_to_strike=0.35,
             seconds_remaining=45.0,
+            late_momentum_pattern="hammer",
+            late_momentum_finish_bias=0.8,
         )
     )
     assert hammer > steady

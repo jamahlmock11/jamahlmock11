@@ -490,7 +490,7 @@ class TradingBot:
                     "Late momentum",
                     cycle.features.late_momentum_summary,
                 )
-            elif cycle.features.seconds_remaining <= 120:
+            elif cycle.features.seconds_remaining <= self.config.strategy.late_seconds:
                 table.add_row(
                     "Late momentum",
                     (

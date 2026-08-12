@@ -108,14 +108,15 @@ class ForecastingScanner:
         self.supporting = supporting
         self.options = options
         self.config = config
+        strategy = config.strategy
         self.features = features or FeatureEngine(
             FeatureEngineConfig(
-                allow_proxy=config.data.benchmark_mode == "constituent_proxy"
+                allow_proxy=config.data.benchmark_mode == "constituent_proxy",
+                late_momentum_window_seconds=strategy.late_seconds,
             )
         )
         self.model = model or EnsembleProbabilityModel()
         ls = config.longshot
-        strategy = config.strategy
         entry_window = (
             ls.entry_window_seconds
             if ls.enabled
