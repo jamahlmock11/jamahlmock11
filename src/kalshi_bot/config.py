@@ -220,8 +220,8 @@ class HourStrategyConfig(BaseModel):
 
 class StrategyConfig(BaseModel):
     contract_duration_seconds: float = Field(default=900.0, gt=0.0)
-    min_edge: float = Field(default=0.20, ge=0.20)
-    target_edge: float = Field(default=0.25, ge=0.20)
+    min_edge: float = Field(default=0.15, ge=0.15)
+    target_edge: float = Field(default=0.25, ge=0.15)
     min_confidence: float = Field(default=0.60, ge=0.0, le=1.0)
     min_signal_agreement: float = Field(default=0.60, ge=0.0, le=1.0)
     min_data_completeness: float = Field(default=0.75, ge=0.0, le=1.0)
@@ -234,7 +234,7 @@ class StrategyConfig(BaseModel):
     max_entry_seconds_remaining: float = Field(default=600.0, ge=0.0)
     late_seconds: float = Field(default=120.0, ge=0.0)
     final_seconds: float = Field(default=60.0, ge=0.0)
-    final_min_edge: float = Field(default=0.25, ge=0.20)
+    final_min_edge: float = Field(default=0.25, ge=0.15)
     late_confidence_increment: float = Field(
         default=0.10,
         ge=0.0,

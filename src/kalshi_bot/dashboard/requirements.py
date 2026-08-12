@@ -7,7 +7,7 @@ import math
 from typing import Any
 
 DEFAULT_THRESHOLDS: dict[str, Any] = {
-    "min_edge": 0.20,
+    "min_edge": 0.15,
     "min_signal_agreement": 0.48,
     "min_data_completeness": 0.65,
     "min_seconds_remaining": 60.0,

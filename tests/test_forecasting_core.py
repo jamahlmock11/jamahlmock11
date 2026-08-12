@@ -159,7 +159,7 @@ def test_format_edge_gap_in_kalshi_cents():
                 gate="minimum_edge",
                 reason="below minimum",
                 observed=0.094,
-                required=0.20,
+                required=0.15,
             ),
         ),
         current_direction=Direction.FLAT,
@@ -167,7 +167,7 @@ def test_format_edge_gap_in_kalshi_cents():
         trade_direction=Direction.FLAT,
         edge=0.094,
     )
-    assert format_edge_gap(blocked) == "Need 11¢ more (9¢ have · 20¢ need)"
+    assert format_edge_gap(blocked) == "Need 6¢ more (9¢ have · 15¢ need)"
 
     cleared = DecisionResult(
         action=DecisionAction.BUY_UP,
@@ -178,7 +178,7 @@ def test_format_edge_gap_in_kalshi_cents():
         trade_direction=Direction.UP,
         edge=0.24,
     )
-    assert format_edge_gap(cleared) == "Met (+4¢ above 20¢ minimum)"
+    assert format_edge_gap(cleared) == "Met (+9¢ above 15¢ minimum)"
 
 
 def test_constituent_proxy_is_robust_and_never_primary():

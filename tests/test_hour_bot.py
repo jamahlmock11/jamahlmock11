@@ -396,5 +396,6 @@ def test_1h_yaml_loads_without_validation_error():
     assert cfg.strategy.require_dominant_poll_side is True
     assert cfg.strategy.min_entry_executable_cost == pytest.approx(0.75)
     assert cfg.longshot.crowd_follow_price_band_cents == pytest.approx(0.03)
-    assert cfg.strategy.min_edge == pytest.approx(0.20)
+    assert cfg.strategy.min_edge == pytest.approx(0.15)
+    assert cfg.strategy.late_seconds == pytest.approx(600)
     assert cfg.risk.min_hold_seconds == pytest.approx(120)
