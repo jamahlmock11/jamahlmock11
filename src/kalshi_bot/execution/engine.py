@@ -224,7 +224,7 @@ class ExecutionEngine:
                 return ExecutionReport(
                     False,
                     self.dry_run,
-                    "forecast",
+                    decision.entry_strategy or "forecast",
                     "final edge/data/execution validation failed",
                     {"edge": decision.edge},
                 )
@@ -244,7 +244,13 @@ class ExecutionEngine:
                 intent_id=intent,
             )
             if not allowed:
-                return ExecutionReport(False, self.dry_run, "forecast", reason, {})
+                return ExecutionReport(
+                    False,
+                    self.dry_run,
+                    decision.entry_strategy or "forecast",
+                    reason,
+                    {},
+                )
             price_cents = max(1, min(99, int(round(order_price * 100))))
             payload: dict[str, Any] = {
                 "ticker": market.ticker,
@@ -256,7 +262,9 @@ class ExecutionEngine:
                 "executable_cost": decision.executable_cost,
                 "edge": decision.edge,
                 "client_order_id": intent,
+                "entry_strategy": decision.entry_strategy,
             }
+            strategy_name = decision.entry_strategy or "forecast"
             try:
                 if not self.dry_run:
                     payload["response"] = self.kalshi.create_order(
@@ -285,7 +293,7 @@ class ExecutionEngine:
                     f"edge={decision.edge:.1%}"
                 )
                 trade_id = self._persist_trade(
-                    strategy="forecast",
+                    strategy=strategy_name,
                     ticker=market.ticker,
                     side=side_text,
                     count=size,
@@ -298,7 +306,7 @@ class ExecutionEngine:
                     detail=detail,
                     payload=payload,
                 )
-                return ExecutionReport(True, self.dry_run, "forecast", detail, payload, trade_id)
+                return ExecutionReport(True, self.dry_run, strategy_name, detail, payload, trade_id)
             except Exception as exc:
                 detail = f"order failed safely: {exc}"
                 return ExecutionReport(

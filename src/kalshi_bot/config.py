@@ -91,6 +91,28 @@ class HourEdgeConfig(BaseModel):
     disable_tier_b: bool = False
 
 
+class HourReversalConfig(BaseModel):
+    enabled: bool = True
+    min_entry_edge: float = Field(default=0.15, ge=0.05, le=0.50)
+    watch_score: float = Field(default=50.0, ge=0.0, le=100.0)
+    min_reversal_score: float = Field(default=70.0, ge=0.0, le=100.0)
+    strong_reversal_score: float = Field(default=85.0, ge=0.0, le=100.0)
+    min_initial_trend_consistency: float = Field(default=0.55, ge=0.0, le=1.0)
+    min_initial_move_strength: float = Field(default=0.0008, ge=0.0)
+    min_probability_flip: float = Field(default=0.15, ge=0.0, le=0.50)
+    min_kalshi_lag_cents: float = Field(default=0.08, ge=0.0, le=0.50)
+    min_structure_break_score: float = Field(default=45.0, ge=0.0, le=100.0)
+    min_model_change_score: float = Field(default=45.0, ge=0.0, le=100.0)
+    min_kalshi_lag_score: float = Field(default=45.0, ge=0.0, le=100.0)
+    min_reversal_side_probability: float = Field(default=0.38, ge=0.0, le=1.0)
+    min_data_completeness: float = Field(default=0.65, ge=0.0, le=1.0)
+    max_spread: float = Field(default=0.07, ge=0.0, le=1.0)
+    min_seconds_remaining: float = Field(default=300.0, ge=0.0)
+    max_entry_seconds_remaining: float = Field(default=2400.0, ge=0.0)
+    require_cross_feed_confirmation: bool = True
+    min_cross_feed_score: float = Field(default=40.0, ge=0.0, le=100.0)
+
+
 class PollConfig(BaseModel):
     mode: Literal["legacy", "confirm_aligned", "disabled"] = "legacy"
     confirm_threshold: float = Field(default=0.75, ge=0.0, le=1.0)
@@ -376,6 +398,7 @@ class AppConfig(BaseModel):
     longshot: LongshotConfig = Field(default_factory=LongshotConfig)
     hour: HourStrategyConfig = Field(default_factory=HourStrategyConfig)
     hour_edge: HourEdgeConfig = Field(default_factory=HourEdgeConfig)
+    hour_reversal: HourReversalConfig = Field(default_factory=HourReversalConfig)
     tiers: TierConfig = Field(default_factory=TierConfig)
     cross_venue: CrossVenueConfig = Field(default_factory=CrossVenueConfig)
     spot_lag: SpotLagArbConfig = Field(default_factory=SpotLagArbConfig)

@@ -59,6 +59,13 @@ GATE_LABELS: dict[str, str] = {
     "poll_alignment": "Poll alignment",
     "poll_favorite": "High-probability favorite",
     "intelligence": "Intelligence gate",
+    "reversal_score": "Reversal score",
+    "reversal_confirmation": "Reversal confirmation",
+    "reversal_direction": "Reversal direction",
+    "reversal_probability": "Reversal probability",
+    "cross_feed": "Cross-feed confirmation",
+    "spread": "Bid-ask spread",
+    "liquidity": "Entry book depth",
 }
 
 GATE_TO_REQUIREMENT: dict[str, str] = {
@@ -98,6 +105,13 @@ GATE_TO_REQUIREMENT: dict[str, str] = {
     "poll_alignment": "poll",
     "poll_favorite": "poll",
     "intelligence": "intelligence",
+    "reversal_score": "reversal_score",
+    "reversal_confirmation": "reversal_confirmation",
+    "reversal_direction": "reversal_direction",
+    "reversal_probability": "reversal_probability",
+    "cross_feed": "reversal_confirmation",
+    "spread": "spread",
+    "liquidity": "liquidity",
 }
 
 EDGE_GATES = frozenset({"minimum_edge", "edge", "kelly_sizing"})
@@ -253,7 +267,8 @@ def build_trade_requirements(row: dict[str, Any]) -> dict[str, Any]:
     payload = _parse_json(row.get("payload"), {})
     risk = payload.get("risk") or {}
     strike_ctx = payload.get("strike_context") or {}
-    reversal = payload.get("position_reversal") or {}
+    reversal_exit = payload.get("position_reversal") or {}
+    reversal_setup = payload.get("reversal") or {}
     action = str(row.get("action") or "NO_TRADE").upper()
     data_health = str(row.get("data_health") or "UNKNOWN").upper()
     seconds = row.get("seconds_remaining")
@@ -566,14 +581,42 @@ def build_trade_requirements(row: dict[str, Any]) -> dict[str, Any]:
             )
         )
 
-    if reversal:
+    if reversal_exit:
         requirements.append(
             _req(
                 "position_reversal",
                 "Position reversal check",
-                status="fail" if reversal.get("should_reverse") else "pass",
-                detail=reversal.get("summary") or reversal.get("reason") or "—",
-                blocking=bool(reversal.get("should_reverse")) and action == "EXIT",
+                status="fail" if reversal_exit.get("should_reverse") else "pass",
+                detail=reversal_exit.get("summary") or reversal_exit.get("reason") or "—",
+                blocking=bool(reversal_exit.get("should_reverse")) and action == "EXIT",
+            )
+        )
+
+    if reversal_setup:
+        score = reversal_setup.get("score")
+        tier = reversal_setup.get("tier") or "none"
+        min_score = float(thresholds.get("min_reversal_score") or 70)
+        score_blocking = blocked("reversal_score") or blocked("reversal_confirmation")
+        requirements.append(
+            _req(
+                "reversal_score",
+                "Reversal score",
+                status="fail" if score_blocking else "pass",
+                detail=(
+                    f"{score:.0f}/100 · {tier} · need ≥{min_score:.0f} candidate"
+                    if score is not None
+                    else tier
+                ),
+                blocking=score_blocking,
+            )
+        )
+        requirements.append(
+            _req(
+                "reversal_confirmation",
+                "Reversal confirmation",
+                status="pass" if reversal_setup.get("confirmed") else "fail",
+                detail=reversal_setup.get("summary") or "not confirmed",
+                blocking=blocked("reversal_confirmation"),
             )
         )
 
@@ -674,6 +717,9 @@ def build_trade_requirements(row: dict[str, Any]) -> dict[str, Any]:
         "edge_gap_text": _edge_gap_text(observed_edge, required_edge),
         "pass_count": sum(1 for r in requirements if r["status"] == "pass"),
         "fail_count": sum(1 for r in requirements if r["status"] == "fail"),
+        "strategy_type": payload.get("strategy_type"),
+        "reversal_score": (payload.get("reversal") or {}).get("score"),
+        "reversal_tier": (payload.get("reversal") or {}).get("tier"),
     }
 
 

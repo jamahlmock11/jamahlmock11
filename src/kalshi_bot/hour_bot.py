@@ -236,12 +236,47 @@ class HourTradingBot:
             }
         journal_payload: dict = {
             "horizon": "1h",
+            "strategy_type": "reversal",
             "model_version": self.config.hour.model_version,
             "required_edge": (
                 cycle.decision.required_edge if cycle.decision else None
             ),
             "execution": report.payload if report else None,
             "position_reversal": position_reversal,
+            "reversal": (
+                {
+                    "score": cycle.reversal.score,
+                    "tier": cycle.reversal.tier.value,
+                    "summary": cycle.reversal.summary,
+                    "confirmed": cycle.reversal.confirmed,
+                    "initial_direction": (
+                        cycle.reversal.initial_direction.value
+                        if cycle.reversal.initial_direction
+                        else None
+                    ),
+                    "reversal_direction": (
+                        cycle.reversal.reversal_direction.value
+                        if cycle.reversal.reversal_direction
+                        else None
+                    ),
+                    "probability_drop": cycle.reversal.probability_drop,
+                    "kalshi_lag_cents": cycle.reversal.kalshi_lag_cents,
+                    "components": {
+                        "momentum_exhaustion": cycle.reversal.components.momentum_exhaustion,
+                        "structure_break": cycle.reversal.components.structure_break,
+                        "volume_confirmation": cycle.reversal.components.volume_confirmation,
+                        "order_flow_reversal": cycle.reversal.components.order_flow_reversal,
+                        "cross_exchange_confirmation": cycle.reversal.components.cross_exchange_confirmation,
+                        "volatility_shift": cycle.reversal.components.volatility_shift,
+                        "distance_from_strike": cycle.reversal.components.distance_from_strike,
+                        "time_remaining": cycle.reversal.components.time_remaining,
+                        "kalshi_repricing_lag": cycle.reversal.components.kalshi_repricing_lag,
+                        "model_probability_change": cycle.reversal.components.model_probability_change,
+                    },
+                }
+                if cycle.reversal is not None
+                else None
+            ),
             "kelly_contracts": (
                 int(cycle.decision.quantity)
                 if cycle.decision is not None
@@ -250,21 +285,15 @@ class HourTradingBot:
                 else None
             ),
             "config": {
-                "min_edge": self.config.strategy.min_edge,
-                "min_seconds_remaining": self.config.strategy.min_seconds_remaining,
-                "max_entry_seconds_remaining": self.config.hour.max_entry_seconds_remaining,
-                "min_signal_agreement": self.config.strategy.min_signal_agreement,
-                "min_data_completeness": self.config.strategy.min_data_completeness,
-                "late_confidence_increment": self.config.strategy.late_confidence_increment,
-                "min_entry_executable_cost": self.config.strategy.min_entry_executable_cost,
-                "max_spread": self.config.strategy.max_spread,
-                "min_confidence": self.config.strategy.min_confidence,
-                "late_seconds": self.config.strategy.late_seconds,
-                "late_favorite_seconds": self.config.strategy.late_favorite_seconds,
-                "late_favorite_poll_threshold": self.config.strategy.late_favorite_poll_threshold,
-                "late_favorite_min_edge": self.config.strategy.late_favorite_min_edge,
-                "minimum_dominant_poll": self.config.strategy.minimum_dominant_poll,
-                "kelly_fraction": self.config.risk.kelly_fraction,
+                "strategy_type": "reversal",
+                "min_entry_edge": self.config.hour_reversal.min_entry_edge,
+                "min_reversal_score": self.config.hour_reversal.min_reversal_score,
+                "strong_reversal_score": self.config.hour_reversal.strong_reversal_score,
+                "min_probability_flip": self.config.hour_reversal.min_probability_flip,
+                "min_kalshi_lag_cents": self.config.hour_reversal.min_kalshi_lag_cents,
+                "min_seconds_remaining": self.config.hour_reversal.min_seconds_remaining,
+                "max_entry_seconds_remaining": self.config.hour_reversal.max_entry_seconds_remaining,
+                "max_spread": self.config.hour_reversal.max_spread,
                 "min_hold_seconds": self.config.risk.min_hold_seconds,
             },
             "risk": {
@@ -306,25 +335,6 @@ class HourTradingBot:
             color = "green" if report.ok else "red"
             console.print(f"[{color}]{report.detail}[/{color}]")
         return self.stats
-
-    def run_forever(self) -> None:
-        interval = self.config.hour.poll_interval_sec
-        mode = "DRY-RUN" if self.engine.dry_run else "LIVE"
-        console.print(
-            f"[bold]Kalshi BTC 1-hour bot starting[/bold] mode={mode} "
-            f"series={self.config.hour.series_ticker} poll={interval}s"
-        )
-        try:
-            while True:
-                if self.risk.state.halted:
-                    console.print(f"[red]HALTED: {self.risk.state.halt_reason}[/red]")
-                    break
-                self.once()
-                time.sleep(interval)
-        except KeyboardInterrupt:
-            console.print("\n[yellow]Stopped by user[/yellow]")
-        finally:
-            self.close()
 
     def _print_cycle(self, cycle: HourForecastCycle, mode: str) -> None:
         decision = cycle.decision
@@ -373,7 +383,12 @@ class HourTradingBot:
             )
         if cycle.regime:
             table.add_row("Regime", cycle.regime.value)
+        if cycle.reversal is not None:
+            table.add_row("Reversal score", f"{cycle.reversal.score:.0f}/100 · {cycle.reversal.tier.value}")
+            table.add_row("Reversal setup", cycle.reversal.summary)
+            table.add_row("Reversal confirmed", "yes" if cycle.reversal.confirmed else "no")
         if decision:
+            table.add_row("Strategy", decision.entry_strategy or "reversal")
             table.add_row("Decision", decision.action.value)
             if decision.edge is not None:
                 table.add_row("Edge", f"{decision.edge:.1%}")
@@ -386,3 +401,23 @@ class HourTradingBot:
                 table.add_row("Entry timing", decision.entry_timing.value)
             table.add_row("Why", cycle.reason)
         console.print(table)
+
+    def run_forever(self) -> None:
+        interval = self.config.hour.poll_interval_sec
+        mode = "DRY-RUN" if self.engine.dry_run else "LIVE"
+        console.print(
+            f"[bold]Kalshi BTC 1-hour bot starting[/bold] mode={mode} "
+            f"series={self.config.hour.series_ticker} poll={interval}s "
+            f"strategy=reversal"
+        )
+        try:
+            while True:
+                if self.risk.state.halted:
+                    console.print(f"[red]HALTED: {self.risk.state.halt_reason}[/red]")
+                    break
+                self.once()
+                time.sleep(interval)
+        except KeyboardInterrupt:
+            console.print("\n[yellow]Stopped by user[/yellow]")
+        finally:
+            self.close()
