@@ -17,7 +17,12 @@ from kalshi_bot.market.poll_alignment import PollConfig, market_poll_snapshot
 from kalshi_bot.strategies.longshot import resolve_longshot_entries
 
 NOW = datetime(2026, 8, 8, 12, 0, tzinfo=timezone.utc)
-CFG = LongshotConfig(enabled=True, follow_extreme_poll=True, extreme_favorite_max_price=0.85)
+CFG = LongshotConfig(
+    enabled=True,
+    follow_extreme_poll=True,
+    extreme_poll_threshold=0.80,
+    crowd_follow_price_band_cents=0.03,
+)
 POLL_CFG = PollConfig()
 
 
@@ -124,7 +129,12 @@ def test_crowd_follow_waives_edge_and_ignores_model_direction():
         ContractSide.YES: estimate_buy_execution(book_obj, ContractSide.YES, 1),
         ContractSide.NO: estimate_buy_execution(book_obj, ContractSide.NO, 1),
     }
-    cfg = LongshotConfig(enabled=True, follow_extreme_poll=True, extreme_favorite_max_price=0.86)
+    cfg = LongshotConfig(
+        enabled=True,
+        follow_extreme_poll=True,
+        extreme_poll_threshold=0.80,
+        crowd_follow_price_band_cents=0.03,
+    )
     ctx = resolve_longshot_entries(
         executions,
         poll=market_poll_snapshot(book_obj),
@@ -138,7 +148,7 @@ def test_crowd_follow_waives_edge_and_ignores_model_direction():
     assert ctx.min_edge_override == -1.0
 
 
-def test_blocks_expensive_favorite_above_price_cap():
+def test_blocks_favorite_outside_crowd_price_band():
     book_obj = book(0.03)
     executions = {
         ContractSide.YES: estimate_buy_execution(book_obj, ContractSide.YES, 1),
@@ -152,6 +162,33 @@ def test_blocks_expensive_favorite_above_price_cap():
         cfg=CFG,
         poll_cfg=POLL_CFG,
     )
+    assert ctx.forced_side is ContractSide.NO
+    assert ContractSide.NO in ctx.executions
+
+
+def test_blocks_favorite_when_executable_price_outside_band():
+    book_obj = parse_orderbook_fp(
+        {
+            "orderbook_fp": {
+                "yes_dollars": [["0.88", "1000"]],
+                "no_dollars": [["0.03", "1000"]],
+            }
+        },
+        timestamp=NOW,
+    )
+    executions = {
+        ContractSide.YES: estimate_buy_execution(book_obj, ContractSide.YES, 1),
+        ContractSide.NO: estimate_buy_execution(book_obj, ContractSide.NO, 1),
+    }
+    ctx = resolve_longshot_entries(
+        executions,
+        poll=market_poll_snapshot(book_obj),
+        forecast=forecast(0.20),
+        seconds_remaining=120,
+        cfg=CFG,
+        poll_cfg=POLL_CFG,
+    )
+    assert ctx.forced_side is ContractSide.YES
     assert not ctx.executions
     assert any(f.gate == "longshot_price" for f in ctx.failures)
 

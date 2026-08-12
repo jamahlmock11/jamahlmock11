@@ -10,6 +10,7 @@ from kalshi_bot.market.orderbook import parse_orderbook_fp
 from kalshi_bot.strategies.longshot import (
     LongshotExitConfig,
     evaluate_longshot_exit,
+    filter_crowd_follow_executions,
     filter_longshot_executions,
     longshot_price_gate,
 )
@@ -57,6 +58,30 @@ def test_filter_longshot_executions_keeps_cheap_side_only():
     filtered = filter_longshot_executions(executions, max_entry_price=0.45)
     assert ContractSide.YES in filtered
     assert ContractSide.NO not in filtered
+
+
+def test_filter_crowd_follow_executions_keeps_band_only():
+    book_obj = book(0.90)
+    executions = {
+        ContractSide.YES: estimate_buy_execution(book_obj, ContractSide.YES, 1),
+    }
+    filtered = filter_crowd_follow_executions(
+        executions,
+        min_entry_price=0.87,
+        max_entry_price=0.93,
+    )
+    assert ContractSide.YES in filtered
+
+    expensive = book(0.96)
+    expensive_exec = {
+        ContractSide.YES: estimate_buy_execution(expensive, ContractSide.YES, 1),
+    }
+    filtered_expensive = filter_crowd_follow_executions(
+        expensive_exec,
+        min_entry_price=0.87,
+        max_entry_price=0.93,
+    )
+    assert not filtered_expensive
 
 
 def test_longshot_price_gate_blocks_favorites():

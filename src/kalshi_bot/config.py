@@ -131,6 +131,15 @@ class LongshotConfig(BaseModel):
         description="Deprecated: 0 means favorite-follow applies whenever poll >= threshold.",
     )
     extreme_favorite_max_price: float = Field(default=0.99, gt=0.0, le=1.0)
+    crowd_follow_price_band_cents: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=0.50,
+        description=(
+            "When crowd-follow is active, only buy the favorite if executable "
+            "cost is within this many dollars of the poll favorite (± band)."
+        ),
+    )
     extreme_poll_min_model_prob: float = Field(default=0.52, ge=0.0, le=1.0)
     favorite_only: bool = Field(
         default=False,
