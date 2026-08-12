@@ -36,8 +36,8 @@ strategy:
   max_spread: 0.07
   min_seconds_remaining: 60
   max_entry_seconds_remaining: 2400
-  late_seconds: 300
-  final_seconds: 300
+  late_seconds: 1800
+  final_seconds: 1800
   final_min_edge: 0.20
   late_confidence_increment: 0.10
   late_favorite_seconds: 420
