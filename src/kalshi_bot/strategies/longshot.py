@@ -126,7 +126,10 @@ def resolve_crowd_follow_mode(
         )
 
     if poll.dominant_poll + 1e-12 >= cfg.extreme_poll_threshold:
-        if cfg.extreme_poll_late_seconds <= 0 or seconds_remaining + 1e-9 <= cfg.extreme_poll_late_seconds:
+        if (
+            cfg.extreme_poll_late_seconds <= 0
+            or seconds_remaining <= cfg.extreme_poll_late_seconds + 1e-6
+        ):
             return CrowdFollowMode(
                 active=True,
                 late_relaxed=False,

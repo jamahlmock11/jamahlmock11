@@ -106,3 +106,33 @@ def test_enrich_decision_adds_requirements_fields():
     assert enriched["blocking_summary"]
     assert enriched["pass_count"] >= 1
     assert enriched["fail_count"] >= 1
+
+
+def test_min_entry_shows_poll_favorite_price_when_side_mismatch():
+    row = _row(
+        executable_price=0.03,
+        yes_ask=0.03,
+        no_ask=0.98,
+        gate_failures=json.dumps(
+            [
+                {
+                    "gate": "poll_favorite",
+                    "reason": "entry must be on the market poll favorite side",
+                    "observed": "YES",
+                    "required": "NO",
+                },
+                {
+                    "gate": "min_entry_price",
+                    "reason": "executable entry price is below the minimum for live entries",
+                    "observed": 0.03,
+                    "required": 0.75,
+                },
+            ]
+        ),
+        payload=json.dumps({"config": {"min_edge": 0.20, "min_entry_executable_cost": 0.75}}),
+    )
+    result = build_trade_requirements(row)
+    min_entry = next(r for r in result["requirements"] if r["id"] == "min_entry_price")
+    assert "Poll favorite entry (NO)" in min_entry["label"]
+    assert "98¢" in min_entry["detail"]
+

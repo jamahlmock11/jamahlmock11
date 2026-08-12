@@ -126,6 +126,35 @@ def _pct(value: float | None, digits: int = 0) -> str:
     return f"{value * 100:.{digits}f}%"
 
 
+def _poll_favorite_entry_display(
+    row: dict[str, Any],
+    *,
+    executable: float | None,
+    min_price: float,
+    failures: list[dict[str, Any]],
+) -> tuple[str, float | None, str, bool] | None:
+    yes_ask = _as_float(row.get("yes_ask"))
+    no_ask = _as_float(row.get("no_ask"))
+    if yes_ask is None or no_ask is None:
+        return None
+    if no_ask + 1e-12 >= yes_ask:
+        favorite_side, favorite_price = "NO", no_ask
+    else:
+        favorite_side, favorite_price = "YES", yes_ask
+    poll_side_mismatch = any(f.get("gate") == "poll_favorite" for f in failures)
+    on_wrong_side = (
+        executable is not None
+        and favorite_price is not None
+        and float(executable) + 0.05 < favorite_price
+    )
+    if not poll_side_mismatch and not on_wrong_side:
+        return None
+    label = f"Poll favorite entry ({favorite_side})"
+    price_ok = favorite_price + 1e-12 >= min_price
+    detail = f"{_cents(favorite_price)} · need ≥{_cents(min_price)}"
+    return label, favorite_price, detail, price_ok
+
+
 def _thresholds(row: dict[str, Any]) -> dict[str, Any]:
     payload = _parse_json(row.get("payload"), {})
     config = payload.get("config") or {}
@@ -461,17 +490,29 @@ def build_trade_requirements(row: dict[str, Any]) -> dict[str, Any]:
     )
 
     min_price = float(thresholds["min_entry_executable_cost"])
-    price_ok = executable is not None and float(executable) >= min_price
+    favorite_display = _poll_favorite_entry_display(
+        row,
+        executable=executable,
+        min_price=min_price,
+        failures=failures,
+    )
+    if favorite_display is not None:
+        min_entry_label, display_price, min_entry_detail, price_ok = favorite_display
+    else:
+        min_entry_label = "Minimum entry price"
+        display_price = executable
+        price_ok = display_price is not None and float(display_price) >= min_price
+        min_entry_detail = (
+            f"{_cents(display_price)} · need ≥{_cents(min_price)}"
+            if display_price is not None
+            else f"≥{_cents(min_price)}"
+        )
     requirements.append(
         _req(
             "min_entry_price",
-            "Minimum entry price",
+            min_entry_label,
             status="pass" if price_ok and not blocked("min_entry_price") else "fail",
-            detail=(
-                f"{_cents(executable)} · need ≥{_cents(min_price)}"
-                if executable is not None
-                else f"≥{_cents(min_price)}"
-            ),
+            detail=min_entry_detail,
             blocking=blocked("min_entry_price"),
         )
     )
@@ -647,6 +688,23 @@ def build_trade_requirements(row: dict[str, Any]) -> dict[str, Any]:
             )
         )
         known_ids.add(req_id)
+
+    favorite_display = _poll_favorite_entry_display(
+        row,
+        executable=executable,
+        min_price=float(thresholds["min_entry_executable_cost"]),
+        failures=failures,
+    )
+    if favorite_display is not None:
+        min_entry_label, _, min_entry_detail, price_ok = favorite_display
+        for req in requirements:
+            if req["id"] != "min_entry_price":
+                continue
+            req["label"] = min_entry_label
+            req["detail"] = min_entry_detail
+            if price_ok and not blocked("poll"):
+                req["status"] = "pass"
+                req["blocking"] = False
 
     blocking_labels = [r["label"] for r in requirements if r["blocking"]]
     if not gate_failure_details and blocking_labels:
