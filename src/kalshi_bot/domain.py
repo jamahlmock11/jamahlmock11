@@ -287,6 +287,12 @@ class FeatureSnapshot:
     rationale: Mapping[str, str] = field(default_factory=dict)
     settlement_effective_strike: float | None = None
     settlement_locked_fraction: float = 0.0
+    late_momentum_pattern: str = "none"
+    late_momentum_drift: float = 0.0
+    late_momentum_hammer: float = 0.0
+    late_momentum_fade: float = 0.0
+    late_momentum_finish_bias: float = 0.0
+    late_momentum_summary: str = ""
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "timestamp", utc_datetime(self.timestamp))

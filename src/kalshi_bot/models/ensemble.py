@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from statistics import NormalDist
 
 from kalshi_bot.domain import FeatureSnapshot, ProbabilityEstimate, Regime, TrajectoryState
+from kalshi_bot.features.late_momentum import LateMomentumPattern, assess_late_momentum
 from kalshi_bot.models.strike_gravity import assess_strike_gravity
 from kalshi_bot.strategies.entry_filters import WindowRegimeKind
 
@@ -86,7 +87,18 @@ def _momentum_finish_probability(features: FeatureSnapshot) -> float:
     if spot + 1e-9 < strike:
         velocity_signal = -velocity_signal
     combined = 0.65 * trend_signal + 0.35 * velocity_signal
-    return _clip(0.5 + 0.24 * combined)
+    base = _clip(0.5 + 0.24 * combined)
+
+    late = assess_late_momentum(features)
+    if not late.active or late.pattern is LateMomentumPattern.NONE:
+        return base
+
+    if late.pattern is LateMomentumPattern.FADE:
+        faded = 0.5 + (base - 0.5) * 0.45 + late.finish_bias * 0.10
+        return _clip(faded)
+    if late.pattern is LateMomentumPattern.HAMMER:
+        return _clip(base + late.finish_bias * 0.20)
+    return _clip(base + late.finish_bias * 0.14)
 
 
 def _brti_settlement_core_probability(
@@ -269,6 +281,11 @@ class EnsembleProbabilityModel:
             0.65 * _trajectory_probability(features.trajectory)
             + 0.35 * (0.5 + 0.25 * momentum_strength)
         )
+        late = assess_late_momentum(features)
+        if late.active and late.pattern is not LateMomentumPattern.NONE:
+            trajectory_momentum = _clip(
+                trajectory_momentum + late.finish_bias * 0.12
+            )
         acceleration_signal = math.tanh(features.acceleration * 10_000_000)
         acceleration_reversal = _clip(
             0.70 * _trajectory_probability(features.trajectory)
@@ -360,6 +377,11 @@ class EnsembleProbabilityModel:
             f"volatility={volatility:.6f}",
             f"shrink={shrink:.6f}",
             f"settlement_core={settlement_core:.4f}",
+            (
+                f"late_momentum={features.late_momentum_pattern}"
+                if features.late_momentum_pattern != "none"
+                else ""
+            ),
             "late-contract cap applied" if features.seconds_remaining <= cfg.late_seconds else "",
         )
         return ProbabilityEstimate(
