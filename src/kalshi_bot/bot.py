@@ -316,6 +316,8 @@ class TradingBot:
                 "late_favorite_min_edge": self.config.strategy.late_favorite_min_edge,
                 "minimum_dominant_poll": self.config.strategy.minimum_dominant_poll,
                 "min_trade_quality_score": self.config.strategy.min_trade_quality_score,
+                "order_quantity": self.config.strategy.order_quantity,
+                "kelly_enabled": self.config.risk.kelly_enabled,
                 "kelly_fraction": self.config.risk.kelly_fraction,
                 "min_hold_seconds": self.config.risk.min_hold_seconds,
             },
