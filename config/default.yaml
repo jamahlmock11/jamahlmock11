@@ -160,6 +160,7 @@ risk:
   kelly_enabled: true
   kelly_fraction: 0.25
   kelly_max_fraction: 0.25
+  kelly_bankroll_usd: 16.22
   stop_loss_fraction: 0.55
   opposite_edge_shift: 0.25
   thesis_reversal_enabled: false
