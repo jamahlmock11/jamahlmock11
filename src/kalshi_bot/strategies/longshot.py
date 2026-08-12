@@ -68,6 +68,20 @@ def filter_longshot_executions(
     }
 
 
+def filter_crowd_follow_executions(
+    executions: dict[ContractSide, ExecutionEstimate],
+    *,
+    min_entry_price: float,
+    max_entry_price: float,
+) -> dict[ContractSide, ExecutionEstimate]:
+    return {
+        side: execution
+        for side, execution in executions.items()
+        if execution.executable_cost + 1e-12 >= min_entry_price
+        and execution.executable_cost <= max_entry_price + 1e-12
+    }
+
+
 @dataclass(frozen=True)
 class CrowdFollowMode:
     active: bool = False
@@ -79,6 +93,7 @@ class CrowdFollowMode:
 class LongshotEntryContext:
     executions: dict[ContractSide, ExecutionEstimate]
     max_entry_price: float
+    min_entry_price: float | None
     min_edge_override: float | None
     forced_side: ContractSide | None
     extreme_poll_active: bool
@@ -147,8 +162,10 @@ def resolve_longshot_entries(
     del forecast, poll_cfg
     failures: list[GateFailure] = []
     max_price = cfg.max_entry_price
+    min_price: float | None = None
     min_edge_override: float | None = None
     forced_side: ContractSide | None = None
+    use_crowd_price_band = False
 
     crowd_mode = resolve_crowd_follow_mode(
         poll=poll,
@@ -166,11 +183,18 @@ def resolve_longshot_entries(
             for side, execution in executions.items()
             if side is dominant
         }
-        max_price = (
-            crowd_mode.favorite_max_price
-            if crowd_mode.favorite_max_price is not None
-            else cfg.extreme_favorite_max_price
-        )
+        favorite_poll = poll.dominant_poll
+        if cfg.crowd_follow_price_band_cents > 0 and favorite_poll is not None:
+            use_crowd_price_band = True
+            band = cfg.crowd_follow_price_band_cents
+            min_price = max(0.0, favorite_poll - band)
+            max_price = min(1.0, favorite_poll + band)
+        else:
+            max_price = (
+                crowd_mode.favorite_max_price
+                if crowd_mode.favorite_max_price is not None
+                else cfg.extreme_favorite_max_price
+            )
         forced_side = dominant
         min_edge_override = -1.0
         if crowd_mode.late_relaxed and features is not None:
@@ -197,24 +221,38 @@ def resolve_longshot_entries(
         if price_failure is not None:
             failures.append(price_failure)
 
-    filtered = filter_longshot_executions(
-        executions,
-        max_entry_price=max_price,
-        inclusive_max=forced_side is not None,
-    )
+    if use_crowd_price_band and min_price is not None:
+        filtered = filter_crowd_follow_executions(
+            executions,
+            min_entry_price=min_price,
+            max_entry_price=max_price,
+        )
+        price_failure_reason = (
+            "no executable quote within crowd-follow price band around favorite"
+        )
+        price_failure_required = f"{min_price:.2f}-{max_price:.2f}"
+    else:
+        filtered = filter_longshot_executions(
+            executions,
+            max_entry_price=max_price,
+            inclusive_max=forced_side is not None,
+        )
+        price_failure_reason = "no executable quote below maximum entry price"
+        price_failure_required = max_price
     if not filtered and executions:
         failures.append(
             _failure(
                 "longshot_price",
-                "no executable quote below maximum entry price",
+                price_failure_reason,
                 {side: execution.executable_cost for side, execution in executions.items()},
-                max_price,
+                price_failure_required,
             )
         )
 
     return LongshotEntryContext(
         executions=filtered,
         max_entry_price=max_price,
+        min_entry_price=min_price,
         min_edge_override=min_edge_override,
         forced_side=forced_side,
         extreme_poll_active=follow_favorite,

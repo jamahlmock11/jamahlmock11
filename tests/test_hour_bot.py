@@ -392,8 +392,9 @@ def test_1h_yaml_loads_without_validation_error():
     assert cfg.hour.series_ticker == "KXBTCD"
     assert cfg.longshot.enabled is False
     assert cfg.hour.max_entry_seconds_remaining == pytest.approx(2400)
-    assert cfg.strategy.minimum_dominant_poll == pytest.approx(0.79)
+    assert cfg.strategy.minimum_dominant_poll == pytest.approx(0.80)
     assert cfg.strategy.require_dominant_poll_side is True
-    assert cfg.strategy.min_entry_executable_cost == pytest.approx(0.83)
+    assert cfg.strategy.min_entry_executable_cost == pytest.approx(0.79)
+    assert cfg.longshot.crowd_follow_price_band_cents == pytest.approx(0.03)
     assert cfg.strategy.min_edge == pytest.approx(0.20)
     assert cfg.risk.min_hold_seconds == pytest.approx(120)
