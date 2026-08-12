@@ -120,6 +120,44 @@ def test_size_decision_honors_min_trade_notional():
     assert size >= 7
 
 
+def test_size_decision_uses_fixed_notional_when_kelly_disabled():
+    cfg = AppConfig(
+        execution=ExecutionConfig(
+            max_position_usd=100,
+            max_contracts_per_trade=25,
+            fixed_trade_notional_usd=1.0,
+        ),
+        risk=RiskConfig(
+            max_position_size=100,
+            max_contract_exposure=100,
+            kelly_enabled=False,
+        ),
+    )
+    decision = replace(buy_decision(), executable_cost=0.75, quantity=12, edge=0.20)
+    size = RiskManager(cfg, max_per_ticker_usd=100).size_decision(decision)
+    assert size == 1
+    assert size * 0.75 <= 1.0
+
+
+def test_size_decision_fixed_notional_never_exceeds_budget():
+    cfg = AppConfig(
+        execution=ExecutionConfig(
+            max_position_usd=100,
+            max_contracts_per_trade=25,
+            fixed_trade_notional_usd=1.0,
+        ),
+        risk=RiskConfig(
+            max_position_size=100,
+            max_contract_exposure=100,
+            kelly_enabled=False,
+        ),
+    )
+    decision = replace(buy_decision(), executable_cost=0.40, quantity=12, edge=0.20)
+    size = RiskManager(cfg, max_per_ticker_usd=100).size_decision(decision)
+    assert size == 2
+    assert size * 0.40 <= 1.0
+
+
 def test_legacy_path_cannot_bypass_hard_edge():
     cfg = AppConfig(
         execution=ExecutionConfig(
