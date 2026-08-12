@@ -178,6 +178,47 @@ body::before {
   border-top: 2px solid var(--amber);
 }
 
+.decision-head-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+}
+
+.active-rules-panel {
+  padding: 0.85rem 1rem;
+  border-top: 1px solid var(--line);
+  background: rgba(0, 0, 0, 0.1);
+}
+
+.active-rules-panel h3 {
+  margin: 0 0 0.55rem;
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.active-rules-panel ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.active-rules-panel li {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  padding: 0.3rem 0.55rem;
+  border: 1px solid rgba(229, 161, 22, 0.35);
+  background: rgba(229, 161, 22, 0.08);
+  color: var(--paper);
+}
+
 .decision-action {
   font-family: var(--font-mono);
   font-weight: 700;

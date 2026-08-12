@@ -22,6 +22,11 @@ from kalshi_bot.execution.position_reversal import (
     evaluate_position_reversal,
     reversal_config_from_risk,
 )
+from kalshi_bot.journal_payload import (
+    decision_execution_snapshot,
+    strategy_config_snapshot,
+    strike_context_snapshot,
+)
 from kalshi_bot.execution.position_manager import PositionManager, PositionManagerConfig
 from kalshi_bot.execution.risk import RiskManager
 from kalshi_bot.intelligence.kill_switch import ConfidenceKillSwitch
@@ -298,27 +303,29 @@ class TradingBot:
                 benchmark=cycle.benchmark,
             )
         traded = bool(report and report.ok)
+        position_reversal = None
+        if (
+            cycle.features is not None
+            and cycle.forecast is not None
+            and cycle.market is not None
+            and cycle.market.current_position
+            and cycle.market.current_position.quantity > 0
+            and self.config.risk.position_reversal_enabled
+        ):
+            reversal = evaluate_position_reversal(
+                position_side=cycle.market.current_position.side,
+                features=cycle.features,
+                forecast=cycle.forecast,
+                cfg=reversal_config_from_risk(self.config.risk),
+            )
+            position_reversal = {
+                "should_reverse": reversal.should_reverse,
+                "summary": reversal.summary,
+                "reason": reversal.reason,
+            }
         payload: dict = {
             "execution": report.payload if report else None,
-            "config": {
-                "min_edge": self.config.strategy.min_edge,
-                "min_seconds_remaining": self.config.strategy.min_seconds_remaining,
-                "max_entry_seconds_remaining": self.config.strategy.max_entry_seconds_remaining,
-                "min_signal_agreement": self.config.strategy.min_signal_agreement,
-                "min_data_completeness": self.config.strategy.min_data_completeness,
-                "late_confidence_increment": self.config.strategy.late_confidence_increment,
-                "min_entry_executable_cost": self.config.strategy.min_entry_executable_cost,
-                "max_spread": self.config.strategy.max_spread,
-                "min_confidence": self.config.strategy.min_confidence,
-                "late_seconds": self.config.strategy.late_seconds,
-                "late_favorite_seconds": self.config.strategy.late_favorite_seconds,
-                "late_favorite_poll_threshold": self.config.strategy.late_favorite_poll_threshold,
-                "late_favorite_min_edge": self.config.strategy.late_favorite_min_edge,
-                "minimum_dominant_poll": self.config.strategy.minimum_dominant_poll,
-                "min_trade_quality_score": self.config.strategy.min_trade_quality_score,
-                "kelly_fraction": self.config.risk.kelly_fraction,
-                "min_hold_seconds": self.config.risk.min_hold_seconds,
-            },
+            "config": strategy_config_snapshot(self.config, horizon="15m"),
             "risk": {
                 "locked": self.risk.locked,
                 "reason": self.risk.state.halt_reason,
@@ -328,6 +335,8 @@ class TradingBot:
             },
             "horizon": "15m",
             "strategy": "forecast",
+            **decision_execution_snapshot(cycle.decision),
+            "position_reversal": position_reversal,
         }
         if cycle.trade_quality is not None:
             tq = cycle.trade_quality
@@ -349,19 +358,7 @@ class TradingBot:
             payload["enriched_features"] = cycle.enriched.as_dict()
             payload["entry_features"] = cycle.enriched.as_dict().get("price_action", {})
         if cycle.features is not None:
-            payload["strike_context"] = {
-                "seconds_remaining": cycle.features.seconds_remaining,
-                "spot": cycle.features.current_price,
-                "strike": (
-                    cycle.features.settlement_effective_strike
-                    if cycle.features.settlement_effective_strike is not None
-                    else cycle.features.strike
-                ),
-                "z_distance": cycle.features.z_distance_to_strike,
-                "hold_up_probability": assess_strike_gravity(cycle.features).finish_probability_up,
-                "late_momentum_pattern": cycle.features.late_momentum_pattern,
-                "late_momentum_summary": cycle.features.late_momentum_summary,
-            }
+            payload["strike_context"] = strike_context_snapshot(cycle.features)
         self.journal.log_decision(
             cycle,
             dry_run=self.engine.dry_run,

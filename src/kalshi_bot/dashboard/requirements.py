@@ -8,18 +8,27 @@ from typing import Any
 
 DEFAULT_THRESHOLDS: dict[str, Any] = {
     "min_edge": 0.15,
-    "min_signal_agreement": 0.48,
+    "target_edge": 0.15,
+    "final_min_edge": 0.15,
+    "min_signal_agreement": 0.60,
     "min_data_completeness": 0.65,
     "min_seconds_remaining": 60.0,
     "max_entry_seconds_remaining": 900.0,
-    "max_spread": 0.12,
-    "min_entry_executable_cost": 0.08,
+    "max_spread": 0.07,
+    "min_entry_executable_cost": 0.75,
     "late_favorite_seconds": 420.0,
-    "late_favorite_poll_threshold": 0.78,
+    "late_favorite_poll_threshold": 0.80,
     "late_favorite_min_edge": 0.04,
+    "minimum_dominant_poll": 0.80,
     "min_confidence": 0.0,
     "late_confidence_increment": 0.10,
-    "late_seconds": 120.0,
+    "late_seconds": 360.0,
+    "final_seconds": 360.0,
+    "kelly_fraction": 0.25,
+    "kelly_bankroll_usd": 16.22,
+    "crowd_follow_price_band_cents": 0.03,
+    "extreme_poll_threshold": 0.80,
+    "follow_extreme_poll": True,
 }
 
 GATE_LABELS: dict[str, str] = {
@@ -58,7 +67,12 @@ GATE_LABELS: dict[str, str] = {
     "open_order": "Resting orders",
     "poll_alignment": "Poll alignment",
     "poll_favorite": "High-probability favorite",
+    "poll_favorite_side": "Poll favorite side",
     "intelligence": "Intelligence gate",
+    "longshot_price": "Longshot price",
+    "crowd_follow": "Crowd-follow band",
+    "late_momentum": "Late momentum",
+    "extreme_poll_favorite": "High-probability favorite",
 }
 
 GATE_TO_REQUIREMENT: dict[str, str] = {
@@ -96,8 +110,13 @@ GATE_TO_REQUIREMENT: dict[str, str] = {
     "duplicate": "duplicate",
     "open_order": "open_orders",
     "poll_alignment": "poll",
-    "poll_favorite": "poll",
+    "poll_favorite": "poll_favorite",
+    "poll_favorite_side": "poll_favorite",
     "intelligence": "intelligence",
+    "longshot_price": "crowd_follow",
+    "crowd_follow": "crowd_follow",
+    "late_momentum": "late_momentum",
+    "extreme_poll_favorite": "poll_favorite",
 }
 
 EDGE_GATES = frozenset({"minimum_edge", "edge", "kelly_sizing"})
@@ -228,6 +247,58 @@ def _failure_for_gate(failures: list[dict[str, Any]], *gates: str) -> dict[str, 
     return None
 
 
+def _minutes(seconds: float | None) -> str:
+    if seconds is None:
+        return "—"
+    return f"{seconds / 60.0:.0f}m"
+
+
+def _side_mid(bid: Any, ask: Any) -> float | None:
+    bid_f = _as_float(bid)
+    ask_f = _as_float(ask)
+    if bid_f is not None and ask_f is not None:
+        return (bid_f + ask_f) / 2.0
+    return ask_f if ask_f is not None else bid_f
+
+
+def _dominant_poll(row: dict[str, Any]) -> tuple[str | None, float | None]:
+    yes_mid = _side_mid(row.get("yes_bid"), row.get("yes_ask"))
+    no_mid = _side_mid(row.get("no_bid"), row.get("no_ask"))
+    if yes_mid is None and no_mid is None:
+        return None, None
+    if yes_mid is not None and no_mid is not None:
+        if yes_mid >= no_mid:
+            return "UP", yes_mid
+        return "DOWN", no_mid
+    if yes_mid is not None:
+        return "UP", yes_mid
+    return "DOWN", no_mid
+
+
+def _build_active_rules(thresholds: dict[str, Any], payload: dict[str, Any]) -> list[str]:
+    horizon = str(payload.get("horizon") or thresholds.get("horizon") or "15m")
+    late_minutes = float(thresholds["late_seconds"]) / 60.0
+    rules = [
+        f"{horizon} bot · min edge {_cents(thresholds['min_edge'])} · entry ≥{_cents(thresholds['min_entry_executable_cost'])}",
+        f"Late window {late_minutes:.0f}m · poll favorite ≥{_pct(thresholds['minimum_dominant_poll'])}",
+    ]
+    if thresholds.get("follow_extreme_poll"):
+        band = _as_float(thresholds.get("crowd_follow_price_band_cents"))
+        if band is not None:
+            rules.append(
+                f"Crowd follow ±{_cents(band)} around favorite · poll ≥{_pct(thresholds.get('extreme_poll_threshold'))}"
+            )
+    bankroll = _as_float(thresholds.get("kelly_bankroll_usd"))
+    if bankroll is not None:
+        rules.append(
+            f"Kelly {_pct(thresholds.get('kelly_fraction', 0.25), 0)} of ${bankroll:.2f} bankroll"
+        )
+    rules.append(
+        f"Late favorite edge {_cents(thresholds.get('late_favorite_min_edge'))} inside {_minutes(thresholds.get('late_favorite_seconds'))}"
+    )
+    return rules
+
+
 def _req(
     req_id: str,
     label: str,
@@ -254,6 +325,9 @@ def build_trade_requirements(row: dict[str, Any]) -> dict[str, Any]:
     risk = payload.get("risk") or {}
     strike_ctx = payload.get("strike_context") or {}
     reversal = payload.get("position_reversal") or {}
+    dominant_side: str | None = None
+    dominant_poll: float | None = None
+    pattern = str(strike_ctx.get("late_momentum_pattern") or "none")
     action = str(row.get("action") or "NO_TRADE").upper()
     data_health = str(row.get("data_health") or "UNKNOWN").upper()
     seconds = row.get("seconds_remaining")
@@ -486,6 +560,102 @@ def build_trade_requirements(row: dict[str, Any]) -> dict[str, Any]:
         )
     )
 
+    poll_failure = _failure_for_gate(
+        failures, "poll_favorite", "poll_favorite_side", "extreme_poll_favorite"
+    )
+    dominant_side, dominant_poll = _dominant_poll(row)
+    min_poll = float(
+        thresholds.get("minimum_dominant_poll")
+        or thresholds.get("extreme_poll_threshold")
+        or 0.80
+    )
+    poll_ok = dominant_poll is not None and dominant_poll + 1e-12 >= min_poll
+    poll_blocking = blocked("poll_favorite") or blocked("poll")
+    if poll_failure and poll_failure.get("observed") is not None:
+        dominant_poll = _as_float(poll_failure.get("observed"))
+    poll_detail = (
+        f"{dominant_side or '—'} {_pct(dominant_poll)} · need ≥{_pct(min_poll)}"
+        if dominant_poll is not None
+        else f"need ≥{_pct(min_poll)} favorite"
+    )
+    requirements.append(
+        _req(
+            "poll_favorite",
+            "Poll favorite",
+            status="pass" if poll_ok and not poll_blocking else "fail",
+            detail=poll_detail,
+            blocking=poll_blocking,
+        )
+    )
+
+    late_secs = float(thresholds["late_seconds"])
+    in_late = seconds is not None and float(seconds) <= late_secs
+    requirements.append(
+        _req(
+            "late_window",
+            "Late entry window",
+            status="pass" if in_late else "na",
+            detail=(
+                f"{'inside' if in_late else 'outside'} · "
+                f"{_minutes(late_secs)} to expire · "
+                f"{float(seconds):.0f}s left"
+                if seconds is not None
+                else f"{_minutes(late_secs)} to expire"
+            ),
+            blocking=False,
+        )
+    )
+
+    if thresholds.get("follow_extreme_poll"):
+        band = _as_float(thresholds.get("crowd_follow_price_band_cents"))
+        crowd_failure = _failure_for_gate(failures, "longshot_price", "crowd_follow")
+        crowd_blocking = blocked("crowd_follow")
+        if band is not None:
+            crowd_detail = f"±{_cents(band)} around poll favorite"
+            if crowd_failure and crowd_failure.get("reason"):
+                crowd_detail = f"{crowd_failure['reason']} · {crowd_detail}"
+            requirements.append(
+                _req(
+                    "crowd_follow",
+                    "Crowd-follow band",
+                    status="fail" if crowd_blocking else "pass",
+                    detail=crowd_detail,
+                    blocking=crowd_blocking,
+                )
+            )
+
+    if pattern != "none" or (
+        seconds is not None and float(seconds) <= late_secs
+    ):
+        if pattern != "none":
+            momentum_detail = strike_ctx.get("late_momentum_summary") or pattern
+            momentum_status = "pass"
+        else:
+            momentum_detail = (
+                f"scanning · drift {strike_ctx.get('late_momentum_drift', 0):.2f} · "
+                f"hammer {strike_ctx.get('late_momentum_hammer', 0):.2f} · "
+                f"fade {strike_ctx.get('late_momentum_fade', 0):.2f}"
+            )
+            momentum_status = "na"
+        requirements.append(
+            _req(
+                "late_momentum",
+                "Late momentum",
+                status=momentum_status,
+                detail=momentum_detail,
+                blocking=False,
+            )
+        )
+
+    kelly_contracts = payload.get("kelly_contracts")
+    bankroll = _as_float(thresholds.get("kelly_bankroll_usd"))
+    kelly_fraction = float(thresholds.get("kelly_fraction") or 0.25)
+    if kelly_contracts is not None:
+        kelly_detail = f"{kelly_contracts} contracts"
+    else:
+        kelly_detail = "sized from edge"
+    if bankroll is not None:
+        kelly_detail += f" · ${bankroll:.2f} bankroll · {kelly_fraction:.0%} Kelly"
     requirements.append(
         _req(
             "kelly_size",
@@ -494,7 +664,7 @@ def build_trade_requirements(row: dict[str, Any]) -> dict[str, Any]:
             detail=(
                 "zero affordable contracts"
                 if blocked("kelly_size")
-                else (payload.get("kelly_contracts") or "sized from edge")
+                else kelly_detail
             ),
             blocking=blocked("kelly_size"),
         )
@@ -577,7 +747,7 @@ def build_trade_requirements(row: dict[str, Any]) -> dict[str, Any]:
             )
         )
 
-    if blocked("poll"):
+    if blocked("poll") and not any(r["id"] == "poll_favorite" for r in requirements):
         requirements.append(
             _req(
                 "poll",
@@ -674,6 +844,11 @@ def build_trade_requirements(row: dict[str, Any]) -> dict[str, Any]:
         "edge_gap_text": _edge_gap_text(observed_edge, required_edge),
         "pass_count": sum(1 for r in requirements if r["status"] == "pass"),
         "fail_count": sum(1 for r in requirements if r["status"] == "fail"),
+        "active_rules": _build_active_rules(thresholds, payload),
+        "dominant_poll_side": dominant_side,
+        "dominant_poll": dominant_poll,
+        "late_momentum_pattern": pattern,
+        "horizon_label": str(payload.get("horizon") or "15m"),
     }
 
 

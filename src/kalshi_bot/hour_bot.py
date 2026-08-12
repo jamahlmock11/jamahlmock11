@@ -27,6 +27,11 @@ from kalshi_bot.execution.risk import RiskManager
 from kalshi_bot.intelligence.kill_switch import ConfidenceKillSwitch
 from kalshi_bot.intelligence.orchestrator import IntelligenceOrchestrator
 from kalshi_bot.journal import TradeJournal
+from kalshi_bot.journal_payload import (
+    decision_execution_snapshot,
+    strategy_config_snapshot,
+    strike_context_snapshot,
+)
 from kalshi_bot.learning.signal_weights import SignalWeightTracker
 from kalshi_bot.hour.scanner import HourForecastCycle, HourForecastingScanner
 from kalshi_bot.strategies.decision import format_edge_gap
@@ -237,36 +242,10 @@ class HourTradingBot:
         journal_payload: dict = {
             "horizon": "1h",
             "model_version": self.config.hour.model_version,
-            "required_edge": (
-                cycle.decision.required_edge if cycle.decision else None
-            ),
             "execution": report.payload if report else None,
             "position_reversal": position_reversal,
-            "kelly_contracts": (
-                int(cycle.decision.quantity)
-                if cycle.decision is not None
-                and cycle.decision.action in {DecisionAction.BUY_UP, DecisionAction.BUY_DOWN}
-                and cycle.decision.quantity > 0
-                else None
-            ),
-            "config": {
-                "min_edge": self.config.strategy.min_edge,
-                "min_seconds_remaining": self.config.strategy.min_seconds_remaining,
-                "max_entry_seconds_remaining": self.config.hour.max_entry_seconds_remaining,
-                "min_signal_agreement": self.config.strategy.min_signal_agreement,
-                "min_data_completeness": self.config.strategy.min_data_completeness,
-                "late_confidence_increment": self.config.strategy.late_confidence_increment,
-                "min_entry_executable_cost": self.config.strategy.min_entry_executable_cost,
-                "max_spread": self.config.strategy.max_spread,
-                "min_confidence": self.config.strategy.min_confidence,
-                "late_seconds": self.config.strategy.late_seconds,
-                "late_favorite_seconds": self.config.strategy.late_favorite_seconds,
-                "late_favorite_poll_threshold": self.config.strategy.late_favorite_poll_threshold,
-                "late_favorite_min_edge": self.config.strategy.late_favorite_min_edge,
-                "minimum_dominant_poll": self.config.strategy.minimum_dominant_poll,
-                "kelly_fraction": self.config.risk.kelly_fraction,
-                "min_hold_seconds": self.config.risk.min_hold_seconds,
-            },
+            **decision_execution_snapshot(cycle.decision),
+            "config": strategy_config_snapshot(self.config, horizon="1h"),
             "risk": {
                 "locked": self.risk.locked,
                 "reason": self.risk.state.halt_reason,
@@ -275,19 +254,7 @@ class HourTradingBot:
             },
         }
         if cycle.features is not None:
-            from kalshi_bot.models.strike_gravity import assess_strike_gravity
-
-            journal_payload["strike_context"] = {
-                "seconds_remaining": cycle.features.seconds_remaining,
-                "spot": cycle.features.current_price,
-                "strike": (
-                    cycle.features.settlement_effective_strike
-                    if cycle.features.settlement_effective_strike is not None
-                    else cycle.features.strike
-                ),
-                "z_distance": cycle.features.z_distance_to_strike,
-                "hold_up_probability": assess_strike_gravity(cycle.features).finish_probability_up,
-            }
+            journal_payload["strike_context"] = strike_context_snapshot(cycle.features)
         self.journal.log_decision(
             cycle,
             dry_run=self.engine.dry_run,
