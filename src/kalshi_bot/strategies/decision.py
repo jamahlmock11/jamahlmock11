@@ -49,7 +49,7 @@ from kalshi_bot.market.poll_alignment import (
 if TYPE_CHECKING:
     from kalshi_bot.execution.risk import RiskManager
 
-ABSOLUTE_MINIMUM_EDGE = Decimal("0.20")
+ABSOLUTE_MINIMUM_EDGE = Decimal("0.15")
 EDGE_TOLERANCE = Decimal("0.000000000001")
 DEFAULT_MINIMUM_EDGE = float(ABSOLUTE_MINIMUM_EDGE)
 
@@ -166,7 +166,7 @@ class DecisionConfig:
 
     @property
     def effective_minimum_edge(self) -> Decimal:
-        """Longshot mode allows 10¢ edges; otherwise the 20¢ floor applies."""
+        """Longshot mode allows 10¢ edges; otherwise the 15¢ floor applies."""
         if self.longshot.enabled:
             return Decimal(str(self.longshot.min_edge))
         return max(ABSOLUTE_MINIMUM_EDGE, Decimal(str(self.minimum_edge)))

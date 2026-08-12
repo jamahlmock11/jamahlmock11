@@ -28,17 +28,17 @@ hour:
 # Same strategy rules as the 15-minute bot, with a 40-minute entry window.
 strategy:
   contract_duration_seconds: 3600
-  min_edge: 0.20
-  target_edge: 0.20
+  min_edge: 0.15
+  target_edge: 0.15
   min_confidence: 0.0
   min_signal_agreement: 0.60
   min_data_completeness: 0.65
   max_spread: 0.07
   min_seconds_remaining: 60
   max_entry_seconds_remaining: 2400
-  late_seconds: 1800
-  final_seconds: 1800
-  final_min_edge: 0.20
+  late_seconds: 600
+  final_seconds: 600
+  final_min_edge: 0.15
   late_confidence_increment: 0.10
   late_favorite_seconds: 420
   late_favorite_poll_threshold: 0.80
@@ -100,9 +100,9 @@ poll:
   low_poll_min_agreement: 0.68
 
 hour_edge:
-  minimum_edge: 0.20
-  preferred_edge: 0.20
-  strong_edge: 0.20
+  minimum_edge: 0.15
+  preferred_edge: 0.15
+  strong_edge: 0.15
   tier_b_size_mult: 0.5
   tier_a_size_mult: 0.75
   tier_a_plus_size_mult: 1.0

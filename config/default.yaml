@@ -100,8 +100,8 @@ longshot:
 
 strategy:
   contract_duration_seconds: 900
-  min_edge: 0.20
-  target_edge: 0.20
+  min_edge: 0.15
+  target_edge: 0.15
   min_confidence: 0.0
   min_signal_agreement: 0.60
   min_data_completeness: 0.65
@@ -110,7 +110,7 @@ strategy:
   max_entry_seconds_remaining: 900
   late_seconds: 360
   final_seconds: 360
-  final_min_edge: 0.20
+  final_min_edge: 0.15
   late_confidence_increment: 0.10
   late_favorite_seconds: 420
   late_favorite_poll_threshold: 0.80

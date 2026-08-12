@@ -10,7 +10,7 @@ from kalshi_bot.config import AppConfig
 from kalshi_bot.domain import DecisionAction, DecisionResult
 from kalshi_bot.models.probability import Confidence, EdgeSignal
 
-HARD_MIN_EDGE = 0.20
+HARD_MIN_EDGE = 0.15
 
 # Legacy tier table kept for tests / backward compatibility only.
 EDGE_TIER_SIZING: tuple[tuple[float, float], ...] = (
