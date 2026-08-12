@@ -26,25 +26,38 @@
     <section class="panel decision-panel">
       <div class="panel-head">
         <h2>Current decision</h2>
-        <div class="decision-action" id="decisionAction">NO DATA</div>
+        <div class="decision-head-meta">
+          <span class="badge high" id="decisionHorizon">—</span>
+          <div class="decision-action" id="decisionAction">NO DATA</div>
+        </div>
       </div>
       <div class="decision-grid">
         <article><span>Contract</span><strong id="decisionTicker">—</strong></article>
         <article><span>Reference / Strike</span><strong id="decisionPrices">—</strong></article>
         <article><span>Time remaining</span><strong id="decisionTime">—</strong></article>
+        <article><span>Late window</span><strong id="decisionLateWindow">—</strong></article>
         <article><span>UP / DOWN</span><strong id="decisionProbability">—</strong></article>
         <article><span>YES / NO ask</span><strong id="decisionBook">—</strong></article>
+        <article><span>Poll favorite</span><strong id="decisionPollFavorite">—</strong></article>
         <article><span>Executable edge</span><strong id="decisionEdge">—</strong></article>
         <article><span>Edge gap</span><strong id="decisionEdgeGap">—</strong></article>
+        <article><span>Required edge</span><strong id="decisionRequiredEdge">—</strong></article>
         <article><span>Direction now → expiry</span><strong id="decisionDirection">—</strong></article>
         <article><span>Regime / Trajectory</span><strong id="decisionRegime">—</strong></article>
         <article><span>Confidence / Agreement</span><strong id="decisionConfidence">—</strong></article>
         <article><span>Momentum / Acceleration</span><strong id="decisionMotion">—</strong></article>
         <article><span>Volatility / Data</span><strong id="decisionHealth">—</strong></article>
+        <article><span>Strike path / hold</span><strong id="decisionStrikePath">—</strong></article>
+        <article><span>Late momentum</span><strong id="decisionLateMomentum">—</strong></article>
+        <article><span>Kelly size</span><strong id="decisionKelly">—</strong></article>
         <article><span>Position / Risk</span><strong id="decisionPosition">—</strong></article>
         <article><span>Trade quality</span><strong id="decisionTradeQuality">—</strong></article>
         <article><span>Model agreement</span><strong id="decisionModelAgreement">—</strong></article>
         <article><span>Liquidity / Pattern</span><strong id="decisionLiquidity">—</strong></article>
+      </div>
+      <div class="active-rules-panel" id="activeRulesPanel" hidden>
+        <h3>Active rules</h3>
+        <ul id="activeRulesList"></ul>
       </div>
       <div class="decision-why">
         <span id="whyLabel">WHY NO TRADE</span>
@@ -104,6 +117,14 @@
           <h3>Largest loss causes</h3>
           <pre id="analyticsLossCauses" class="analytics-pre">—</pre>
         </article>
+        <article class="analytics-card">
+          <h3>Market type performance</h3>
+          <pre id="analyticsMarketType" class="analytics-pre">—</pre>
+        </article>
+        <article class="analytics-card">
+          <h3>Confidence calibration</h3>
+          <pre id="analyticsConfidence" class="analytics-pre">—</pre>
+        </article>
       </div>
     </section>
 
@@ -153,13 +174,16 @@
           <thead>
             <tr>
               <th>Time</th>
+              <th>Bot</th>
               <th>Action</th>
               <th>Ticker</th>
+              <th>Left</th>
               <th>UP</th>
               <th>Price</th>
               <th>Edge</th>
+              <th>Poll</th>
+              <th>Momentum</th>
               <th>Confidence</th>
-              <th>Regime</th>
               <th>Health</th>
               <th>Requirements</th>
               <th>Reason</th>

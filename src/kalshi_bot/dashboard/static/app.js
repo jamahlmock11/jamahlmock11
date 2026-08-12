@@ -88,7 +88,27 @@
     });
   }
 
-  function requirementStatusClass(status, blocking) {
+  function cents(n) {
+    if (n == null || Number.isNaN(Number(n))) return "—";
+    return `${Math.round(Number(n) * 100)}¢`;
+  }
+
+  function horizonLabel(d) {
+    const hz = d?.horizon_label || d?.horizon || "15m";
+    return hz === "1h" ? "1h bot" : "15m bot";
+  }
+
+  function renderActiveRules(d) {
+    const panel = $("activeRulesPanel");
+    const list = $("activeRulesList");
+    const rules = d?.active_rules || [];
+    if (!rules.length) {
+      panel.hidden = true;
+      return;
+    }
+    panel.hidden = false;
+    list.innerHTML = rules.map((rule) => `<li>${rule}</li>`).join("");
+  }
     if (blocking) return "req-blocked";
     if (status === "pass") return "req-pass";
     if (status === "fail") return "req-fail";
@@ -164,7 +184,7 @@
     if (!d) return "—";
     if (d.edge_gap_text) return d.edge_gap_text;
     let observed = d.edge != null ? Number(d.edge) * 100 : null;
-    let required = 20;
+    let required = 15;
     try {
       const failures = JSON.parse(d.gate_failures || "[]");
       const edgeGate = failures.find((g) => g.gate === "minimum_edge");
@@ -256,6 +276,7 @@
   function renderCurrentDecision(d) {
     if (!d) return;
     const action = d.action || "NO_TRADE";
+    $("decisionHorizon").textContent = horizonLabel(d);
     $("decisionAction").textContent = action;
     $("decisionAction").className = `decision-action ${action.toLowerCase()}`;
     $("decisionTicker").textContent = d.ticker || "—";
@@ -265,13 +286,39 @@
         : "—";
     $("decisionTime").textContent =
       d.seconds_remaining != null ? `${Math.max(0, d.seconds_remaining).toFixed(0)}s` : "—";
+
+    let payload = null;
+    try {
+      payload = d.payload ? JSON.parse(d.payload) : null;
+    } catch (_) {
+      payload = null;
+    }
+    const thresholds = payload?.config || {};
+    const strikeCtx = payload?.strike_context || {};
+    const lateSecs = Number(thresholds.late_seconds || d.late_seconds || 360);
+    const inLate =
+      d.seconds_remaining != null && Number(d.seconds_remaining) <= lateSecs;
+    $("decisionLateWindow").textContent = inLate
+      ? `inside · ${(lateSecs / 60).toFixed(0)}m window`
+      : `outside · ${(lateSecs / 60).toFixed(0)}m window`;
+
     $("decisionProbability").textContent = `${pct(d.up_probability)} / ${pct(d.down_probability)}`;
     $("decisionBook").textContent =
       d.yes_ask != null && d.no_ask != null
         ? `${pct(d.yes_ask, 0)} / ${pct(d.no_ask, 0)}`
         : "—";
+
+    const pollSide = d.dominant_poll_side || "—";
+    const pollValue = d.dominant_poll != null ? pct(d.dominant_poll) : "—";
+    const minPoll = thresholds.minimum_dominant_poll != null
+      ? pct(thresholds.minimum_dominant_poll)
+      : "80%";
+    $("decisionPollFavorite").textContent = `${pollSide} ${pollValue} · need ≥${minPoll}`;
+
     $("decisionEdge").textContent = pct(d.edge);
     $("decisionEdgeGap").textContent = edgeGapText(d);
+    $("decisionRequiredEdge").textContent =
+      d.required_edge != null ? pct(d.required_edge) : pct(thresholds.min_edge || 0.15);
     $("decisionDirection").textContent =
       `${d.current_direction || "FLAT"} → ${d.predicted_direction || "FLAT"}`;
     $("decisionRegime").textContent = `${d.regime || "—"} / ${d.trajectory || "—"}`;
@@ -281,34 +328,61 @@
       `${fixed(d.momentum, 6)} / ${fixed(d.acceleration, 8)}`;
     $("decisionHealth").textContent =
       `${pct(d.volatility)} / ${d.data_health || "UNKNOWN"}`;
+
+    const holdUp = strikeCtx.hold_up_probability;
+    const zDist = strikeCtx.z_distance;
+    $("decisionStrikePath").textContent =
+      holdUp != null && zDist != null
+        ? `UP ${pct(holdUp)} · ${Number(zDist).toFixed(2)}σ`
+        : "—";
+
+    const pattern = d.late_momentum_pattern || strikeCtx.late_momentum_pattern || "none";
+    if (pattern !== "none") {
+      $("decisionLateMomentum").textContent =
+        strikeCtx.late_momentum_summary || pattern;
+    } else if (inLate) {
+      $("decisionLateMomentum").textContent =
+        `scan · drift ${Number(strikeCtx.late_momentum_drift || 0).toFixed(2)} · ` +
+        `hammer ${Number(strikeCtx.late_momentum_hammer || 0).toFixed(2)} · ` +
+        `fade ${Number(strikeCtx.late_momentum_fade || 0).toFixed(2)}`;
+    } else {
+      $("decisionLateMomentum").textContent = "outside late window";
+    }
+
+    const kellyContracts = payload?.kelly_contracts;
+    const bankroll = thresholds.kelly_bankroll_usd;
+    const kellyFrac = thresholds.kelly_fraction;
+    let kellyText = kellyContracts != null ? `${kellyContracts} contracts` : "sized from edge";
+    if (bankroll != null) {
+      kellyText += ` · $${Number(bankroll).toFixed(2)} bankroll`;
+    }
+    if (kellyFrac != null) {
+      kellyText += ` · ${Math.round(Number(kellyFrac) * 100)}% Kelly`;
+    }
+    $("decisionKelly").textContent = kellyText;
+
     let position = "FLAT";
     try {
       const parsed = d.position ? JSON.parse(d.position) : null;
       if (parsed) position = `${parsed.side} × ${parsed.quantity}`;
     } catch (_) {}
     let risk = "OK";
-    try {
-      const payload = d.payload ? JSON.parse(d.payload) : null;
-      if (payload?.risk?.locked) risk = `LOCKED: ${payload.risk.reason || "limit"}`;
-      else if (payload?.risk) risk = `OK · P/L ${money(payload.risk.realized_pnl)}`;
-    } catch (_) {}
+    if (payload?.risk?.locked) risk = `LOCKED: ${payload.risk.reason || "limit"}`;
+    else if (payload?.risk) risk = `OK · P/L ${money(payload.risk.realized_pnl)}`;
     $("decisionPosition").textContent = `${position} / ${risk}`;
 
     let tradeQuality = "—";
     let modelAgreement = "—";
     let liquidity = "—";
-    try {
-      const payload = d.payload ? JSON.parse(d.payload) : null;
-      const tq = payload?.trade_quality;
-      if (tq) {
-        tradeQuality = `${tq.score}/100 · ${tq.recommendation}`;
-        liquidity = `${tq.liquidity_label || "—"} · ${tq.historical_match_count || 0} matches`;
-      }
-      const ma = payload?.model_agreement;
-      if (ma) {
-        modelAgreement = `${pct(ma.agreement * 100)} ${ma.consensus} · ${ma.models_agree ? "agree" : "disagree"}`;
-      }
-    } catch (_) {}
+    const tq = payload?.trade_quality;
+    if (tq) {
+      tradeQuality = `${tq.score}/100 · ${tq.recommendation}`;
+      liquidity = `${tq.liquidity_label || "—"} · ${tq.historical_match_count || 0} matches`;
+    }
+    const ma = payload?.model_agreement;
+    if (ma) {
+      modelAgreement = `${pct(ma.agreement * 100)} ${ma.consensus} · ${ma.models_agree ? "agree" : "disagree"}`;
+    }
     $("decisionTradeQuality").textContent = tradeQuality;
     $("decisionModelAgreement").textContent = modelAgreement;
     $("decisionLiquidity").textContent = liquidity;
@@ -326,26 +400,39 @@
     if (d.edge_gap_text) {
       $("decisionEdgeGap").textContent = d.edge_gap_text;
     }
+    renderActiveRules(d);
     renderRequirementsPanel(d);
   }
 
   function renderDecisions(decisions) {
     const body = $("decisionsBody");
     $("decisionsEmpty").hidden = decisions.length > 0;
-    body.innerHTML = decisions.slice(0, 100).map((d) => `
+    body.innerHTML = decisions.slice(0, 100).map((d) => {
+      const poll =
+        d.dominant_poll_side && d.dominant_poll != null
+          ? `${d.dominant_poll_side} ${pct(d.dominant_poll)}`
+          : "—";
+      const momentum = d.late_momentum_pattern && d.late_momentum_pattern !== "none"
+        ? d.late_momentum_pattern
+        : "—";
+      return `
       <tr>
         <td class="mono">${fmtTime(d.ts)}</td>
+        <td>${horizonLabel(d) === "1h bot" ? '<span class="badge arb">1h</span>' : '<span class="badge high">15m</span>'}</td>
         <td>${tierBadge(d.action)}</td>
         <td class="mono">${d.ticker || "—"}</td>
+        <td class="mono">${d.seconds_remaining != null ? `${Math.max(0, d.seconds_remaining).toFixed(0)}s` : "—"}</td>
         <td class="mono">${pct(d.up_probability)}</td>
         <td class="mono">${pct(d.executable_price)}</td>
         <td class="edge-pos mono">${pct(d.edge)}</td>
+        <td class="mono">${poll}</td>
+        <td class="mono">${momentum}</td>
         <td class="mono">${pct(d.confidence)}</td>
-        <td>${d.regime || "—"}</td>
         <td>${d.data_health || "—"}</td>
         <td class="requirements-cell">${renderRequirementsCell(d)}</td>
         <td class="reason-cell">${(d.action || "").toUpperCase() === "NO_TRADE" && d.primary_blocker ? d.primary_blocker : (d.reason || "—")}</td>
-      </tr>`).join("");
+      </tr>`;
+    }).join("");
   }
 
   function renderStats(stats) {
@@ -391,6 +478,8 @@
     $("analyticsLossCauses").textContent = (analytics.largest_loss_causes || [])
       .map((c) => `${c.cause}: ${c.count}`)
       .join("\n") || "—";
+    $("analyticsMarketType").textContent = fmt(analytics.win_rate_by_market_type);
+    $("analyticsConfidence").textContent = fmt(analytics.confidence_calibration);
   }
 
   async function refresh() {

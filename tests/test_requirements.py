@@ -23,11 +23,11 @@ def _row(**overrides):
                     "gate": "minimum_edge",
                     "reason": "edge below threshold",
                     "observed": 0.12,
-                    "required": 0.20,
+                    "required": 0.15,
                 }
             ]
         ),
-        "payload": json.dumps({"config": {"min_edge": 0.20}}),
+        "payload": json.dumps({"config": {"min_edge": 0.15}}),
         "position": json.dumps(None),
     }
     base.update(overrides)
@@ -39,10 +39,10 @@ def test_no_trade_marks_edge_as_blocking():
     edge = next(r for r in result["requirements"] if r["id"] == "edge")
     assert edge["blocking"] is True
     assert edge["status"] == "fail"
-    assert "need 8¢ more" in edge["detail"]
+    assert "need 3¢ more" in edge["detail"]
     assert "Minimum edge" in result["blocking_summary"]
-    assert "need 8¢ more" in result["blocking_summary"]
-    assert result["edge_gap_cents"] == 8.0
+    assert "need 3¢ more" in result["blocking_summary"]
+    assert result["edge_gap_cents"] == 3.0
     assert result["primary_blocker"].startswith("Minimum edge:")
 
 
@@ -54,7 +54,7 @@ def test_hour_edge_gate_maps_to_edge_requirement():
                     "gate": "edge",
                     "reason": "no executable edge available",
                     "observed": 0.05,
-                    "required": 0.20,
+                    "required": 0.15,
                 }
             ]
         )
@@ -62,7 +62,7 @@ def test_hour_edge_gate_maps_to_edge_requirement():
     result = build_trade_requirements(row)
     edge = next(r for r in result["requirements"] if r["id"] == "edge")
     assert edge["blocking"] is True
-    assert "need 15¢ more" in result["primary_blocker"]
+    assert "need 10¢ more" in result["primary_blocker"]
 
 
 def test_spread_failure_shows_actual_values():
