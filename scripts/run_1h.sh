@@ -20,11 +20,6 @@ fi
 CONFIG="${CONFIG_1H:-config/1h.yaml}"
 mkdir -p logs
 
-LIVE_FLAG=()
-if [[ -n "${KALSHI_API_KEY_ID:-}" && -f secrets/kalshi_private.key ]]; then
-  LIVE_FLAG=(--live)
-fi
-
 while true; do
   if [[ -f .env ]]; then
     set -a
@@ -33,8 +28,10 @@ while true; do
     set +a
   fi
   LIVE_FLAG=()
-  if [[ -n "${KALSHI_API_KEY_ID:-}" && -f secrets/kalshi_private.key ]]; then
-    LIVE_FLAG=(--live)
+  if [[ "${DRY_RUN:-true}" == "false" ]]; then
+    if [[ -n "${KALSHI_API_KEY_ID:-}" && -f secrets/kalshi_private.key ]]; then
+      LIVE_FLAG=(--live)
+    fi
   fi
   echo "[$(date -Is)] starting 1h-bot mode=${LIVE_FLAG[*]:-PAPER}"
   python3 -m kalshi_bot "${LIVE_FLAG[@]}" --1h --config "$CONFIG" || true
