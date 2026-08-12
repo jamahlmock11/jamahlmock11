@@ -42,12 +42,10 @@ from kalshi_bot.hour.regime_detector import classify_hour_regime
 from kalshi_bot.hour.trajectory_model import TrajectoryForecast, forecast_trajectory
 from kalshi_bot.hour.trend_engine import TrendSnapshot
 from kalshi_bot.intelligence.orchestrator import IntelligenceOrchestrator, IntelligenceReport
-from kalshi_bot.strategies.decision import DecisionEngine, decision_config_from_app
-from kalshi_bot.strategies.entry_filters import (
-    EntrySignalTracker,
-    apply_signal_persistence_gate,
-    classify_window_regime,
-)
+from kalshi_bot.hour.reversal_decision import HourReversalDecisionEngine
+from kalshi_bot.hour.reversal_engine import ReversalAssessment, assess_reversal
+from kalshi_bot.hour.reversal_state import ReversalStateTracker
+from kalshi_bot.market.poll_alignment import market_poll_snapshot
 from kalshi_bot.venues.kalshi import KalshiClient
 
 if TYPE_CHECKING:
@@ -68,6 +66,7 @@ class HourForecastCycle:
     regime: Regime | None = None
     forecast: ProbabilityEstimate | None = None
     decision: DecisionResult | None = None
+    reversal: ReversalAssessment | None = None
     options_volatility: float | None = None
     market_rejections: dict[str, tuple[str, ...]] | None = None
     intelligence: IntelligenceReport | None = None
@@ -95,7 +94,7 @@ class HourForecastingScanner:
         config: AppConfig,
         features: HourFeatureEngine | None = None,
         model: HourProbabilityModel | None = None,
-        decision_engine: DecisionEngine | None = None,
+        decision_engine: HourReversalDecisionEngine | None = None,
         intelligence: IntelligenceOrchestrator | None = None,
         position_lookup: PositionLookup | None = None,
         orders_lookup: OrdersLookup | None = None,
@@ -119,19 +118,12 @@ class HourForecastingScanner:
             minimum_depth=hour_cfg.order_quantity,
             maximum_spread=hour_cfg.max_spread,
         )
-        self.decision_engine = decision_engine or DecisionEngine(
-            decision_config_from_app(
-                config,
-                maximum_seconds_remaining=hour_cfg.max_entry_seconds_remaining,
-            )
-        )
+        self.decision_engine = decision_engine or HourReversalDecisionEngine(config)
+        self.reversal_state = self.decision_engine.state_tracker
         self.position_lookup = position_lookup or (lambda _ticker: None)
         self.orders_lookup = orders_lookup or (lambda _ticker: ())
         self.intelligence = intelligence or IntelligenceOrchestrator(
             confidence_threshold=config.strategy.min_confidence,
-        )
-        self.entry_tracker = EntrySignalTracker(
-            required_polls=config.strategy.entry_signal_persistence_polls,
         )
 
     @staticmethod
@@ -343,56 +335,57 @@ class HourForecastingScanner:
             )
 
         stability = model_stability(forecast)
-        intel_report: IntelligenceReport | None = None
         trade_forecast = forecast
-        intel_skip = False
-        if self.config.intelligence.enabled:
-            intel_report = self.intelligence.enrich(
-                forecast,
-                features,
-                market,
-                regime,
-                supporting=supporting,
+        poll = market_poll_snapshot(market.orderbook)
+        initial_direction = None
+        if trend.classification.value.endswith("UP") or trend.short_trend > 0:
+            initial_direction = Direction.UP if trend.short_trend >= 0 else None
+        if trend.classification.value.endswith("DOWN") or trend.short_trend < 0:
+            initial_direction = Direction.DOWN if trend.short_trend <= 0 else initial_direction
+        if poll.dominant_poll is not None and poll.dominant_poll >= 0.62 and poll.dominant_side is not None:
+            initial_direction = (
+                Direction.UP if poll.dominant_side.value == "YES" else Direction.DOWN
             )
-            trade_forecast = intel_report.adjusted_forecast or forecast
-            intel_skip = intel_report.skip_trade
+        self.reversal_state.update(
+            ticker=market.ticker,
+            initial_direction=initial_direction,
+            model_up=trade_forecast.p_up,
+            model_down=trade_forecast.p_down,
+            yes_poll=poll.yes_poll,
+            trend_strength=trend.trend_strength,
+            trend_consistency=trend.trend_consistency,
+            orderbook_imbalance=features.orderbook_imbalance,
+            min_consistency=self.config.hour_reversal.min_initial_trend_consistency,
+            min_strength=self.config.hour_reversal.min_initial_move_strength,
+        )
+        reversal = assess_reversal(
+            features=features,
+            forecast=trade_forecast,
+            trend=trend,
+            vol=vol,
+            poll=poll,
+            state=self.reversal_state.get(market.ticker),
+            cfg=self.config.hour_reversal,
+            supporting=supporting,
+        )
+        intel_report: IntelligenceReport | None = None
+        intel_skip = False
 
         decision = self.decision_engine.decide(
             market,
             trade_forecast,
             features,
             benchmark,
+            trend=trend,
+            vol=vol,
+            poll=poll,
+            supporting=supporting,
+            reversal=reversal,
             now=observed_at,
             risk_locked=risk_locked or intel_skip,
             duplicate_entry=duplicate_entry,
             risk_manager=risk_manager,
         )
-        decision = apply_signal_persistence_gate(
-            decision,
-            ticker=market.ticker,
-            tracker=self.entry_tracker,
-        )
-        if (
-            intel_skip
-            and self.config.intelligence.enabled
-            and decision.action in {
-                DecisionAction.BUY_UP,
-                DecisionAction.BUY_DOWN,
-            }
-        ):
-            decision = replace(
-                decision,
-                action=DecisionAction.NO_TRADE,
-                reason=f"intelligence gate: {intel_report.skip_reason}",
-                gate_failures=decision.gate_failures + (
-                    GateFailure(
-                        gate="intelligence",
-                        reason=intel_report.skip_reason,
-                        observed=trade_forecast.confidence,
-                        required=self.config.hour.min_confidence,
-                    ),
-                ),
-            )
 
         health = (
             "PROXY"
@@ -406,8 +399,8 @@ class HourForecastingScanner:
             reason = f"{reason}; unofficial constituent proxy (PAPER only)"
         if supporting_reason:
             reason = f"{reason}; supporting feeds: {supporting_reason}"
-        if intel_report is not None and intel_report.skip_trade:
-            reason = f"{reason}; {intel_report.skip_reason}"
+
+        self.reversal_state.prune({market.ticker})
 
         return HourForecastCycle(
             timestamp=observed_at,
@@ -422,6 +415,7 @@ class HourForecastingScanner:
             regime=regime,
             forecast=trade_forecast,
             decision=decision,
+            reversal=reversal,
             options_volatility=options_vol,
             market_rejections=dict(discovered.rejections),
             intelligence=intel_report,
