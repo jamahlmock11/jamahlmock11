@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from statistics import NormalDist
 
 from kalshi_bot.domain import FeatureSnapshot, ProbabilityEstimate, Regime, TrajectoryState
-from kalshi_bot.features.late_momentum import LateMomentumPattern, assess_late_momentum
+from kalshi_bot.features.late_momentum import LateMomentumPattern
 from kalshi_bot.models.strike_gravity import assess_strike_gravity
 from kalshi_bot.strategies.entry_filters import WindowRegimeKind
 
@@ -69,6 +69,25 @@ def _time_urgency(seconds_remaining: float, *, window_seconds: float) -> float:
     return _clip(1.0 - seconds / window_seconds, 0.12, 1.0)
 
 
+def _late_momentum_pattern(features: FeatureSnapshot) -> LateMomentumPattern:
+    try:
+        return LateMomentumPattern(features.late_momentum_pattern)
+    except ValueError:
+        return LateMomentumPattern.NONE
+
+
+def _apply_late_momentum_probability(base: float, features: FeatureSnapshot) -> float:
+    pattern = _late_momentum_pattern(features)
+    if pattern is LateMomentumPattern.NONE:
+        return base
+    finish_bias = features.late_momentum_finish_bias
+    if pattern is LateMomentumPattern.FADE:
+        return _clip(0.5 + (base - 0.5) * 0.45 + finish_bias * 0.10)
+    if pattern is LateMomentumPattern.HAMMER:
+        return _clip(base + finish_bias * 0.20)
+    return _clip(base + finish_bias * 0.14)
+
+
 def _momentum_finish_probability(features: FeatureSnapshot) -> float:
     """Short-horizon BRTI momentum tilted toward finishing above strike."""
     spot = features.current_price
@@ -88,17 +107,7 @@ def _momentum_finish_probability(features: FeatureSnapshot) -> float:
         velocity_signal = -velocity_signal
     combined = 0.65 * trend_signal + 0.35 * velocity_signal
     base = _clip(0.5 + 0.24 * combined)
-
-    late = assess_late_momentum(features)
-    if not late.active or late.pattern is LateMomentumPattern.NONE:
-        return base
-
-    if late.pattern is LateMomentumPattern.FADE:
-        faded = 0.5 + (base - 0.5) * 0.45 + late.finish_bias * 0.10
-        return _clip(faded)
-    if late.pattern is LateMomentumPattern.HAMMER:
-        return _clip(base + late.finish_bias * 0.20)
-    return _clip(base + late.finish_bias * 0.14)
+    return _apply_late_momentum_probability(base, features)
 
 
 def _brti_settlement_core_probability(
@@ -281,10 +290,9 @@ class EnsembleProbabilityModel:
             0.65 * _trajectory_probability(features.trajectory)
             + 0.35 * (0.5 + 0.25 * momentum_strength)
         )
-        late = assess_late_momentum(features)
-        if late.active and late.pattern is not LateMomentumPattern.NONE:
+        if features.late_momentum_pattern != LateMomentumPattern.NONE.value:
             trajectory_momentum = _clip(
-                trajectory_momentum + late.finish_bias * 0.12
+                trajectory_momentum + features.late_momentum_finish_bias * 0.12
             )
         acceleration_signal = math.tanh(features.acceleration * 10_000_000)
         acceleration_reversal = _clip(

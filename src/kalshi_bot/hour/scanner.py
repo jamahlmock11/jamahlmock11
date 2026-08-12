@@ -110,6 +110,7 @@ class HourForecastingScanner:
             FeatureEngineConfig(
                 history_seconds=hour_cfg.history_seconds,
                 allow_proxy=config.data.benchmark_mode == "constituent_proxy",
+                late_momentum_window_seconds=config.strategy.late_seconds,
             )
         )
         self.model = model or HourProbabilityModel(model_version=hour_cfg.model_version)
