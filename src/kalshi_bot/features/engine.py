@@ -6,7 +6,7 @@ import bisect
 import math
 import statistics
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 
 from kalshi_bot.domain import (
@@ -18,6 +18,7 @@ from kalshi_bot.domain import (
     TrajectoryState,
     utc_datetime,
 )
+from kalshi_bot.features.late_momentum import assess_late_momentum
 from kalshi_bot.market.orderbook import imbalance
 
 HORIZONS = (5, 10, 15, 30, 60, 120, 180, 300)
@@ -45,6 +46,8 @@ FEATURE_RATIONALE: dict[str, str] = {
     "oldest_sample_age": "History span verifies that nominal long-horizon features have genuine temporal coverage.",
     "settlement_effective_strike": "Inside the final 60-second BRTI averaging window, already observed index values change the average required over the remaining seconds.",
     "settlement_locked_fraction": "The elapsed fraction of Kalshi's final 60-second settlement average measures how much of the outcome path is already fixed.",
+    "late_momentum_pattern": "In the final two minutes, classify fade, drift, or hammer using distance, vol, time, and momentum.",
+    "late_momentum_finish_bias": "Signed adjustment toward finishing above strike from the active late momentum pattern.",
 }
 
 
@@ -55,6 +58,7 @@ class FeatureEngineConfig:
     venue_neutral_band: float = 0.0002
     venue_dispersion_limit: float = 0.002
     allow_proxy: bool = False
+    late_momentum_window_seconds: float = 120.0
 
 
 def classify_trajectory(
@@ -264,7 +268,7 @@ class FeatureEngine:
             acceleration,
             flat_threshold=self.config.flat_return_threshold,
         )
-        return FeatureSnapshot(
+        snapshot = FeatureSnapshot(
             timestamp=observed_now,
             current_price=current.price,
             strike=market.strike,
@@ -288,6 +292,19 @@ class FeatureEngine:
             rationale=FEATURE_RATIONALE,
             settlement_effective_strike=settlement_effective_strike,
             settlement_locked_fraction=settlement_locked_fraction,
+        )
+        late_momentum = assess_late_momentum(
+            snapshot,
+            late_window_seconds=self.config.late_momentum_window_seconds,
+        )
+        return replace(
+            snapshot,
+            late_momentum_pattern=late_momentum.pattern.value,
+            late_momentum_drift=late_momentum.drift_score,
+            late_momentum_hammer=late_momentum.hammer_score,
+            late_momentum_fade=late_momentum.fade_score,
+            late_momentum_finish_bias=late_momentum.finish_bias,
+            late_momentum_summary=late_momentum.summary,
         )
 
     build = compute

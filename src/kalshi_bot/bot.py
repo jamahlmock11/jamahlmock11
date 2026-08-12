@@ -348,6 +348,20 @@ class TradingBot:
         if cycle.enriched is not None:
             payload["enriched_features"] = cycle.enriched.as_dict()
             payload["entry_features"] = cycle.enriched.as_dict().get("price_action", {})
+        if cycle.features is not None:
+            payload["strike_context"] = {
+                "seconds_remaining": cycle.features.seconds_remaining,
+                "spot": cycle.features.current_price,
+                "strike": (
+                    cycle.features.settlement_effective_strike
+                    if cycle.features.settlement_effective_strike is not None
+                    else cycle.features.strike
+                ),
+                "z_distance": cycle.features.z_distance_to_strike,
+                "hold_up_probability": assess_strike_gravity(cycle.features).finish_probability_up,
+                "late_momentum_pattern": cycle.features.late_momentum_pattern,
+                "late_momentum_summary": cycle.features.late_momentum_summary,
+            }
         self.journal.log_decision(
             cycle,
             dry_run=self.engine.dry_run,
@@ -471,6 +485,20 @@ class TradingBot:
                 "Path hold",
                 f"{hold_side} {hold_prob:.0%}",
             )
+            if cycle.features.late_momentum_pattern != "none":
+                table.add_row(
+                    "Late momentum",
+                    cycle.features.late_momentum_summary,
+                )
+            elif cycle.features.seconds_remaining <= 120:
+                table.add_row(
+                    "Late momentum",
+                    (
+                        f"scanning · drift {cycle.features.late_momentum_drift:.2f} · "
+                        f"hammer {cycle.features.late_momentum_hammer:.2f} · "
+                        f"fade {cycle.features.late_momentum_fade:.2f}"
+                    ),
+                )
             position = (
                 cycle.market.current_position
                 if cycle.market and cycle.market.current_position
@@ -498,9 +526,13 @@ class TradingBot:
                 )
                 core = cycle.forecast.component_probabilities.get("brti_settlement_core")
                 if core is not None:
+                    pattern = cycle.features.late_momentum_pattern
+                    pattern_label = (
+                        f" · {pattern}" if pattern != "none" else ""
+                    )
                     table.add_row(
                         "BRTI settlement core",
-                        f"UP {core:.1%} (spot/strike · momentum · vol · time)",
+                        f"UP {core:.1%}{pattern_label} (spot/strike · momentum · vol · time)",
                     )
                 table.add_row(
                     "Confidence",
