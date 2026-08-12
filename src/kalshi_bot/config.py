@@ -73,6 +73,14 @@ class ExecutionConfig(BaseModel):
     max_position_usd: float = 50.0
     max_contracts_per_trade: int = 100
     min_trade_notional_usd: float = Field(default=0.0, ge=0.0)
+    fixed_trade_notional_usd: float = Field(
+        default=0.0,
+        ge=0.0,
+        description=(
+            "When Kelly is disabled, target this USD notional per entry "
+            "(0 keeps legacy edge-tier sizing)."
+        ),
+    )
     poll_interval_sec: float = 3.0
     only_tiers: list[str] = Field(default_factory=lambda: ["HIGH", "MEDIUM"])
     fee_rate: float = 0.0

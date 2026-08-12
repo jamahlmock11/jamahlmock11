@@ -234,6 +234,18 @@ class RiskManager:
             min(contracts, self.config.execution.max_contracts_per_trade),
         )
 
+    def _contracts_for_fixed_notional(self, notional_usd: float, executable_cost: float) -> int:
+        """Size entries to a fixed USD budget without exceeding it."""
+        if notional_usd <= 0 or executable_cost <= 0:
+            return 0
+        portfolio_room = max(0.0, self.config.risk.max_position_size - self.state.open_exposure_usd)
+        available_usd = max(0.0, min(portfolio_room, self.max_per_ticker_usd, notional_usd))
+        contracts = max(1, int(available_usd / executable_cost))
+        return max(
+            0,
+            min(contracts, self.config.execution.max_contracts_per_trade),
+        )
+
     def size_decision(self, decision: DecisionResult) -> int:
         if decision.action not in {DecisionAction.BUY_UP, DecisionAction.BUY_DOWN}:
             return 0
@@ -254,6 +266,12 @@ class RiskManager:
             )
             if kelly_qty > 0:
                 return kelly_qty
+        fixed_notional = self.config.execution.fixed_trade_notional_usd
+        if fixed_notional > 0:
+            return self._contracts_for_fixed_notional(
+                fixed_notional * size_mult,
+                decision.executable_cost,
+            )
         daily_room = max(0.0, abs(self.max_daily_loss) + self.state.realized_pnl)
         kelly_budget = kelly_notional_usd(decision.edge, daily_room)
         available_usd = max(
@@ -292,7 +310,14 @@ class RiskManager:
             return 0
         daily_room = max(0.0, abs(self.max_daily_loss) + self.state.realized_pnl)
         bankroll = self.config.risk.kelly_bankroll_usd or self.config.risk.max_position_size
-        if self.config.risk.kelly_enabled:
+        fixed_notional = self.config.execution.fixed_trade_notional_usd
+        if not self.config.risk.kelly_enabled and fixed_notional > 0:
+            budget = min(
+                self.config.risk.max_position_size - self.state.open_exposure_usd,
+                self.config.risk.max_contract_exposure,
+                fixed_notional,
+            )
+        elif self.config.risk.kelly_enabled:
             budget = min(
                 self.config.risk.max_position_size - self.state.open_exposure_usd,
                 self.config.risk.max_contract_exposure,
