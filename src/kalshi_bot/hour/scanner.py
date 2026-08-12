@@ -46,6 +46,7 @@ from kalshi_bot.hour.reversal_decision import HourReversalDecisionEngine
 from kalshi_bot.hour.reversal_engine import ReversalAssessment, assess_reversal
 from kalshi_bot.hour.reversal_state import ReversalStateTracker
 from kalshi_bot.market.poll_alignment import market_poll_snapshot
+from kalshi_bot.strategies.entry_filters import classify_window_regime
 from kalshi_bot.venues.kalshi import KalshiClient
 
 if TYPE_CHECKING:
