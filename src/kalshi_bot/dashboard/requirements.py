@@ -22,6 +22,75 @@ DEFAULT_THRESHOLDS: dict[str, Any] = {
     "late_seconds": 120.0,
 }
 
+REVERSAL_TIER_LABELS: dict[str, str] = {
+    "no_reversal": "No reversal",
+    "watch": "Watch",
+    "reversal_candidate": "Candidate",
+    "strong_reversal_candidate": "Strong",
+}
+
+def _parse_payload(row: dict[str, Any]) -> dict[str, Any]:
+    return _parse_json(row.get("payload"), {})
+
+
+def build_reversal_status(payload: dict[str, Any]) -> dict[str, Any]:
+    """Summarize lag-reversal mode and whether a reversal setup is active."""
+    lag = payload.get("lag_reversal") or {}
+    signal = payload.get("reversal_signal") or {}
+    enabled = bool(lag.get("enabled"))
+    entry_enabled = bool(lag.get("entry_enabled"))
+    if not enabled:
+        return {
+            "enabled": False,
+            "entry_enabled": False,
+            "signal_only": False,
+            "mode": "disabled",
+            "mode_label": "Disabled",
+            "active": False,
+            "active_label": "Off",
+            "score": None,
+            "tier": None,
+            "tier_label": "—",
+            "summary": lag.get("rationale") or "Lag reversal disabled",
+            "setup": None,
+            "rationale": lag.get("rationale"),
+        }
+
+    mode_label = "Entries on" if entry_enabled else "Signal only"
+    tier = signal.get("tier")
+    score = signal.get("score")
+    tier_label = REVERSAL_TIER_LABELS.get(str(tier or ""), tier or "—")
+    active = bool(signal.get("active"))
+    if score is not None and tier is None:
+        active = float(score) >= 50.0
+
+    if signal:
+        active_label = tier_label if active else "No setup"
+        summary = signal.get("summary") or lag.get("rationale") or mode_label
+        setup = signal.get("setup")
+    else:
+        active_label = "No data"
+        summary = lag.get("rationale") or mode_label
+        setup = None
+
+    return {
+        "enabled": True,
+        "entry_enabled": entry_enabled,
+        "signal_only": bool(lag.get("signal_only")) or not entry_enabled,
+        "mode": "entry" if entry_enabled else "signal",
+        "mode_label": mode_label,
+        "active": active,
+        "active_label": active_label,
+        "score": score,
+        "tier": tier,
+        "tier_label": tier_label,
+        "summary": summary,
+        "setup": setup,
+        "rationale": lag.get("rationale"),
+        "min_entry_score": lag.get("min_entry_score"),
+    }
+
+
 GATE_LABELS: dict[str, str] = {
     "market_validity": "Valid market",
     "market_status": "Market open",
@@ -566,6 +635,34 @@ def build_trade_requirements(row: dict[str, Any]) -> dict[str, Any]:
             )
         )
 
+    reversal_status = build_reversal_status(payload)
+    if reversal_status.get("enabled"):
+        score_text = (
+            f"{reversal_status['score']:.0f}/100 · {reversal_status['tier_label']}"
+            if reversal_status.get("score") is not None
+            else reversal_status.get("mode_label") or "—"
+        )
+        detail = reversal_status.get("setup") or reversal_status.get("summary") or score_text
+        requirements.append(
+            _req(
+                "lag_reversal",
+                "Lag reversal signal",
+                status="pass" if reversal_status.get("active") else "fail",
+                detail=f"{score_text} · {detail}",
+                blocking=False,
+            )
+        )
+    elif payload.get("lag_reversal") is not None:
+        requirements.append(
+            _req(
+                "lag_reversal",
+                "Lag reversal signal",
+                status="na",
+                detail=reversal_status.get("summary") or "Disabled",
+                blocking=False,
+            )
+        )
+
     if reversal:
         requirements.append(
             _req(
@@ -679,5 +776,7 @@ def build_trade_requirements(row: dict[str, Any]) -> dict[str, Any]:
 
 def enrich_decision(row: dict[str, Any]) -> dict[str, Any]:
     enriched = dict(row)
+    payload = _parse_payload(row)
     enriched.update(build_trade_requirements(row))
+    enriched["reversal_status"] = build_reversal_status(payload)
     return enriched

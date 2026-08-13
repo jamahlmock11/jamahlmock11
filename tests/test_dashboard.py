@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from fastapi.testclient import TestClient
 
 from kalshi_bot.dashboard.app import create_app
+from kalshi_bot.dashboard.requirements import build_reversal_status
 from kalshi_bot.domain import DecisionAction, DecisionResult, Direction
 from kalshi_bot.journal import TradeJournal
 from kalshi_bot.models.probability import Confidence, EdgeSignal, Side
@@ -124,3 +125,80 @@ def test_dashboard_api(tmp_path: Path):
     analytics = client.get("/api/analytics").json()
     assert "win_rate_by_time_remaining" in analytics
     assert "total_trades" in analytics
+
+
+def test_build_reversal_status_signal_only():
+    status = build_reversal_status(
+        {
+            "lag_reversal": {
+                "enabled": True,
+                "entry_enabled": False,
+                "signal_only": True,
+            },
+            "reversal_signal": {
+                "score": 56.0,
+                "tier": "watch",
+                "active": True,
+                "setup": "DOWN stall → yes · lag +21.6% · Δprob -2.5%",
+                "summary": "watch reversal setup",
+            },
+        }
+    )
+    assert status["enabled"]
+    assert status["signal_only"]
+    assert status["active"]
+    assert status["mode_label"] == "Signal only"
+    assert status["score"] == 56.0
+
+
+def test_dashboard_reversal_status_in_decisions(tmp_path: Path):
+    db = tmp_path / "rev.db"
+    j = TradeJournal(db)
+    now = datetime.now(timezone.utc)
+    cycle = SimpleNamespace(
+        timestamp=now,
+        data_health="OK",
+        reason="no edge",
+        market=SimpleNamespace(
+            ticker="KXBTC15M-X",
+            strike=65000,
+            expiration=now + timedelta(minutes=5),
+            yes_bid=0.04,
+            yes_ask=0.05,
+            no_bid=0.95,
+            no_ask=0.96,
+            current_position=None,
+        ),
+        benchmark=None,
+        features=None,
+        forecast=None,
+        regime=None,
+        decision=DecisionResult(
+            action=DecisionAction.NO_TRADE,
+            reason="no edge",
+            gate_failures=(),
+            current_direction=Direction.DOWN,
+            predicted_direction=Direction.DOWN,
+            trade_direction=Direction.FLAT,
+        ),
+    )
+    j.log_decision(
+        cycle,
+        dry_run=False,
+        payload={
+            "lag_reversal": {"enabled": True, "entry_enabled": False, "signal_only": True},
+            "reversal_signal": {
+                "score": 72.0,
+                "tier": "reversal_candidate",
+                "active": True,
+                "setup": "DOWN stall → yes",
+                "summary": "candidate reversal",
+            },
+        },
+    )
+    client = TestClient(create_app(db))
+    decision = client.get("/api/decisions").json()["decisions"][0]
+    assert decision["reversal_status"]["active"]
+    assert decision["reversal_status"]["tier_label"] == "Candidate"
+    lag_req = next(r for r in decision["requirements"] if r["id"] == "lag_reversal")
+    assert lag_req["status"] == "pass"

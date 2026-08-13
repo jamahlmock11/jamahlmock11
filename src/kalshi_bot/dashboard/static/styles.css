@@ -350,6 +350,100 @@ tbody tr:hover {
 .edge-pos { color: var(--lime); font-weight: 600; }
 .edge-neg { color: var(--danger); font-weight: 600; }
 
+.decision-panel .panel-head {
+  margin-bottom: 0.75rem;
+}
+
+.reversal-banner {
+  margin-bottom: 1rem;
+  padding: 0.85rem 1rem;
+  border: 1px solid rgba(255, 200, 120, 0.22);
+  border-radius: 10px;
+  background: linear-gradient(135deg, rgba(40, 28, 18, 0.9), rgba(24, 20, 16, 0.95));
+}
+
+.reversal-banner.reversal-active {
+  border-color: rgba(180, 255, 140, 0.35);
+  background: linear-gradient(135deg, rgba(28, 48, 28, 0.95), rgba(18, 24, 20, 0.98));
+}
+
+.reversal-banner.reversal-off {
+  border-color: rgba(120, 120, 120, 0.25);
+  opacity: 0.85;
+}
+
+.reversal-banner-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.45rem;
+}
+
+.reversal-banner-title {
+  font-size: 0.72rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: rgba(239, 230, 214, 0.65);
+}
+
+.reversal-mode-badge,
+.reversal-active-badge {
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 0.15rem 0.45rem;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.reversal-mode-badge.signal {
+  color: #9fd4ff;
+  border-color: rgba(120, 180, 255, 0.35);
+}
+
+.reversal-mode-badge.entry {
+  color: var(--lime);
+  border-color: rgba(140, 255, 120, 0.35);
+}
+
+.reversal-mode-badge.off,
+.reversal-active-badge.off {
+  color: rgba(239, 230, 214, 0.45);
+}
+
+.reversal-active-badge.on {
+  color: var(--lime);
+  border-color: rgba(140, 255, 120, 0.45);
+  background: rgba(80, 160, 60, 0.12);
+}
+
+.reversal-active-badge.idle {
+  color: #d4b896;
+  border-color: rgba(212, 184, 150, 0.35);
+}
+
+.reversal-banner-body {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.75rem;
+  align-items: baseline;
+  font-size: 0.92rem;
+}
+
+.reversal-banner-body strong {
+  font-family: var(--font-mono);
+  color: var(--lime);
+  font-size: 1.05rem;
+}
+
+.reversal-summary {
+  margin: 0.35rem 0 0;
+  font-size: 0.82rem;
+  line-height: 1.4;
+  color: rgba(239, 230, 214, 0.75);
+}
+
 .summary-cell {
   max-width: 28rem;
   font-size: 0.88rem;

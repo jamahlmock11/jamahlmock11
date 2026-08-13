@@ -28,6 +28,18 @@
         <h2>Current decision</h2>
         <div class="decision-action" id="decisionAction">NO DATA</div>
       </div>
+      <div class="reversal-banner" id="reversalBanner" hidden>
+        <div class="reversal-banner-head">
+          <span class="reversal-banner-title">Lag reversal</span>
+          <span class="reversal-mode-badge" id="reversalModeBadge">—</span>
+          <span class="reversal-active-badge" id="reversalActiveBadge">—</span>
+        </div>
+        <div class="reversal-banner-body">
+          <strong id="reversalScore">—</strong>
+          <span id="reversalSetup">—</span>
+        </div>
+        <p class="reversal-summary" id="reversalSummary">—</p>
+      </div>
       <div class="decision-grid">
         <article><span>Contract</span><strong id="decisionTicker">—</strong></article>
         <article><span>Reference / Strike</span><strong id="decisionPrices">—</strong></article>
@@ -161,6 +173,7 @@
               <th>Confidence</th>
               <th>Regime</th>
               <th>Health</th>
+              <th>Reversal</th>
               <th>Requirements</th>
               <th>Reason</th>
             </tr>
