@@ -186,11 +186,17 @@ class ForecastingScanner:
                 recovery_hold_min_confidence=config.risk.recovery_hold_min_confidence,
                 recovery_hold_min_agreement=config.risk.recovery_hold_min_agreement,
                 min_hold_seconds=config.risk.min_hold_seconds,
+                take_profit_capture_fraction=config.risk.take_profit_capture_fraction,
+                hold_to_expiry_enabled=config.risk.hold_to_expiry_enabled,
+                hold_to_expiry_min_probability=config.risk.hold_to_expiry_min_probability,
+                hold_to_expiry_min_confidence=config.risk.hold_to_expiry_min_confidence,
+                hold_to_expiry_min_agreement=config.risk.hold_to_expiry_min_agreement,
                 position_reversal=reversal_config_from_risk(config.risk),
                 poll=config.poll,
                 longshot=config.longshot,
                 chop_zone_min_sigma=config.strategy.chop_zone_min_sigma,
                 require_orderbook_depth=config.strategy.require_orderbook_depth,
+                allow_pyramiding=config.risk.allow_pyramiding,
             )
         )
         self.entry_tracker = EntrySignalTracker(

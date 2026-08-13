@@ -158,6 +158,11 @@ class DecisionConfig:
     recovery_hold_min_confidence: float = 0.58
     recovery_hold_min_agreement: float = 0.58
     min_hold_seconds: float = 0.0
+    take_profit_capture_fraction: float = 0.0
+    hold_to_expiry_enabled: bool = False
+    hold_to_expiry_min_probability: float = 0.58
+    hold_to_expiry_min_confidence: float = 0.58
+    hold_to_expiry_min_agreement: float = 0.58
     position_reversal: PositionReversalConfig = field(default_factory=PositionReversalConfig)
     poll: PollConfig = field(default_factory=PollConfig)
     longshot: LongshotConfig = field(default_factory=LongshotConfig)
@@ -232,6 +237,11 @@ def decision_config_from_app(
         recovery_hold_min_confidence=config.risk.recovery_hold_min_confidence,
         recovery_hold_min_agreement=config.risk.recovery_hold_min_agreement,
         min_hold_seconds=config.risk.min_hold_seconds,
+        take_profit_capture_fraction=config.risk.take_profit_capture_fraction,
+        hold_to_expiry_enabled=config.risk.hold_to_expiry_enabled,
+        hold_to_expiry_min_probability=config.risk.hold_to_expiry_min_probability,
+        hold_to_expiry_min_confidence=config.risk.hold_to_expiry_min_confidence,
+        hold_to_expiry_min_agreement=config.risk.hold_to_expiry_min_agreement,
         position_reversal=reversal_config_from_risk(config.risk),
         poll=config.poll,
         longshot=config.longshot,
@@ -575,6 +585,11 @@ class DecisionEngine:
                 recovery_hold_min_confidence=cfg.recovery_hold_min_confidence,
                 recovery_hold_min_agreement=cfg.recovery_hold_min_agreement,
                 min_hold_seconds=cfg.min_hold_seconds,
+                take_profit_capture_fraction=cfg.take_profit_capture_fraction,
+                hold_to_expiry_enabled=cfg.hold_to_expiry_enabled,
+                hold_to_expiry_min_probability=cfg.hold_to_expiry_min_probability,
+                hold_to_expiry_min_confidence=cfg.hold_to_expiry_min_confidence,
+                hold_to_expiry_min_agreement=cfg.hold_to_expiry_min_agreement,
                 position_reversal=cfg.position_reversal,
                 now=observed_now,
             )

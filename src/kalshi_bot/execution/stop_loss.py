@@ -38,6 +38,32 @@ def premium_loss_fraction(entry_price: float, exit_bid: float) -> float:
     return max(0.0, (entry_price - exit_bid) / entry_price)
 
 
+def profit_capture_fraction(entry_price: float, exit_bid: float) -> float:
+    """Share of max profit to a $1 payout captured at the executable exit bid."""
+    max_profit = 1.0 - entry_price
+    if max_profit <= 1e-12:
+        return 1.0 if exit_bid + 1e-12 >= entry_price else 0.0
+    return max(0.0, min(1.0, (exit_bid - entry_price) / max_profit))
+
+
+def hold_to_expiry_supported(
+    position: MarketPosition,
+    forecast: ProbabilityEstimate,
+    *,
+    min_probability: float,
+    min_confidence: float,
+    min_agreement: float,
+) -> bool:
+    """Strong model evidence to keep a profitable position through expiry."""
+    return recovery_hold_supported(
+        position,
+        forecast,
+        min_probability=min_probability,
+        min_confidence=min_confidence,
+        min_agreement=min_agreement,
+    )
+
+
 def executable_exit_price(
     book: OrderBookSnapshot,
     side: ContractSide,
@@ -120,6 +146,11 @@ def evaluate_position_exit(
     recovery_hold_min_confidence: float = 0.58,
     recovery_hold_min_agreement: float = 0.58,
     min_hold_seconds: float = 0.0,
+    take_profit_capture_fraction: float = 0.0,
+    hold_to_expiry_enabled: bool = False,
+    hold_to_expiry_min_probability: float = 0.58,
+    hold_to_expiry_min_confidence: float = 0.58,
+    hold_to_expiry_min_agreement: float = 0.58,
     position_reversal: PositionReversalConfig | None = None,
     now: datetime | None = None,
     reliability_gates: set[str] | frozenset[str] | None = None,
@@ -168,6 +199,33 @@ def evaluate_position_exit(
                     premium_loss_fraction=loss,
                     exit_bid=exit_bid,
                 )
+
+    if (
+        take_profit_capture_fraction > 0
+        and exit_bid is not None
+        and not within_min_hold
+    ):
+        capture = profit_capture_fraction(entry, exit_bid)
+        if capture + 1e-12 >= take_profit_capture_fraction:
+            if hold_to_expiry_enabled and hold_to_expiry_supported(
+                position,
+                forecast,
+                min_probability=hold_to_expiry_min_probability,
+                min_confidence=hold_to_expiry_min_confidence,
+                min_agreement=hold_to_expiry_min_agreement,
+            ):
+                return None
+            return PositionExitSignal(
+                should_exit=True,
+                reason=(
+                    f"take profit: captured {capture:.0%} of max gain to $1 "
+                    f"(threshold {take_profit_capture_fraction:.0%}; "
+                    f"entry {entry:.2f} cash-out {exit_bid:.2f})"
+                ),
+                trigger="take_profit",
+                premium_loss_fraction=premium_loss_fraction(entry, exit_bid),
+                exit_bid=exit_bid,
+            )
 
     reversal_cfg = position_reversal or PositionReversalConfig()
     if features is not None and reversal_cfg.enabled and position.side is not None:

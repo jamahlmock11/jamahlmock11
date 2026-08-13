@@ -175,6 +175,11 @@ risk:
   kelly_max_fraction: 0.25
   kelly_bankroll_usd: 16.22
   stop_loss_fraction: 0.55
+  take_profit_capture_fraction: 0.60
+  hold_to_expiry_enabled: true
+  hold_to_expiry_min_probability: 0.58
+  hold_to_expiry_min_confidence: 0.58
+  hold_to_expiry_min_agreement: 0.58
   opposite_edge_shift: 0.25
   thesis_reversal_enabled: false
   opposite_edge_exit_enabled: false

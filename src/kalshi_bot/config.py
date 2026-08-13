@@ -378,7 +378,20 @@ class RiskConfig(BaseModel):
     recovery_hold_min_probability: float = Field(default=0.58, ge=0.0, le=1.0)
     recovery_hold_min_confidence: float = Field(default=0.58, ge=0.0, le=1.0)
     recovery_hold_min_agreement: float = Field(default=0.58, ge=0.0, le=1.0)
-    min_hold_seconds: float = Field(default=0.0, ge=0.0)
+    min_hold_seconds: float = 0.0
+    take_profit_capture_fraction: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="Exit when executable bid captures this share of max profit to $1.",
+    )
+    hold_to_expiry_enabled: bool = Field(
+        default=True,
+        description="When take-profit threshold is met, hold through expiry if model evidence is strong.",
+    )
+    hold_to_expiry_min_probability: float = Field(default=0.58, ge=0.0, le=1.0)
+    hold_to_expiry_min_confidence: float = Field(default=0.58, ge=0.0, le=1.0)
+    hold_to_expiry_min_agreement: float = Field(default=0.58, ge=0.0, le=1.0)
     position_reversal_enabled: bool = True
     position_reversal_window_seconds: float = Field(default=420.0, ge=0.0)
     position_reversal_min_hold_probability: float = Field(default=0.50, ge=0.0, le=1.0)
