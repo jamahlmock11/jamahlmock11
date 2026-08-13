@@ -88,6 +88,56 @@
     });
   }
 
+  function reversalBadge(status) {
+    if (!status || !status.enabled) {
+      return `<span class="badge dry">off</span>`;
+    }
+    const tier = (status.tier || "").toLowerCase();
+    const cls =
+      tier === "strong_reversal_candidate" ? "live" :
+      tier === "reversal_candidate" ? "high" :
+      tier === "watch" ? "medium" :
+      "dry";
+    const label = status.active
+      ? status.tier_label || "Active"
+      : "No setup";
+    return `<span class="badge ${cls}">${label}</span>`;
+  }
+
+  function renderReversalStatus(status) {
+    const banner = $("reversalBanner");
+    if (!status) {
+      banner.hidden = true;
+      return;
+    }
+    banner.hidden = false;
+    banner.classList.toggle("reversal-active", Boolean(status.active));
+    banner.classList.toggle("reversal-off", !status.enabled);
+
+    const modeBadge = $("reversalModeBadge");
+    modeBadge.textContent = status.enabled ? status.mode_label || "On" : "Disabled";
+    modeBadge.className = `reversal-mode-badge ${status.entry_enabled ? "entry" : status.enabled ? "signal" : "off"}`;
+
+    const activeBadge = $("reversalActiveBadge");
+    if (!status.enabled) {
+      activeBadge.textContent = "Off";
+      activeBadge.className = "reversal-active-badge off";
+    } else if (status.active) {
+      activeBadge.textContent = "Reversal active";
+      activeBadge.className = "reversal-active-badge on";
+    } else {
+      activeBadge.textContent = "No reversal";
+      activeBadge.className = "reversal-active-badge idle";
+    }
+
+    $("reversalScore").textContent =
+      status.score != null
+        ? `${Number(status.score).toFixed(0)}/100 · ${status.tier_label || "—"}`
+        : status.mode_label || "—";
+    $("reversalSetup").textContent = status.setup || status.summary || "—";
+    $("reversalSummary").textContent = status.summary || status.rationale || "—";
+  }
+
   function requirementStatusClass(status, blocking) {
     if (blocking) return "req-blocked";
     if (status === "pass") return "req-pass";
@@ -327,6 +377,7 @@
       $("decisionEdgeGap").textContent = d.edge_gap_text;
     }
     renderRequirementsPanel(d);
+    renderReversalStatus(d.reversal_status);
   }
 
   function renderDecisions(decisions) {
@@ -343,6 +394,7 @@
         <td class="mono">${pct(d.confidence)}</td>
         <td>${d.regime || "—"}</td>
         <td>${d.data_health || "—"}</td>
+        <td>${reversalBadge(d.reversal_status)}</td>
         <td class="requirements-cell">${renderRequirementsCell(d)}</td>
         <td class="reason-cell">${(d.action || "").toUpperCase() === "NO_TRADE" && d.primary_blocker ? d.primary_blocker : (d.reason || "—")}</td>
       </tr>`).join("");

@@ -35,7 +35,7 @@ from kalshi_bot.strategies.alt_runner import AltStrategyRunner
 from kalshi_bot.strategies.forecasting import ForecastCycle, ForecastingScanner
 from kalshi_bot.strategies.decision import format_edge_gap
 from kalshi_bot.strategies.lag_reversal import ReversalContextTracker, evaluate_lag_reversal
-from kalshi_bot.strategies.reversal_score import ReversalScoreAssessment
+from kalshi_bot.strategies.reversal_score import ReversalScoreAssessment, ReversalTier
 from kalshi_bot.strategies.forecast_setup import ForecastSetupAssessment
 from kalshi_bot.agents.pipeline import RomaPipeline, format_roma_report
 from kalshi_bot.venues.kalshi import KalshiClient
@@ -417,6 +417,34 @@ class TradingBot:
                 "late_momentum_pattern": cycle.features.late_momentum_pattern,
                 "late_momentum_summary": cycle.features.late_momentum_summary,
             }
+        payload["lag_reversal"] = {
+            "enabled": self.config.lag_reversal.enabled,
+            "entry_enabled": self.config.lag_reversal.entry_enabled,
+            "signal_only": (
+                self.config.lag_reversal.enabled
+                and not self.config.lag_reversal.entry_enabled
+            ),
+            "min_entry_score": self.config.lag_reversal.min_entry_score,
+            "rationale": lag_eval.rationale if lag_eval is not None else None,
+        }
+        if cycle.reversal_assessment is not None:
+            ra = cycle.reversal_assessment
+            if isinstance(ra, ReversalScoreAssessment):
+                payload["reversal_signal"] = {
+                    "score": ra.score,
+                    "tier": ra.tier.value,
+                    "active": ra.tier is not ReversalTier.NONE,
+                    "initial_direction": ra.initial_direction,
+                    "reversal_side": ra.reversal_side.value,
+                    "kalshi_lag": ra.kalshi_lag_on_reversal_side,
+                    "probability_change": ra.probability_change,
+                    "summary": ra.summary,
+                    "setup": (
+                        f"{ra.initial_direction} stall → {ra.reversal_side.value} · "
+                        f"lag {ra.kalshi_lag_on_reversal_side:+.1%} · "
+                        f"Δprob {ra.probability_change:+.1%}"
+                    ),
+                }
         self.journal.log_decision(
             cycle,
             dry_run=self.engine.dry_run,
