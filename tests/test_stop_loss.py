@@ -20,6 +20,7 @@ from kalshi_bot.execution.stop_loss import (
     premium_loss_fraction,
     profit_capture_fraction,
     recovery_hold_supported,
+    thesis_has_failed,
     thesis_reversal_triggered,
 )
 from kalshi_bot.market.orderbook import parse_orderbook_fp
@@ -611,6 +612,87 @@ def test_take_profit_defers_to_hold_to_expiry_on_strong_evidence():
         hold_to_expiry_min_probability=0.58,
         hold_to_expiry_min_confidence=0.58,
         hold_to_expiry_min_agreement=0.58,
+        min_hold_seconds=0,
+    )
+    assert signal is None
+
+
+def test_stop_loss_at_forty_percent_when_thesis_failed():
+    market = MarketSnapshot(
+        ticker="KXBTC15M-TEST",
+        status="active",
+        rules="BRTI",
+        strike=65000,
+        expiration=NOW + timedelta(minutes=5),
+        open_time=NOW - timedelta(minutes=10),
+        reference="BRTI",
+        orderbook=book(yes_bid=0.30),
+        current_position=MarketPosition(
+            side=ContractSide.YES,
+            quantity=1,
+            average_price=0.50,
+        ),
+    )
+    forecast = ProbabilityEstimate(
+        p_up=0.42,
+        p_down=0.58,
+        confidence=0.55,
+        signal_agreement=0.45,
+        component_probabilities={"terminal": 0.42},
+        regime=Regime.TREND_UP,
+        raw_p_up=0.42,
+    )
+    assert thesis_has_failed(market.current_position, forecast)
+    signal = evaluate_position_exit(
+        market=market,
+        position=market.current_position,
+        forecast=forecast,
+        failures=(),
+        predicted_side=ContractSide.NO,
+        quantity=1,
+        stop_loss_fraction=0.40,
+        stop_loss_require_thesis_failure=True,
+        min_hold_seconds=0,
+    )
+    assert signal is not None
+    assert signal.trigger == "stop_loss"
+    assert signal.premium_loss_fraction == pytest.approx(0.40)
+
+
+def test_stop_loss_deferred_when_thesis_still_supports():
+    market = MarketSnapshot(
+        ticker="KXBTC15M-TEST",
+        status="active",
+        rules="BRTI",
+        strike=65000,
+        expiration=NOW + timedelta(minutes=5),
+        open_time=NOW - timedelta(minutes=10),
+        reference="BRTI",
+        orderbook=book(yes_bid=0.30),
+        current_position=MarketPosition(
+            side=ContractSide.YES,
+            quantity=1,
+            average_price=0.50,
+        ),
+    )
+    forecast = ProbabilityEstimate(
+        p_up=0.62,
+        p_down=0.38,
+        confidence=0.70,
+        signal_agreement=0.72,
+        component_probabilities={"terminal": 0.62},
+        regime=Regime.TREND_UP,
+        raw_p_up=0.62,
+    )
+    signal = evaluate_position_exit(
+        market=market,
+        position=market.current_position,
+        forecast=forecast,
+        failures=(),
+        predicted_side=ContractSide.YES,
+        quantity=1,
+        stop_loss_fraction=0.40,
+        stop_loss_require_thesis_failure=True,
         min_hold_seconds=0,
     )
     assert signal is None

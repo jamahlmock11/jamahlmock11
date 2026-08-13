@@ -370,6 +370,12 @@ class RiskConfig(BaseModel):
         description="Allow adding contracts on the same side while a position is open.",
     )
     stop_loss_fraction: float = Field(default=0.45, ge=0.0, le=1.0)
+    stop_loss_require_thesis_failure: bool = Field(
+        default=False,
+        description="Only fire premium stop-loss when forecast evidence also failed.",
+    )
+    stop_loss_min_hold_probability: float = Field(default=0.48, ge=0.0, le=1.0)
+    stop_loss_min_agreement: float = Field(default=0.50, ge=0.0, le=1.0)
     opposite_edge_shift: float = Field(default=0.15, ge=0.0, le=1.0)
     thesis_reversal_margin: float = Field(default=0.10, ge=0.0, le=0.50)
     thesis_reversal_enabled: bool = False

@@ -171,6 +171,9 @@ class ForecastingScanner:
                 proxy_minimum_constituents=config.data.min_supporting_venues,
                 proxy_maximum_dispersion=config.data.max_supporting_dispersion,
                 stop_loss_fraction=config.risk.stop_loss_fraction,
+                stop_loss_require_thesis_failure=config.risk.stop_loss_require_thesis_failure,
+                stop_loss_min_hold_probability=config.risk.stop_loss_min_hold_probability,
+                stop_loss_min_agreement=config.risk.stop_loss_min_agreement,
                 opposite_edge_shift=config.risk.opposite_edge_shift,
                 thesis_reversal_margin=config.risk.thesis_reversal_margin,
                 thesis_reversal_enabled=(

@@ -127,6 +127,32 @@ def thesis_reversal_triggered(
     return False
 
 
+def thesis_has_failed(
+    position: MarketPosition,
+    forecast: ProbabilityEstimate,
+    *,
+    thesis_reversal_margin: float = 0.10,
+    min_hold_probability: float = 0.48,
+    min_agreement: float = 0.50,
+    opposite_edge_shift: float = 0.15,
+) -> bool:
+    """True when model evidence no longer supports holding the position."""
+    held_prob = forecast.p_up if position.side is ContractSide.YES else forecast.p_down
+    if held_prob + 1e-12 < min_hold_probability:
+        return True
+    if forecast.signal_agreement + 1e-12 < min_agreement:
+        return True
+    if thesis_reversal_triggered(position, forecast, margin=thesis_reversal_margin):
+        return True
+    if position.side is ContractSide.YES:
+        if forecast.p_down > held_prob + opposite_edge_shift:
+            return True
+    elif position.side is ContractSide.NO:
+        if forecast.p_up > held_prob + opposite_edge_shift:
+            return True
+    return False
+
+
 def evaluate_position_exit(
     *,
     market: MarketSnapshot,
@@ -137,6 +163,9 @@ def evaluate_position_exit(
     predicted_side: ContractSide,
     quantity: float,
     stop_loss_fraction: float,
+    stop_loss_require_thesis_failure: bool = False,
+    stop_loss_min_hold_probability: float = 0.48,
+    stop_loss_min_agreement: float = 0.50,
     opposite_edge_shift: float = 0.15,
     thesis_reversal_margin: float = 0.10,
     thesis_reversal_enabled: bool = False,
@@ -187,14 +216,25 @@ def evaluate_position_exit(
 
     if stop_loss_fraction > 0 and exit_bid is not None:
         loss = premium_loss_fraction(entry, exit_bid)
-        if loss + 1e-12 >= stop_loss_fraction:
-            if not within_min_hold:
+        if loss + 1e-12 >= stop_loss_fraction and not within_min_hold:
+            thesis_failed = thesis_has_failed(
+                position,
+                forecast,
+                thesis_reversal_margin=thesis_reversal_margin,
+                min_hold_probability=stop_loss_min_hold_probability,
+                min_agreement=stop_loss_min_agreement,
+                opposite_edge_shift=opposite_edge_shift,
+            )
+            if not stop_loss_require_thesis_failure or thesis_failed:
+                detail = (
+                    f"stop loss: {loss:.0%} of entry premium lost "
+                    f"(limit {stop_loss_fraction:.0%}; entry {entry:.2f} bid {exit_bid:.2f})"
+                )
+                if stop_loss_require_thesis_failure and thesis_failed:
+                    detail += "; thesis failed"
                 return PositionExitSignal(
                     should_exit=True,
-                    reason=(
-                        f"stop loss: {loss:.0%} premium loss "
-                        f"(limit {stop_loss_fraction:.0%}; entry {entry:.2f} bid {exit_bid:.2f})"
-                    ),
+                    reason=detail,
                     trigger="stop_loss",
                     premium_loss_fraction=loss,
                     exit_bid=exit_bid,

@@ -149,6 +149,9 @@ class DecisionConfig:
     proxy_maximum_dispersion: float = 0.003
     proxy_entry_cutoff_seconds: float = 120.0
     stop_loss_fraction: float = 0.45
+    stop_loss_require_thesis_failure: bool = False
+    stop_loss_min_hold_probability: float = 0.48
+    stop_loss_min_agreement: float = 0.50
     opposite_edge_shift: float = 0.15
     thesis_reversal_margin: float = 0.10
     thesis_reversal_enabled: bool = False
@@ -226,6 +229,9 @@ def decision_config_from_app(
         proxy_minimum_constituents=config.data.min_supporting_venues,
         proxy_maximum_dispersion=config.data.max_supporting_dispersion,
         stop_loss_fraction=config.risk.stop_loss_fraction,
+        stop_loss_require_thesis_failure=config.risk.stop_loss_require_thesis_failure,
+        stop_loss_min_hold_probability=config.risk.stop_loss_min_hold_probability,
+        stop_loss_min_agreement=config.risk.stop_loss_min_agreement,
         opposite_edge_shift=config.risk.opposite_edge_shift,
         thesis_reversal_margin=config.risk.thesis_reversal_margin,
         thesis_reversal_enabled=False if ls.enabled else config.risk.thesis_reversal_enabled,
@@ -576,6 +582,9 @@ class DecisionEngine:
                 predicted_side=predicted_side,
                 quantity=trade_quantity,
                 stop_loss_fraction=0.0 if cfg.longshot.enabled else cfg.stop_loss_fraction,
+                stop_loss_require_thesis_failure=cfg.stop_loss_require_thesis_failure,
+                stop_loss_min_hold_probability=cfg.stop_loss_min_hold_probability,
+                stop_loss_min_agreement=cfg.stop_loss_min_agreement,
                 opposite_edge_shift=cfg.opposite_edge_shift,
                 thesis_reversal_margin=cfg.thesis_reversal_margin,
                 thesis_reversal_enabled=cfg.thesis_reversal_enabled,
