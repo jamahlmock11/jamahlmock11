@@ -54,10 +54,17 @@ class MeanReversionConfig(BaseModel):
 
 
 class LagReversalConfig(BaseModel):
-    """Momentum-exhaustion + Kalshi lag reversal entries (score gates entry; edge required)."""
+    """Momentum-exhaustion + Kalshi lag reversal score (optional entries)."""
 
     enabled: bool = False
-    suppress_forecast_entries: bool = True
+    entry_enabled: bool = Field(
+        default=False,
+        description="When false, reversal score is computed for display only; no orders.",
+    )
+    suppress_forecast_entries: bool = Field(
+        default=False,
+        description="Block forecast ensemble BUY entries while lag_reversal entry_enabled is true.",
+    )
     min_entry_score: float = Field(default=70.0, ge=0.0, le=100.0)
     watch_score: float = Field(default=50.0, ge=0.0, le=100.0)
     strong_score: float = Field(default=85.0, ge=0.0, le=100.0)
@@ -317,6 +324,36 @@ class StrategyConfig(BaseModel):
     window_regime_enabled: bool = Field(
         default=True,
         description="Down-weight momentum in choppy realized-vol windows.",
+    )
+    setup_score_enabled: bool = Field(
+        default=True,
+        description="Blend weighted path/momentum/flow setup score into forecast quality.",
+    )
+    setup_score_weight: float = Field(
+        default=0.30,
+        ge=0.0,
+        le=1.0,
+        description="Share of trade-quality score from setup components (0–100 scaled).",
+    )
+    entry_sweet_spot_min_seconds: float = Field(
+        default=180.0,
+        ge=0.0,
+        description="Preferred entry window start (~3 minutes remaining).",
+    )
+    entry_sweet_spot_max_seconds: float = Field(
+        default=600.0,
+        ge=0.0,
+        description="Preferred entry window end (~10 minutes remaining).",
+    )
+    min_setup_score: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=100.0,
+        description="Optional minimum setup score when require_setup_score is true.",
+    )
+    require_setup_score: bool = Field(
+        default=False,
+        description="Block forecast BUY entries below min_setup_score.",
     )
 
 

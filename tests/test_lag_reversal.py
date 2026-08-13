@@ -168,10 +168,29 @@ def test_score_below_threshold_does_not_trade():
     assert result.signal is None
 
 
+def test_signal_only_mode_never_returns_trade_signal():
+    tracker = ReversalContextTracker()
+    tracker.record("KXBTC15M-TEST", 0.84)
+    cfg = LagReversalConfig(enabled=True, entry_enabled=False, min_entry_score=65.0)
+    result = evaluate_lag_reversal(
+        _market(yes_ask=0.74),
+        features=_features(),
+        enriched=_enriched(),
+        forecast=_forecast(0.57),
+        regime=Regime.REVERSAL_UP,
+        cfg=cfg,
+        seconds_remaining=480.0,
+        tracker=tracker,
+    )
+    assert result.signal is None
+    assert result.assessment is not None
+    assert "signal only" in result.rationale
+
+
 def test_lag_reversal_enters_when_score_and_edge_pass():
     tracker = ReversalContextTracker()
     tracker.record("KXBTC15M-TEST", 0.84)
-    cfg = LagReversalConfig(enabled=True, min_entry_score=65.0, min_edge=0.10)
+    cfg = LagReversalConfig(enabled=True, entry_enabled=True, min_entry_score=65.0, min_edge=0.10)
     result = evaluate_lag_reversal(
         _market(yes_ask=0.74),
         features=_features(),

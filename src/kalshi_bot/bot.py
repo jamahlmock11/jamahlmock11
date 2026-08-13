@@ -36,6 +36,7 @@ from kalshi_bot.strategies.forecasting import ForecastCycle, ForecastingScanner
 from kalshi_bot.strategies.decision import format_edge_gap
 from kalshi_bot.strategies.lag_reversal import ReversalContextTracker, evaluate_lag_reversal
 from kalshi_bot.strategies.reversal_score import ReversalScoreAssessment
+from kalshi_bot.strategies.forecast_setup import ForecastSetupAssessment
 from kalshi_bot.agents.pipeline import RomaPipeline, format_roma_report
 from kalshi_bot.venues.kalshi import KalshiClient
 
@@ -265,8 +266,7 @@ class TradingBot:
         alt_reports: list[ExecutionReport] = []
         lag_eval = None
         if (
-            self.config.execution.orders_enabled
-            and cycle.market is not None
+            cycle.market is not None
             and cycle.features is not None
             and cycle.enriched is not None
             and cycle.forecast is not None
@@ -285,9 +285,15 @@ class TradingBot:
                 cfg=self.config.lag_reversal,
                 seconds_remaining=seconds_remaining,
                 tracker=self.reversal_tracker,
+                sweet_spot_min_seconds=self.config.strategy.entry_sweet_spot_min_seconds,
+                sweet_spot_max_seconds=self.config.strategy.entry_sweet_spot_max_seconds,
             )
             cycle = replace(cycle, reversal_assessment=lag_eval.assessment)
-            if lag_eval.signal is not None:
+            if (
+                lag_eval.signal is not None
+                and self.config.lag_reversal.entry_enabled
+                and self.config.execution.orders_enabled
+            ):
                 lag_report = self.engine.execute_alt_signal(lag_eval.signal)
                 if lag_report:
                     alt_reports.append(lag_report)
@@ -326,6 +332,7 @@ class TradingBot:
         )
         skip_forecast_entry = (
             self.config.lag_reversal.enabled
+            and self.config.lag_reversal.entry_enabled
             and self.config.lag_reversal.suppress_forecast_entries
             and forecast_entry
         )
@@ -373,7 +380,7 @@ class TradingBot:
             "horizon": "15m",
             "strategy": (
                 "lag_reversal"
-                if self.config.lag_reversal.enabled
+                if self.config.lag_reversal.enabled and self.config.lag_reversal.entry_enabled
                 else ("longshot" if self.config.longshot.enabled else "forecast")
             ),
         }
@@ -597,10 +604,34 @@ class TradingBot:
                 table.add_row("Trading regime", intel.trading_regime.label)
                 if intel.kill_switch.halted:
                     table.add_row("Kill switch", f"ACTIVE: {intel.kill_switch.reason}")
+        if cycle.setup_assessment is not None:
+            sa = cycle.setup_assessment
+            if isinstance(sa, ForecastSetupAssessment):
+                sweet = "sweet-spot" if sa.in_sweet_spot else "off-spot"
+                table.add_row(
+                    "Setup score",
+                    f"{sa.score:.0f}/100 · {sa.initial_direction} · {sweet}",
+                )
+                comp = sa.components
+                table.add_row(
+                    "Setup inputs",
+                    (
+                        f"mom {comp.momentum_exhaustion:.0%} · struct {comp.structure_break:.0%} · "
+                        f"vol {comp.volume_confirmation:.0%} · flow {comp.order_flow_reversal:.0%} · "
+                        f"volσ {comp.volatility_shift:.0%} · z {comp.distance_from_strike:.0%} · "
+                        f"time {comp.time_remaining:.0%}"
+                    ),
+                )
         if cycle.reversal_assessment is not None:
             ra = cycle.reversal_assessment
             if isinstance(ra, ReversalScoreAssessment):
-                table.add_row("Reversal score", f"{ra.score:.0f}/100 · {ra.tier.value}")
+                label = (
+                    "Reversal signal"
+                    if self.config.lag_reversal.enabled
+                    and not self.config.lag_reversal.entry_enabled
+                    else "Reversal score"
+                )
+                table.add_row(label, f"{ra.score:.0f}/100 · {ra.tier.value}")
                 table.add_row(
                     "Reversal setup",
                     f"{ra.initial_direction} stall → {ra.reversal_side.value} · "

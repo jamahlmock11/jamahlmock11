@@ -53,6 +53,7 @@ from kalshi_bot.strategies.entry_filters import (
     apply_signal_persistence_gate,
     classify_window_regime,
 )
+from kalshi_bot.strategies.forecast_setup import ForecastSetupAssessment, compute_forecast_setup_score
 from kalshi_bot.strategies.reversal_score import ReversalScoreAssessment
 from kalshi_bot.execution.position_reversal import reversal_config_from_risk
 from kalshi_bot.venues.kalshi import KalshiClient
@@ -80,6 +81,7 @@ class ForecastCycle:
     model_agreement: ModelAgreementAssessment | None = None
     pattern_match: PatternMatchResult | None = None
     trade_quality: TradeQualityAssessment | None = None
+    setup_assessment: ForecastSetupAssessment | None = None
     reversal_assessment: ReversalScoreAssessment | None = None
 
 
@@ -420,6 +422,21 @@ class ForecastingScanner:
             ticker=market.ticker,
             tracker=self.entry_tracker,
         )
+        setup_assessment = None
+        if (
+            self.config.strategy.setup_score_enabled
+            and features is not None
+            and enriched is not None
+            and regime is not None
+        ):
+            setup_assessment = compute_forecast_setup_score(
+                features,
+                enriched,
+                regime,
+                seconds_remaining=features.seconds_remaining,
+                sweet_spot_min_seconds=self.config.strategy.entry_sweet_spot_min_seconds,
+                sweet_spot_max_seconds=self.config.strategy.entry_sweet_spot_max_seconds,
+            )
         trade_quality = assess_trade_quality(
             forecast=trade_forecast,
             features=features,
@@ -431,7 +448,31 @@ class ForecastingScanner:
             regime=regime,
             min_quality_score=self.config.strategy.min_trade_quality_score,
             max_dnt_score=self.config.strategy.max_do_not_trade_score,
+            setup_assessment=setup_assessment,
+            setup_score_weight=self.config.strategy.setup_score_weight,
         )
+        if (
+            self.config.strategy.require_setup_score
+            and setup_assessment is not None
+            and decision.action in {DecisionAction.BUY_UP, DecisionAction.BUY_DOWN}
+            and setup_assessment.score + 1e-9 < self.config.strategy.min_setup_score
+        ):
+            decision = replace(
+                decision,
+                action=DecisionAction.NO_TRADE,
+                reason=(
+                    f"setup score {setup_assessment.score:.0f} below minimum "
+                    f"{self.config.strategy.min_setup_score:.0f}"
+                ),
+                gate_failures=decision.gate_failures + (
+                    GateFailure(
+                        gate="setup_score",
+                        reason="weighted path/momentum/flow setup below minimum",
+                        observed=setup_assessment.score,
+                        required=self.config.strategy.min_setup_score,
+                    ),
+                ),
+            )
         if (
             self.config.strategy.require_trade_quality
             and decision.action in {DecisionAction.BUY_UP, DecisionAction.BUY_DOWN}
@@ -529,4 +570,5 @@ class ForecastingScanner:
             model_agreement=model_agreement,
             pattern_match=pattern_match,
             trade_quality=trade_quality,
+            setup_assessment=setup_assessment,
         )

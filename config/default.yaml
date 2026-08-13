@@ -18,7 +18,8 @@ cross_venue:
 
 lag_reversal:
   enabled: true
-  suppress_forecast_entries: true
+  entry_enabled: false
+  suppress_forecast_entries: false
   min_entry_score: 70
   watch_score: 50
   strong_score: 85
@@ -70,7 +71,7 @@ intelligence:
 execution:
   dry_run: false
   orders_enabled: true
-  max_position_usd: 50
+  max_position_usd: 1.50
   max_contracts_per_trade: 25
   min_trade_notional_usd: 0
   poll_interval_sec: 10.0
@@ -121,6 +122,12 @@ strategy:
   target_edge: 0.10
   min_confidence: 0.0
   min_signal_agreement: 0.55
+  setup_score_enabled: true
+  setup_score_weight: 0.30
+  entry_sweet_spot_min_seconds: 180
+  entry_sweet_spot_max_seconds: 600
+  min_setup_score: 0
+  require_setup_score: false
   min_data_completeness: 0.65
   max_spread: 0.07
   min_seconds_remaining: 60
@@ -148,8 +155,8 @@ poll:
 
 risk:
   max_daily_loss: 100
-  max_contract_exposure: 25
-  max_position_size: 50
+  max_contract_exposure: 1.50
+  max_position_size: 1.50
   max_consecutive_losses: 4
   max_trades_per_contract: 1
   max_flips_per_contract: 0

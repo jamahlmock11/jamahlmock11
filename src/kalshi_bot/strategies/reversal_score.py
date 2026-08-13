@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass
 from enum import Enum
 
@@ -75,24 +74,39 @@ def _tier_for_score(score: float) -> ReversalTier:
     return ReversalTier.NONE
 
 
-def compute_reversal_score(
+def _time_remaining_score(
+    seconds_remaining: float,
+    *,
+    sweet_spot_min_seconds: float = 180.0,
+    sweet_spot_max_seconds: float = 600.0,
+) -> float:
+    """Sweet spot ~3–10 minutes by default."""
+    min_minutes = sweet_spot_min_seconds / 60.0
+    max_minutes = sweet_spot_max_seconds / 60.0
+    minutes = seconds_remaining / 60.0
+    if min_minutes <= minutes <= max_minutes:
+        return 1.0
+    if minutes < min_minutes:
+        return _clip(minutes / max(min_minutes, 1e-6)) * 0.6
+    tail = max(max_minutes, 1e-6)
+    return _clip(1.0 - (minutes - max_minutes) / max(tail * 0.5, 1.0), 0.3, 1.0)
+
+
+def _compute_setup_component_values(
     features: FeatureSnapshot,
     enriched: EnrichedFeatures,
-    forecast: ProbabilityEstimate,
-    *,
-    market_yes_poll: float | None,
     regime: Regime,
+    *,
     seconds_remaining: float,
-    prior_p_up: float | None = None,
+    sweet_spot_min_seconds: float = 180.0,
+    sweet_spot_max_seconds: float = 600.0,
     min_initial_move_z: float = 0.50,
-) -> ReversalScoreAssessment:
-    """Build a 0–100 reversal score. Does not authorize trades by itself."""
+) -> ReversalScoreComponents:
+    """Shared momentum/structure/flow/time components for forecast and reversal scoring."""
     pa = enriched.price_action
     micro = enriched.microstructure
     initial = _initial_direction(features)
-    reversal = _reversal_side(initial)
 
-    # --- Momentum exhaustion (0–1) ---
     fade = features.late_momentum_fade
     hammer_drift = max(features.late_momentum_hammer, features.late_momentum_drift)
     had_strong_move = (
@@ -117,7 +131,6 @@ def compute_reversal_score(
         + (0.15 if had_strong_move and fade > 0.15 else 0.0)
     )
 
-    # --- Structure break (0–1) ---
     structure_break = 0.0
     if pa.fake_breakout:
         structure_break += 0.45
@@ -129,14 +142,13 @@ def compute_reversal_score(
         else features.strike
     )
     if initial == "UP" and features.current_price + 1e-9 < strike:
-        structure_break += 0.35  # failed hold above strike
+        structure_break += 0.35
     if initial == "DOWN" and features.current_price > strike + 1e-9:
         structure_break += 0.35
     if pa.breakout_detected and pa.fake_breakout:
         structure_break += 0.15
     structure_break = _clip(structure_break)
 
-    # --- Volume / activity (0–1) ---
     vol_velocity = _clip(micro.trade_velocity / 2.0)
     volume_deterioration = _clip(micro.cancellation_rate * 1.2)
     vol_price_weak = _clip(pa.volatility_expansion * 0.5) if momentum_declining else 0.0
@@ -144,7 +156,6 @@ def compute_reversal_score(
         vol_velocity * 0.45 + volume_deterioration * 0.35 + vol_price_weak * 0.20
     )
 
-    # --- Order-flow reversal (0–1) ---
     imbalance = micro.bid_ask_imbalance
     flow_opposes = (
         imbalance < -0.08 if initial == "UP" else imbalance > 0.08 if initial == "DOWN" else False
@@ -163,32 +174,65 @@ def compute_reversal_score(
         + abs(imbalance) * 0.15
     )
 
-    # --- Cross-exchange confirmation (0–1) ---
     agreement = features.cross_venue_agreement
     dispersion_penalty = _clip(features.cross_venue_dispersion / 0.003)
     feeds_confirm = agreement >= 0.55 and dispersion_penalty < 0.7
     cross_exchange_confirmation = _clip(agreement * 0.7 + (0.3 if feeds_confirm else 0.0))
 
-    # --- Volatility shift (0–1) ---
     volatility_shift = _clip(
         pa.volatility_expansion / 2.0
         + min(features.realized_vol / 0.5, 1.0) * 0.25
         + (0.2 if regime in {Regime.HIGH_VOLATILITY, Regime.CHAOTIC_UNSTABLE} else 0.0)
     )
 
-    # --- Distance from strike (0–1) ---
     distance_from_strike = _clip(abs(features.z_distance_to_strike) / 1.25)
 
-    # --- Time remaining (0–1) — sweet spot ~3–10 minutes ---
-    minutes = seconds_remaining / 60.0
-    if 3.0 <= minutes <= 10.0:
-        time_remaining = 1.0
-    elif minutes < 3.0:
-        time_remaining = _clip(minutes / 3.0) * 0.6
-    else:
-        time_remaining = _clip(1.0 - (minutes - 10.0) / 5.0, 0.3, 1.0)
+    time_remaining = _time_remaining_score(
+        seconds_remaining,
+        sweet_spot_min_seconds=sweet_spot_min_seconds,
+        sweet_spot_max_seconds=sweet_spot_max_seconds,
+    )
 
-    # --- Kalshi repricing lag (0–1) ---
+    return ReversalScoreComponents(
+        momentum_exhaustion=momentum_exhaustion,
+        structure_break=structure_break,
+        volume_confirmation=volume_confirmation,
+        order_flow_reversal=order_flow_reversal,
+        cross_exchange_confirmation=cross_exchange_confirmation,
+        volatility_shift=volatility_shift,
+        distance_from_strike=distance_from_strike,
+        time_remaining=time_remaining,
+        kalshi_repricing_lag=0.0,
+        model_probability_change=0.0,
+    )
+
+
+def compute_reversal_score(
+    features: FeatureSnapshot,
+    enriched: EnrichedFeatures,
+    forecast: ProbabilityEstimate,
+    *,
+    market_yes_poll: float | None,
+    regime: Regime,
+    seconds_remaining: float,
+    prior_p_up: float | None = None,
+    min_initial_move_z: float = 0.50,
+    sweet_spot_min_seconds: float = 180.0,
+    sweet_spot_max_seconds: float = 600.0,
+) -> ReversalScoreAssessment:
+    """Build a 0–100 reversal score. Does not authorize trades by itself."""
+    initial = _initial_direction(features)
+    reversal = _reversal_side(initial)
+    base = _compute_setup_component_values(
+        features,
+        enriched,
+        regime,
+        seconds_remaining=seconds_remaining,
+        sweet_spot_min_seconds=sweet_spot_min_seconds,
+        sweet_spot_max_seconds=sweet_spot_max_seconds,
+        min_initial_move_z=min_initial_move_z,
+    )
+
     model_p_up = forecast.p_up
     model_p_down = forecast.p_down
     if market_yes_poll is None:
@@ -196,27 +240,40 @@ def compute_reversal_score(
         lag_on_side = 0.0
     else:
         if reversal is ContractSide.NO:
-            kalshi_no_poll = 1.0 - market_yes_poll
-            lag_on_side = model_p_down - kalshi_no_poll
+            lag_on_side = model_p_down - (1.0 - market_yes_poll)
         else:
             lag_on_side = model_p_up - market_yes_poll
         kalshi_repricing_lag = _clip(abs(lag_on_side) / 0.20)
 
-    # --- Model probability change (0–1) ---
     if prior_p_up is not None:
-        if reversal is ContractSide.NO:
-            probability_change = prior_p_up - model_p_up
-        else:
-            probability_change = model_p_up - prior_p_up
+        probability_change = (
+            (prior_p_up - model_p_up)
+            if reversal is ContractSide.NO
+            else (model_p_up - prior_p_up)
+        )
     else:
-        # Infer shift vs crowd when no prior snapshot exists.
         if market_yes_poll is not None:
             probability_change = (
-                (market_yes_poll - model_p_up) if initial == "UP" else (model_p_up - market_yes_poll)
+                (market_yes_poll - model_p_up)
+                if initial == "UP"
+                else (model_p_up - market_yes_poll)
             )
         else:
             probability_change = 0.0
     model_probability_change = _clip(abs(probability_change) / 0.25)
+
+    components = ReversalScoreComponents(
+        momentum_exhaustion=base.momentum_exhaustion,
+        structure_break=base.structure_break,
+        volume_confirmation=base.volume_confirmation,
+        order_flow_reversal=base.order_flow_reversal,
+        cross_exchange_confirmation=base.cross_exchange_confirmation,
+        volatility_shift=base.volatility_shift,
+        distance_from_strike=base.distance_from_strike,
+        time_remaining=base.time_remaining,
+        kalshi_repricing_lag=kalshi_repricing_lag,
+        model_probability_change=model_probability_change,
+    )
 
     weights = {
         "momentum_exhaustion": 18.0,
@@ -230,30 +287,7 @@ def compute_reversal_score(
         "kalshi_repricing_lag": 13.0,
         "model_probability_change": 11.0,
     }
-    components = ReversalScoreComponents(
-        momentum_exhaustion=momentum_exhaustion,
-        structure_break=structure_break,
-        volume_confirmation=volume_confirmation,
-        order_flow_reversal=order_flow_reversal,
-        cross_exchange_confirmation=cross_exchange_confirmation,
-        volatility_shift=volatility_shift,
-        distance_from_strike=distance_from_strike,
-        time_remaining=time_remaining,
-        kalshi_repricing_lag=kalshi_repricing_lag,
-        model_probability_change=model_probability_change,
-    )
-    raw = (
-        components.momentum_exhaustion * weights["momentum_exhaustion"]
-        + components.structure_break * weights["structure_break"]
-        + components.volume_confirmation * weights["volume_confirmation"]
-        + components.order_flow_reversal * weights["order_flow_reversal"]
-        + components.cross_exchange_confirmation * weights["cross_exchange_confirmation"]
-        + components.volatility_shift * weights["volatility_shift"]
-        + components.distance_from_strike * weights["distance_from_strike"]
-        + components.time_remaining * weights["time_remaining"]
-        + components.kalshi_repricing_lag * weights["kalshi_repricing_lag"]
-        + components.model_probability_change * weights["model_probability_change"]
-    )
+    raw = sum(getattr(components, key) * weight for key, weight in weights.items())
     score = round(_clip(raw, 0.0, 100.0), 1)
     tier = _tier_for_score(score)
     summary = (
