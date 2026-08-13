@@ -71,7 +71,7 @@ intelligence:
 execution:
   dry_run: false
   orders_enabled: true
-  max_position_usd: 50
+  max_position_usd: 1.50
   max_contracts_per_trade: 25
   min_trade_notional_usd: 0
   poll_interval_sec: 10.0
@@ -155,8 +155,8 @@ poll:
 
 risk:
   max_daily_loss: 100
-  max_contract_exposure: 25
-  max_position_size: 50
+  max_contract_exposure: 1.50
+  max_position_size: 1.50
   max_consecutive_losses: 4
   max_trades_per_contract: 1
   max_flips_per_contract: 0

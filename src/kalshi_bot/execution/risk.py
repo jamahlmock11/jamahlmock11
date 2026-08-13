@@ -223,7 +223,13 @@ class RiskManager:
         size_mult = max(0.0, min(1.0, size_multiplier))
         available_usd = max(
             0.0,
-            min(portfolio_room, per_ticker_room, daily_room, kelly_budget * size_mult),
+            min(
+                portfolio_room,
+                per_ticker_room,
+                daily_room,
+                kelly_budget * size_mult,
+                self.config.execution.max_position_usd,
+            ),
         )
         contracts = int(available_usd / executable_cost)
         min_notional = self.config.execution.min_trade_notional_usd
@@ -262,6 +268,7 @@ class RiskManager:
                 self.config.risk.max_position_size - self.state.open_exposure_usd,
                 self.max_per_ticker_usd,
                 kelly_budget,
+                self.config.execution.max_position_usd,
             ),
         )
         affordable = int(available_usd / decision.executable_cost)

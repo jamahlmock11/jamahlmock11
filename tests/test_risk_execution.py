@@ -100,6 +100,23 @@ def buy_decision(edge: float = 0.26) -> DecisionResult:
     )
 
 
+def test_size_decision_honors_max_position_usd_per_trade():
+    cfg = AppConfig(
+        execution=ExecutionConfig(
+            max_position_usd=1.50,
+            max_contracts_per_trade=25,
+        ),
+        risk=RiskConfig(
+            max_position_size=50,
+            max_contract_exposure=50,
+            kelly_enabled=False,
+        ),
+    )
+    decision = replace(buy_decision(), executable_cost=0.30, quantity=10)
+    size = RiskManager(cfg, max_per_ticker_usd=50).size_decision(decision)
+    assert size == 5
+
+
 def test_size_decision_honors_min_trade_notional():
     cfg = AppConfig(
         execution=ExecutionConfig(
