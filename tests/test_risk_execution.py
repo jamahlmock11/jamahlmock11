@@ -128,8 +128,8 @@ def test_legacy_path_cannot_bypass_hard_edge():
         ),
         risk=RiskConfig(max_position_size=100, max_contract_exposure=100),
     )
-    assert RiskManager(cfg).size_mispricing(edge_signal(14.999)) == 0
-    assert RiskManager(cfg).size_mispricing(edge_signal(16)) > 0
+    assert RiskManager(cfg).size_mispricing(edge_signal(9.999)) == 0
+    assert RiskManager(cfg).size_mispricing(edge_signal(11)) > 0
 
 
 def test_position_manager_requires_exit_before_flip_and_rejects_duplicates():

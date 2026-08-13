@@ -53,6 +53,26 @@ class MeanReversionConfig(BaseModel):
     time_in_force: str = "good_til_canceled"
 
 
+class LagReversalConfig(BaseModel):
+    """Momentum-exhaustion + Kalshi lag reversal entries (score gates entry; edge required)."""
+
+    enabled: bool = False
+    suppress_forecast_entries: bool = True
+    min_entry_score: float = Field(default=70.0, ge=0.0, le=100.0)
+    watch_score: float = Field(default=50.0, ge=0.0, le=100.0)
+    strong_score: float = Field(default=85.0, ge=0.0, le=100.0)
+    min_edge: float = Field(default=0.10, ge=0.05, le=0.50)
+    min_reversal_probability: float = Field(default=0.40, ge=0.0, le=1.0)
+    min_probability_change: float = Field(default=0.10, ge=0.0, le=1.0)
+    min_kalshi_lag: float = Field(default=0.08, ge=0.0, le=1.0)
+    min_initial_move_z: float = Field(default=0.50, ge=0.0)
+    min_seconds_remaining: float = Field(default=120.0, ge=0.0)
+    max_seconds_remaining: float = Field(default=600.0, ge=0.0)
+    require_cross_feed_confirm: bool = True
+    min_cross_venue_agreement: float = Field(default=0.50, ge=0.0, le=1.0)
+    order_quantity: float = Field(default=1.0, gt=0.0)
+
+
 class AgentsConfig(BaseModel):
     enabled: bool = True
     min_edge: float = Field(default=0.03, ge=0.0, le=1.0)
@@ -220,8 +240,8 @@ class HourStrategyConfig(BaseModel):
 
 class StrategyConfig(BaseModel):
     contract_duration_seconds: float = Field(default=900.0, gt=0.0)
-    min_edge: float = Field(default=0.15, ge=0.15)
-    target_edge: float = Field(default=0.25, ge=0.15)
+    min_edge: float = Field(default=0.15, ge=0.10)
+    target_edge: float = Field(default=0.25, ge=0.10)
     min_confidence: float = Field(default=0.60, ge=0.0, le=1.0)
     min_signal_agreement: float = Field(default=0.60, ge=0.0, le=1.0)
     min_data_completeness: float = Field(default=0.75, ge=0.0, le=1.0)
@@ -234,7 +254,7 @@ class StrategyConfig(BaseModel):
     max_entry_seconds_remaining: float = Field(default=600.0, ge=0.0)
     late_seconds: float = Field(default=120.0, ge=0.0)
     final_seconds: float = Field(default=60.0, ge=0.0)
-    final_min_edge: float = Field(default=0.25, ge=0.15)
+    final_min_edge: float = Field(default=0.25, ge=0.10)
     late_confidence_increment: float = Field(
         default=0.10,
         ge=0.0,
@@ -381,6 +401,7 @@ class AppConfig(BaseModel):
     spot_lag: SpotLagArbConfig = Field(default_factory=SpotLagArbConfig)
     orderbook_skew: OrderbookSkewConfig = Field(default_factory=OrderbookSkewConfig)
     mean_reversion: MeanReversionConfig = Field(default_factory=MeanReversionConfig)
+    lag_reversal: LagReversalConfig = Field(default_factory=LagReversalConfig)
     agents: AgentsConfig = Field(default_factory=AgentsConfig)
     intelligence: IntelligenceConfig = Field(default_factory=IntelligenceConfig)
     execution: ExecutionConfig = Field(default_factory=ExecutionConfig)

@@ -16,6 +16,23 @@ cross_venue:
   min_edge_usd: 0.01
   order_size: 5
 
+lag_reversal:
+  enabled: true
+  suppress_forecast_entries: true
+  min_entry_score: 70
+  watch_score: 50
+  strong_score: 85
+  min_edge: 0.10
+  min_reversal_probability: 0.40
+  min_probability_change: 0.10
+  min_kalshi_lag: 0.08
+  min_initial_move_z: 0.50
+  min_seconds_remaining: 120
+  max_seconds_remaining: 600
+  require_cross_feed_confirm: true
+  min_cross_venue_agreement: 0.50
+  order_quantity: 1
+
 spot_lag:
   enabled: false
   min_spot_move_usd: 50
@@ -100,28 +117,25 @@ longshot:
 
 strategy:
   contract_duration_seconds: 900
-  min_edge: 0.15
-  target_edge: 0.15
+  min_edge: 0.10
+  target_edge: 0.10
   min_confidence: 0.0
-  min_signal_agreement: 0.60
+  min_signal_agreement: 0.55
   min_data_completeness: 0.65
   max_spread: 0.07
   min_seconds_remaining: 60
   max_entry_seconds_remaining: 900
   late_seconds: 360
   final_seconds: 360
-  final_min_edge: 0.15
+  final_min_edge: 0.10
   late_confidence_increment: 0.10
   late_favorite_seconds: 420
   late_favorite_poll_threshold: 0.80
   late_favorite_min_edge: 0.04
-  min_entry_executable_cost: 0.75
-  minimum_dominant_poll: 0.80
-  require_dominant_poll_side: true
   order_quantity: 1
   min_trade_quality_score: 70
   max_do_not_trade_score: 40
-  require_trade_quality: true
+  require_trade_quality: false
   min_pattern_matches: 10
   external_data_enabled: false
   entry_signal_persistence_polls: 2
@@ -130,16 +144,7 @@ strategy:
   window_regime_enabled: true
 
 poll:
-  mode: legacy
-  favorable_min: 0.85
-  favorable_max: 0.90
-  low_poll_threshold: 0.85
-  counter_evidence_min_probability: 0.70
-  counter_evidence_min_confidence: 0.65
-  counter_evidence_min_agreement: 0.65
-  low_poll_min_probability: 0.72
-  low_poll_min_confidence: 0.68
-  low_poll_min_agreement: 0.68
+  mode: disabled
 
 risk:
   max_daily_loss: 100
@@ -157,7 +162,7 @@ risk:
   position_reversal_min_z_support: -0.30
   position_reversal_wrong_side_seconds: 120
   position_reversal_min_forecast_probability: 0.48
-  kelly_enabled: true
+  kelly_enabled: false
   kelly_fraction: 0.25
   kelly_max_fraction: 0.25
   kelly_bankroll_usd: 16.22

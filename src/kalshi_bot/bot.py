@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -34,6 +34,8 @@ from kalshi_bot.models.strike_gravity import assess_strike_gravity
 from kalshi_bot.strategies.alt_runner import AltStrategyRunner
 from kalshi_bot.strategies.forecasting import ForecastCycle, ForecastingScanner
 from kalshi_bot.strategies.decision import format_edge_gap
+from kalshi_bot.strategies.lag_reversal import ReversalContextTracker, evaluate_lag_reversal
+from kalshi_bot.strategies.reversal_score import ReversalScoreAssessment
 from kalshi_bot.agents.pipeline import RomaPipeline, format_roma_report
 from kalshi_bot.venues.kalshi import KalshiClient
 
@@ -106,7 +108,9 @@ class TradingBot:
             max_trades_per_cycle=1,
             max_per_ticker_usd=config.risk.max_contract_exposure,
             hard_min_edge=(
-                config.longshot.min_edge if config.longshot.enabled else None
+                config.longshot.min_edge
+                if config.longshot.enabled
+                else config.strategy.min_edge
             ),
         )
         self._hydrate_positions()
@@ -133,6 +137,7 @@ class TradingBot:
         if config.spot_lag.enabled:
             self.spot_hub.start()
         self.alt_runner = AltStrategyRunner(config, self.spot_hub)
+        self.reversal_tracker = ReversalContextTracker()
         self.roma = RomaPipeline(config.agents)
         self.stats = BotStats()
 
@@ -258,6 +263,35 @@ class TradingBot:
             risk_manager=self.risk,
         )
         alt_reports: list[ExecutionReport] = []
+        lag_eval = None
+        if (
+            self.config.execution.orders_enabled
+            and cycle.market is not None
+            and cycle.features is not None
+            and cycle.enriched is not None
+            and cycle.forecast is not None
+            and cycle.regime is not None
+            and self.config.lag_reversal.enabled
+        ):
+            seconds_remaining = max(
+                0.0, (cycle.market.expiration - cycle.timestamp).total_seconds()
+            )
+            lag_eval = evaluate_lag_reversal(
+                cycle.market,
+                features=cycle.features,
+                enriched=cycle.enriched,
+                forecast=cycle.forecast,
+                regime=cycle.regime,
+                cfg=self.config.lag_reversal,
+                seconds_remaining=seconds_remaining,
+                tracker=self.reversal_tracker,
+            )
+            cycle = replace(cycle, reversal_assessment=lag_eval.assessment)
+            if lag_eval.signal is not None:
+                lag_report = self.engine.execute_alt_signal(lag_eval.signal)
+                if lag_report:
+                    alt_reports.append(lag_report)
+                    console.print(f"[cyan]{lag_report.detail}[/cyan]")
         if (
             self.config.execution.orders_enabled
             and cycle.market is not None
@@ -286,10 +320,20 @@ class TradingBot:
                         f"[cyan]{alt_report.detail}[/cyan]"
                     )
         report = None
+        forecast_entry = (
+            cycle.decision is not None
+            and cycle.decision.action in {DecisionAction.BUY_UP, DecisionAction.BUY_DOWN}
+        )
+        skip_forecast_entry = (
+            self.config.lag_reversal.enabled
+            and self.config.lag_reversal.suppress_forecast_entries
+            and forecast_entry
+        )
         if (
             self.config.execution.orders_enabled
             and cycle.market is not None
             and cycle.decision is not None
+            and not skip_forecast_entry
         ):
             report = self.engine.execute_decision(
                 cycle.market,
@@ -297,7 +341,7 @@ class TradingBot:
                 timestamp=cycle.timestamp,
                 benchmark=cycle.benchmark,
             )
-        traded = bool(report and report.ok)
+        traded = bool(report and report.ok) or any(r.ok for r in alt_reports)
         payload: dict = {
             "execution": report.payload if report else None,
             "config": {
@@ -327,7 +371,11 @@ class TradingBot:
                 "consecutive_losses": self.risk.state.consecutive_losses,
             },
             "horizon": "15m",
-            "strategy": "forecast",
+            "strategy": (
+                "lag_reversal"
+                if self.config.lag_reversal.enabled
+                else ("longshot" if self.config.longshot.enabled else "forecast")
+            ),
         }
         if cycle.trade_quality is not None:
             tq = cycle.trade_quality
@@ -549,6 +597,15 @@ class TradingBot:
                 table.add_row("Trading regime", intel.trading_regime.label)
                 if intel.kill_switch.halted:
                     table.add_row("Kill switch", f"ACTIVE: {intel.kill_switch.reason}")
+        if cycle.reversal_assessment is not None:
+            ra = cycle.reversal_assessment
+            if isinstance(ra, ReversalScoreAssessment):
+                table.add_row("Reversal score", f"{ra.score:.0f}/100 · {ra.tier.value}")
+                table.add_row(
+                    "Reversal setup",
+                    f"{ra.initial_direction} stall → {ra.reversal_side.value} · "
+                    f"lag {ra.kalshi_lag_on_reversal_side:+.1%} · Δprob {ra.probability_change:+.1%}",
+                )
         if decision:
             table.add_row("Decision", decision.action.value)
             if decision.edge is not None:
