@@ -163,6 +163,7 @@ class DecisionConfig:
     longshot: LongshotConfig = field(default_factory=LongshotConfig)
     chop_zone_min_sigma: float = 0.0
     require_orderbook_depth: bool = False
+    allow_pyramiding: bool = False
 
     @property
     def effective_minimum_edge(self) -> Decimal:
@@ -236,6 +237,7 @@ def decision_config_from_app(
         longshot=config.longshot,
         chop_zone_min_sigma=strategy.chop_zone_min_sigma,
         require_orderbook_depth=strategy.require_orderbook_depth,
+        allow_pyramiding=config.risk.allow_pyramiding,
     )
 
 
@@ -602,18 +604,20 @@ class DecisionEngine:
                     quantity=position.quantity,
                     target_edge=cfg.target_edge,
                 )
-            return DecisionResult(
-                action=DecisionAction.HOLD,
-                reason="existing same-side position; pyramiding is not allowed",
-                gate_failures=tuple(failures),
-                current_direction=current_direction,
-                predicted_direction=predicted_direction,
-                trade_direction=Direction.FLAT,
-                selected_side=position.side,
-                predicted_probability=forecast.p_up if position.side is ContractSide.YES else forecast.p_down,
-                quantity=position.quantity,
-                target_edge=cfg.target_edge,
-            )
+            if not cfg.allow_pyramiding:
+                return DecisionResult(
+                    action=DecisionAction.HOLD,
+                    reason="existing same-side position; pyramiding is not allowed",
+                    gate_failures=tuple(failures),
+                    current_direction=current_direction,
+                    predicted_direction=predicted_direction,
+                    trade_direction=Direction.FLAT,
+                    selected_side=position.side,
+                    predicted_probability=forecast.p_up if position.side is ContractSide.YES else forecast.p_down,
+                    quantity=position.quantity,
+                    target_edge=cfg.target_edge,
+                )
+            # Pyramiding enabled: evaluate same-side adds below; opposite side blocked at entry gates.
 
         executions = {}
         side_probabilities = {
@@ -851,6 +855,20 @@ class DecisionEngine:
             if poll_failure is not None:
                 failures.append(poll_failure)
 
+        if (
+            position is not None
+            and position.quantity > 0
+            and selected_side != position.side
+        ):
+            failures.append(
+                _failure(
+                    "open_position",
+                    "opposite position must be exited before entry",
+                    position.side.value,
+                    selected_side.value,
+                )
+            )
+
         if failures:
             return DecisionResult(
                 action=DecisionAction.NO_TRADE,
@@ -878,9 +896,18 @@ class DecisionEngine:
             if selected_edge + float(EDGE_TOLERANCE) >= cfg.target_edge
             else "meets hard minimum edge but is below target"
         )
+        reason = (
+            f"{selected_side.value} {target_text}{_crowd_context_suffix(entry_ctx)}"
+        )
+        if (
+            position is not None
+            and position.quantity > 0
+            and selected_side == position.side
+        ):
+            reason = f"add to {selected_side.value} position · {target_text}{_crowd_context_suffix(entry_ctx)}"
         return DecisionResult(
             action=action,
-            reason=f"{selected_side.value} {target_text}{_crowd_context_suffix(entry_ctx)}",
+            reason=reason,
             gate_failures=(),
             current_direction=current_direction,
             predicted_direction=predicted_direction,

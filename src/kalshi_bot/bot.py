@@ -99,6 +99,7 @@ class TradingBot:
             PositionManagerConfig(
                 max_flips_per_contract=config.risk.max_flips_per_contract,
                 max_trades_per_contract=config.risk.max_trades_per_contract,
+                allow_pyramiding=config.risk.allow_pyramiding,
             ),
             mode="paper" if config.execution.dry_run else "live",
         )

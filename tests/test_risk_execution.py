@@ -196,6 +196,36 @@ def test_position_manager_requires_exit_before_flip_and_rejects_duplicates():
     assert manager.position("T").side is ContractSide.NO
 
 
+def test_pyramiding_adds_to_same_side_position():
+    manager = PositionManager(
+        PositionManagerConfig(
+            allow_pyramiding=True,
+            max_trades_per_contract=3,
+        )
+    )
+    manager.enter(
+        intent_id="one",
+        contract="T",
+        side=ContractSide.YES,
+        quantity=1,
+        price=0.30,
+        timestamp=NOW,
+    )
+    manager.enter(
+        intent_id="two",
+        contract="T",
+        side=ContractSide.YES,
+        quantity=1,
+        price=0.40,
+        timestamp=NOW + timedelta(seconds=1),
+    )
+    position = manager.position("T")
+    assert position is not None
+    assert position.quantity == 2
+    assert position.entry_price == pytest.approx(0.35)
+    assert manager._trade_counts["T"] == 2
+
+
 def test_release_clears_entry_cooldown_for_reentry():
     cfg = AppConfig(
         risk=RiskConfig(

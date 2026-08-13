@@ -161,6 +161,7 @@ risk:
   max_trades_per_contract: 3
   max_flips_per_contract: 2
   cooldown_seconds: 0
+  allow_pyramiding: true
   min_hold_seconds: 120
   position_reversal_enabled: true
   position_reversal_window_seconds: 420
