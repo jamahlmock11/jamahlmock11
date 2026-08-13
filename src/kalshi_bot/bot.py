@@ -106,7 +106,9 @@ class TradingBot:
             max_trades_per_cycle=1,
             max_per_ticker_usd=config.risk.max_contract_exposure,
             hard_min_edge=(
-                config.longshot.min_edge if config.longshot.enabled else None
+                config.longshot.min_edge
+                if config.longshot.enabled
+                else config.strategy.min_edge
             ),
         )
         self._hydrate_positions()

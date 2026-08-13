@@ -49,7 +49,7 @@ from kalshi_bot.market.poll_alignment import (
 if TYPE_CHECKING:
     from kalshi_bot.execution.risk import RiskManager
 
-ABSOLUTE_MINIMUM_EDGE = Decimal("0.15")
+ABSOLUTE_MINIMUM_EDGE = Decimal("0.10")
 EDGE_TOLERANCE = Decimal("0.000000000001")
 DEFAULT_MINIMUM_EDGE = float(ABSOLUTE_MINIMUM_EDGE)
 

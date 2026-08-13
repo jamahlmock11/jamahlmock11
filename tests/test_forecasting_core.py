@@ -178,7 +178,7 @@ def test_format_edge_gap_in_kalshi_cents():
         trade_direction=Direction.UP,
         edge=0.24,
     )
-    assert format_edge_gap(cleared) == "Met (+9¢ above 15¢ minimum)"
+    assert format_edge_gap(cleared) == "Met (+14¢ above 10¢ minimum)"
 
 
 def test_constituent_proxy_is_robust_and_never_primary():
