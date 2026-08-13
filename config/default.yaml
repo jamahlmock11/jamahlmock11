@@ -16,6 +16,23 @@ cross_venue:
   min_edge_usd: 0.01
   order_size: 5
 
+lag_reversal:
+  enabled: true
+  suppress_forecast_entries: true
+  min_entry_score: 70
+  watch_score: 50
+  strong_score: 85
+  min_edge: 0.10
+  min_reversal_probability: 0.40
+  min_probability_change: 0.10
+  min_kalshi_lag: 0.08
+  min_initial_move_z: 0.50
+  min_seconds_remaining: 120
+  max_seconds_remaining: 600
+  require_cross_feed_confirm: true
+  min_cross_venue_agreement: 0.50
+  order_quantity: 1
+
 spot_lag:
   enabled: false
   min_spot_move_usd: 50

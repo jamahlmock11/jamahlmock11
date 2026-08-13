@@ -53,6 +53,7 @@ from kalshi_bot.strategies.entry_filters import (
     apply_signal_persistence_gate,
     classify_window_regime,
 )
+from kalshi_bot.strategies.reversal_score import ReversalScoreAssessment
 from kalshi_bot.execution.position_reversal import reversal_config_from_risk
 from kalshi_bot.venues.kalshi import KalshiClient
 
@@ -79,6 +80,7 @@ class ForecastCycle:
     model_agreement: ModelAgreementAssessment | None = None
     pattern_match: PatternMatchResult | None = None
     trade_quality: TradeQualityAssessment | None = None
+    reversal_assessment: ReversalScoreAssessment | None = None
 
 
 PositionLookup = Callable[[str], MarketPosition | None]
