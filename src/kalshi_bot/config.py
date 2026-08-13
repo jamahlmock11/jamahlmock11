@@ -54,10 +54,17 @@ class MeanReversionConfig(BaseModel):
 
 
 class LagReversalConfig(BaseModel):
-    """Momentum-exhaustion + Kalshi lag reversal entries (score gates entry; edge required)."""
+    """Momentum-exhaustion + Kalshi lag reversal score (optional entries)."""
 
     enabled: bool = False
-    suppress_forecast_entries: bool = True
+    entry_enabled: bool = Field(
+        default=False,
+        description="When false, reversal score is computed for display only; no orders.",
+    )
+    suppress_forecast_entries: bool = Field(
+        default=False,
+        description="Block forecast ensemble BUY entries while lag_reversal entry_enabled is true.",
+    )
     min_entry_score: float = Field(default=70.0, ge=0.0, le=100.0)
     watch_score: float = Field(default=50.0, ge=0.0, le=100.0)
     strong_score: float = Field(default=85.0, ge=0.0, le=100.0)

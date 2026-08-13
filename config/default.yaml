@@ -18,7 +18,8 @@ cross_venue:
 
 lag_reversal:
   enabled: true
-  suppress_forecast_entries: true
+  entry_enabled: false
+  suppress_forecast_entries: false
   min_entry_score: 70
   watch_score: 50
   strong_score: 85

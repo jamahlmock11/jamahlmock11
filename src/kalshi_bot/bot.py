@@ -265,8 +265,7 @@ class TradingBot:
         alt_reports: list[ExecutionReport] = []
         lag_eval = None
         if (
-            self.config.execution.orders_enabled
-            and cycle.market is not None
+            cycle.market is not None
             and cycle.features is not None
             and cycle.enriched is not None
             and cycle.forecast is not None
@@ -287,7 +286,11 @@ class TradingBot:
                 tracker=self.reversal_tracker,
             )
             cycle = replace(cycle, reversal_assessment=lag_eval.assessment)
-            if lag_eval.signal is not None:
+            if (
+                lag_eval.signal is not None
+                and self.config.lag_reversal.entry_enabled
+                and self.config.execution.orders_enabled
+            ):
                 lag_report = self.engine.execute_alt_signal(lag_eval.signal)
                 if lag_report:
                     alt_reports.append(lag_report)
@@ -326,6 +329,7 @@ class TradingBot:
         )
         skip_forecast_entry = (
             self.config.lag_reversal.enabled
+            and self.config.lag_reversal.entry_enabled
             and self.config.lag_reversal.suppress_forecast_entries
             and forecast_entry
         )
@@ -373,7 +377,7 @@ class TradingBot:
             "horizon": "15m",
             "strategy": (
                 "lag_reversal"
-                if self.config.lag_reversal.enabled
+                if self.config.lag_reversal.enabled and self.config.lag_reversal.entry_enabled
                 else ("longshot" if self.config.longshot.enabled else "forecast")
             ),
         }
@@ -600,7 +604,13 @@ class TradingBot:
         if cycle.reversal_assessment is not None:
             ra = cycle.reversal_assessment
             if isinstance(ra, ReversalScoreAssessment):
-                table.add_row("Reversal score", f"{ra.score:.0f}/100 · {ra.tier.value}")
+                label = (
+                    "Reversal signal"
+                    if self.config.lag_reversal.enabled
+                    and not self.config.lag_reversal.entry_enabled
+                    else "Reversal score"
+                )
+                table.add_row(label, f"{ra.score:.0f}/100 · {ra.tier.value}")
                 table.add_row(
                     "Reversal setup",
                     f"{ra.initial_direction} stall → {ra.reversal_side.value} · "

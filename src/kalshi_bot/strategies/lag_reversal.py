@@ -52,18 +52,19 @@ def evaluate_lag_reversal(
     if not cfg.enabled:
         return LagReversalEvaluation(None, None, "lag reversal disabled")
 
-    if seconds_remaining < cfg.min_seconds_remaining:
-        return LagReversalEvaluation(
-            None,
-            None,
-            f"time remaining {seconds_remaining:.0f}s below minimum",
-        )
-    if seconds_remaining > cfg.max_seconds_remaining:
-        return LagReversalEvaluation(
-            None,
-            None,
-            f"time remaining {seconds_remaining:.0f}s above entry window",
-        )
+    if cfg.entry_enabled:
+        if seconds_remaining < cfg.min_seconds_remaining:
+            return LagReversalEvaluation(
+                None,
+                None,
+                f"time remaining {seconds_remaining:.0f}s below minimum",
+            )
+        if seconds_remaining > cfg.max_seconds_remaining:
+            return LagReversalEvaluation(
+                None,
+                None,
+                f"time remaining {seconds_remaining:.0f}s above entry window",
+            )
 
     prior = tracker.prior_p_up(market.ticker) if tracker is not None else None
     yes_poll = market_yes_poll_from_book(market.orderbook)
@@ -79,6 +80,13 @@ def evaluate_lag_reversal(
     )
     if tracker is not None:
         tracker.record(market.ticker, forecast.p_up)
+
+    if not cfg.entry_enabled:
+        return LagReversalEvaluation(
+            None,
+            assessment,
+            f"reversal signal only · {assessment.summary}",
+        )
 
     if assessment.tier is ReversalTier.NONE:
         return LagReversalEvaluation(
