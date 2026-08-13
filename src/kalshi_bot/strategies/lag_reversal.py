@@ -48,6 +48,8 @@ def evaluate_lag_reversal(
     cfg: LagReversalConfig,
     seconds_remaining: float,
     tracker: ReversalContextTracker | None = None,
+    sweet_spot_min_seconds: float = 180.0,
+    sweet_spot_max_seconds: float = 600.0,
 ) -> LagReversalEvaluation:
     if not cfg.enabled:
         return LagReversalEvaluation(None, None, "lag reversal disabled")
@@ -77,6 +79,8 @@ def evaluate_lag_reversal(
         seconds_remaining=seconds_remaining,
         prior_p_up=prior,
         min_initial_move_z=cfg.min_initial_move_z,
+        sweet_spot_min_seconds=sweet_spot_min_seconds,
+        sweet_spot_max_seconds=sweet_spot_max_seconds,
     )
     if tracker is not None:
         tracker.record(market.ticker, forecast.p_up)

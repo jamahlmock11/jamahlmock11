@@ -8,6 +8,7 @@ from kalshi_bot.domain import FeatureSnapshot, MarketSnapshot, ProbabilityEstima
 from kalshi_bot.features.enriched import EnrichedFeatures
 from kalshi_bot.intelligence.model_agreement import ModelAgreementAssessment
 from kalshi_bot.learning.pattern_matcher import PatternMatchResult
+from kalshi_bot.strategies.forecast_setup import ForecastSetupAssessment
 
 
 @dataclass(frozen=True)
@@ -52,6 +53,8 @@ def assess_trade_quality(
     regime: Regime,
     min_quality_score: float = 65.0,
     max_dnt_score: float = 40.0,
+    setup_assessment: ForecastSetupAssessment | None = None,
+    setup_score_weight: float = 0.30,
 ) -> TradeQualityAssessment:
     """Score whether the market is worth trading at all."""
     micro = enriched.microstructure
@@ -85,6 +88,10 @@ def assess_trade_quality(
         + pattern_score
         + temporal_score
     )
+    if setup_assessment is not None and setup_score_weight > 0:
+        trade_quality += setup_assessment.score * setup_score_weight
+        if not setup_assessment.in_sweet_spot:
+            reasons.append("outside entry sweet-spot window")
 
     # Do-not-trade penalties (0–100)
     dnt = 0.0

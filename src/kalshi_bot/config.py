@@ -325,6 +325,36 @@ class StrategyConfig(BaseModel):
         default=True,
         description="Down-weight momentum in choppy realized-vol windows.",
     )
+    setup_score_enabled: bool = Field(
+        default=True,
+        description="Blend weighted path/momentum/flow setup score into forecast quality.",
+    )
+    setup_score_weight: float = Field(
+        default=0.30,
+        ge=0.0,
+        le=1.0,
+        description="Share of trade-quality score from setup components (0–100 scaled).",
+    )
+    entry_sweet_spot_min_seconds: float = Field(
+        default=180.0,
+        ge=0.0,
+        description="Preferred entry window start (~3 minutes remaining).",
+    )
+    entry_sweet_spot_max_seconds: float = Field(
+        default=600.0,
+        ge=0.0,
+        description="Preferred entry window end (~10 minutes remaining).",
+    )
+    min_setup_score: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=100.0,
+        description="Optional minimum setup score when require_setup_score is true.",
+    )
+    require_setup_score: bool = Field(
+        default=False,
+        description="Block forecast BUY entries below min_setup_score.",
+    )
 
 
 class RiskConfig(BaseModel):
