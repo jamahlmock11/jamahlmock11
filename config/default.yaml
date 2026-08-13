@@ -143,7 +143,7 @@ strategy:
   min_trade_quality_score: 70
   max_do_not_trade_score: 40
   require_trade_quality: false
-  min_pattern_matches: 10
+  min_pattern_matches: 0
   external_data_enabled: false
   entry_signal_persistence_polls: 1
   chop_zone_min_sigma: 0.0

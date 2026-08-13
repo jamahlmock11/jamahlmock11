@@ -43,7 +43,7 @@ from kalshi_bot.features.enriched import EnrichedFeatureEngine, EnrichedFeatures
 from kalshi_bot.intelligence.model_agreement import ModelAgreementAssessment, assess_model_agreement
 from kalshi_bot.intelligence.orchestrator import IntelligenceOrchestrator, IntelligenceReport
 from kalshi_bot.intelligence.trade_quality import TradeQualityAssessment, assess_trade_quality
-from kalshi_bot.learning.pattern_matcher import PatternMatcher, PatternMatchResult
+from kalshi_bot.learning.pattern_matcher import PatternMatchResult
 from kalshi_bot.market.discovery import DiscoveryConfig, MarketDiscovery
 from kalshi_bot.models.ensemble import EnsembleProbabilityModel
 from kalshi_bot.models.regime import classify_regime
@@ -208,7 +208,6 @@ class ForecastingScanner:
             confidence_threshold=ls.min_confidence if ls.enabled else config.strategy.min_confidence,
         )
         self.enriched_engine = EnrichedFeatureEngine()
-        self.pattern_matcher = PatternMatcher()
         self.external_data = ExternalDataProvider(
             enabled=config.strategy.external_data_enabled,
         )
@@ -411,7 +410,6 @@ class ForecastingScanner:
             regime,
             min_agreement=self.config.strategy.min_signal_agreement,
         )
-        pattern_match = self.pattern_matcher.match(features, enriched, regime)
 
         decision = self.decision_engine.decide(
             market,
@@ -449,7 +447,6 @@ class ForecastingScanner:
             market=market,
             enriched=enriched,
             model_agreement=model_agreement,
-            pattern_match=pattern_match,
             edge=decision.edge,
             regime=regime,
             min_quality_score=self.config.strategy.min_trade_quality_score,
@@ -554,10 +551,6 @@ class ForecastingScanner:
             reason = f"{reason}; {intel_report.skip_reason}"
         if external.uncertainty_score > 0.7:
             reason = f"{reason}; elevated external uncertainty"
-        if pattern_match and not pattern_match.similar_setup_found:
-            reason = f"{reason}; {pattern_match.recommendation}"
-        elif pattern_match and pattern_match.match_count < self.config.strategy.min_pattern_matches:
-            reason = f"{reason}; {pattern_match.recommendation}"
         return ForecastCycle(
             timestamp=observed_at,
             data_health=health,
@@ -574,7 +567,7 @@ class ForecastingScanner:
             market_rejections=dict(discovered.rejections),
             intelligence=intel_report,
             model_agreement=model_agreement,
-            pattern_match=pattern_match,
+            pattern_match=None,
             trade_quality=trade_quality,
             setup_assessment=setup_assessment,
         )

@@ -11,7 +11,6 @@ from kalshi_bot.features.price_action import compute_price_action
 from kalshi_bot.features.temporal import compute_temporal, minute_bucket
 from kalshi_bot.intelligence.model_agreement import assess_model_agreement
 from kalshi_bot.intelligence.trade_quality import assess_trade_quality
-from kalshi_bot.learning.pattern_matcher import PatternMatcher
 from kalshi_bot.learning.trade_recorder import TradeRecorder
 from kalshi_bot.market.orderbook import parse_orderbook_fp
 from kalshi_bot.models.ensemble import EnsembleProbabilityModel
@@ -129,14 +128,12 @@ def test_trade_quality_skip_mediocre():
         raw_p_up=0.55,
     )
     agreement = assess_model_agreement(forecast, features, enriched, regime)
-    pattern = PatternMatcher().match(features, enriched, regime)
     tq = assess_trade_quality(
         forecast=forecast,
         features=features,
         market=market,
         enriched=enriched,
         model_agreement=agreement,
-        pattern_match=pattern,
         edge=0.15,
         regime=regime,
     )
@@ -151,14 +148,12 @@ def test_trade_quality_execute_strong():
     enriched = engine.compute(features, market, regime, now=NOW)
     forecast = EnsembleProbabilityModel().estimate(features, regime)
     agreement = assess_model_agreement(forecast, features, enriched, regime)
-    pattern = PatternMatcher().match(features, enriched, regime)
     tq = assess_trade_quality(
         forecast=forecast,
         features=features,
         market=market,
         enriched=enriched,
         model_agreement=agreement,
-        pattern_match=pattern,
         edge=0.28,
         regime=regime,
         min_quality_score=50.0,
