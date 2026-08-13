@@ -64,7 +64,7 @@ execution:
   slippage_per_contract: 0.0
 
 longshot:
-  enabled: false
+  enabled: true
   max_entry_price: 0.45
   min_edge: 0.06
   min_confidence: 0.0
@@ -118,7 +118,7 @@ strategy:
   order_quantity: 1
   min_trade_quality_score: 70
   max_do_not_trade_score: 40
-  require_trade_quality: true
+  require_trade_quality: false
   min_pattern_matches: 10
   external_data_enabled: false
   entry_signal_persistence_polls: 2
@@ -145,7 +145,7 @@ risk:
   position_reversal_min_z_support: -0.30
   position_reversal_wrong_side_seconds: 120
   position_reversal_min_forecast_probability: 0.48
-  kelly_enabled: true
+  kelly_enabled: false
   kelly_fraction: 0.25
   kelly_max_fraction: 0.25
   kelly_bankroll_usd: 16.22

@@ -329,7 +329,7 @@ class TradingBot:
                 "consecutive_losses": self.risk.state.consecutive_losses,
             },
             "horizon": "15m",
-            "strategy": "forecast",
+            "strategy": "longshot" if self.config.longshot.enabled else "forecast",
         }
         if cycle.trade_quality is not None:
             tq = cycle.trade_quality
