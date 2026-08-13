@@ -64,7 +64,7 @@ execution:
   slippage_per_contract: 0.0
 
 longshot:
-  enabled: true
+  enabled: false
   max_entry_price: 0.45
   min_edge: 0.06
   min_confidence: 0.0
