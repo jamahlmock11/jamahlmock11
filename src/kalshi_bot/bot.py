@@ -29,7 +29,6 @@ from kalshi_bot.intelligence.orchestrator import IntelligenceOrchestrator
 from kalshi_bot.journal import TradeJournal
 from kalshi_bot.learning.signal_weights import SignalWeightTracker
 from kalshi_bot.learning.trade_recorder import TradeRecorder
-from kalshi_bot.learning.pattern_matcher import PatternMatcher
 from kalshi_bot.models.strike_gravity import assess_strike_gravity
 from kalshi_bot.strategies.alt_runner import AltStrategyRunner
 from kalshi_bot.strategies.forecasting import ForecastCycle, ForecastingScanner
@@ -70,7 +69,6 @@ class TradingBot:
             else SignalWeightTracker()
         )
         self.trade_recorder = TradeRecorder()
-        self.pattern_matcher = PatternMatcher()
         self.kill_switch = ConfidenceKillSwitch()
         self._hydrate_kill_switch()
         self.intelligence = IntelligenceOrchestrator(
@@ -99,6 +97,7 @@ class TradingBot:
             PositionManagerConfig(
                 max_flips_per_contract=config.risk.max_flips_per_contract,
                 max_trades_per_contract=config.risk.max_trades_per_contract,
+                allow_pyramiding=config.risk.allow_pyramiding,
             ),
             mode="paper" if config.execution.dry_run else "live",
         )
@@ -359,6 +358,10 @@ class TradingBot:
                 "min_data_completeness": self.config.strategy.min_data_completeness,
                 "late_confidence_increment": self.config.strategy.late_confidence_increment,
                 "min_entry_executable_cost": self.config.strategy.min_entry_executable_cost,
+                "require_forecast_alignment": self.config.strategy.require_forecast_alignment,
+                "forecast_alignment_min_probability": (
+                    self.config.strategy.forecast_alignment_min_probability
+                ),
                 "max_spread": self.config.strategy.max_spread,
                 "min_confidence": self.config.strategy.min_confidence,
                 "late_seconds": self.config.strategy.late_seconds,
@@ -466,15 +469,6 @@ class TradingBot:
                 edge=cycle.decision.edge or 0.0,
                 action=cycle.decision.action.value,
                 reason=cycle.decision.reason,
-            )
-            self.pattern_matcher.save_entry(
-                cycle.features,
-                cycle.enriched,
-                cycle.regime or Regime.UNCERTAIN,
-                prediction=cycle.forecast.p_up,
-                confidence=cycle.forecast.confidence,
-                edge=cycle.decision.edge or 0.0,
-                action=cycle.decision.action.value,
             )
         self.stats.decisions += 1
         if traded:

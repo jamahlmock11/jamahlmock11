@@ -7,7 +7,6 @@ from dataclasses import dataclass
 from kalshi_bot.domain import FeatureSnapshot, MarketSnapshot, ProbabilityEstimate, Regime, TradeTier
 from kalshi_bot.features.enriched import EnrichedFeatures
 from kalshi_bot.intelligence.model_agreement import ModelAgreementAssessment
-from kalshi_bot.learning.pattern_matcher import PatternMatchResult
 from kalshi_bot.strategies.forecast_setup import ForecastSetupAssessment
 
 
@@ -48,7 +47,6 @@ def assess_trade_quality(
     market: MarketSnapshot,
     enriched: EnrichedFeatures,
     model_agreement: ModelAgreementAssessment,
-    pattern_match: PatternMatchResult | None,
     edge: float | None,
     regime: Regime,
     min_quality_score: float = 65.0,
@@ -59,7 +57,6 @@ def assess_trade_quality(
     """Score whether the market is worth trading at all."""
     micro = enriched.microstructure
     price = enriched.price_action
-    temporal = enriched.temporal
     reasons: list[str] = []
 
     # Trade quality components (0–100)
@@ -68,16 +65,6 @@ def assess_trade_quality(
     agreement_score = model_agreement.agreement * 15.0
     liquidity_score = micro.liquidity_score * 0.15
     data_score = features.data_completeness * 10.0
-    pattern_score = 0.0
-    hist_count = 0
-    if pattern_match and pattern_match.match_count >= 10:
-        hist_count = pattern_match.match_count
-        pattern_score = min(pattern_match.win_rate, 1.0) * 10.0
-        if pattern_match.win_rate < 0.45:
-            reasons.append(f"historical pattern win rate {pattern_match.win_rate:.0%}")
-    temporal_score = 0.0
-    if temporal.historical_win_rate is not None:
-        temporal_score = temporal.historical_win_rate * 5.0
 
     trade_quality = (
         edge_score
@@ -85,8 +72,6 @@ def assess_trade_quality(
         + agreement_score
         + liquidity_score
         + data_score
-        + pattern_score
-        + temporal_score
     )
     if setup_assessment is not None and setup_score_weight > 0:
         trade_quality += setup_assessment.score * setup_score_weight
@@ -151,7 +136,7 @@ def assess_trade_quality(
         confidence_pct=round(forecast.confidence * 100, 1),
         expected_edge_pct=round((edge or 0.0) * 100, 1),
         liquidity_label=_liquidity_label(micro.liquidity_score),
-        historical_match_count=hist_count,
+        historical_match_count=0,
         recommendation="EXECUTE" if execute else "SKIP",
         trade_tier=tier,
         size_multiplier=size_mult,

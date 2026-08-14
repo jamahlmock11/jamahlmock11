@@ -38,6 +38,32 @@ def premium_loss_fraction(entry_price: float, exit_bid: float) -> float:
     return max(0.0, (entry_price - exit_bid) / entry_price)
 
 
+def profit_capture_fraction(entry_price: float, exit_bid: float) -> float:
+    """Share of max profit to a $1 payout captured at the executable exit bid."""
+    max_profit = 1.0 - entry_price
+    if max_profit <= 1e-12:
+        return 1.0 if exit_bid + 1e-12 >= entry_price else 0.0
+    return max(0.0, min(1.0, (exit_bid - entry_price) / max_profit))
+
+
+def hold_to_expiry_supported(
+    position: MarketPosition,
+    forecast: ProbabilityEstimate,
+    *,
+    min_probability: float,
+    min_confidence: float,
+    min_agreement: float,
+) -> bool:
+    """Strong model evidence to keep a profitable position through expiry."""
+    return recovery_hold_supported(
+        position,
+        forecast,
+        min_probability=min_probability,
+        min_confidence=min_confidence,
+        min_agreement=min_agreement,
+    )
+
+
 def executable_exit_price(
     book: OrderBookSnapshot,
     side: ContractSide,
@@ -101,6 +127,32 @@ def thesis_reversal_triggered(
     return False
 
 
+def thesis_has_failed(
+    position: MarketPosition,
+    forecast: ProbabilityEstimate,
+    *,
+    thesis_reversal_margin: float = 0.10,
+    min_hold_probability: float = 0.48,
+    min_agreement: float = 0.50,
+    opposite_edge_shift: float = 0.15,
+) -> bool:
+    """True when model evidence no longer supports holding the position."""
+    held_prob = forecast.p_up if position.side is ContractSide.YES else forecast.p_down
+    if held_prob + 1e-12 < min_hold_probability:
+        return True
+    if forecast.signal_agreement + 1e-12 < min_agreement:
+        return True
+    if thesis_reversal_triggered(position, forecast, margin=thesis_reversal_margin):
+        return True
+    if position.side is ContractSide.YES:
+        if forecast.p_down > held_prob + opposite_edge_shift:
+            return True
+    elif position.side is ContractSide.NO:
+        if forecast.p_up > held_prob + opposite_edge_shift:
+            return True
+    return False
+
+
 def evaluate_position_exit(
     *,
     market: MarketSnapshot,
@@ -111,6 +163,9 @@ def evaluate_position_exit(
     predicted_side: ContractSide,
     quantity: float,
     stop_loss_fraction: float,
+    stop_loss_require_thesis_failure: bool = False,
+    stop_loss_min_hold_probability: float = 0.48,
+    stop_loss_min_agreement: float = 0.50,
     opposite_edge_shift: float = 0.15,
     thesis_reversal_margin: float = 0.10,
     thesis_reversal_enabled: bool = False,
@@ -120,6 +175,11 @@ def evaluate_position_exit(
     recovery_hold_min_confidence: float = 0.58,
     recovery_hold_min_agreement: float = 0.58,
     min_hold_seconds: float = 0.0,
+    take_profit_capture_fraction: float = 0.0,
+    hold_to_expiry_enabled: bool = False,
+    hold_to_expiry_min_probability: float = 0.58,
+    hold_to_expiry_min_confidence: float = 0.58,
+    hold_to_expiry_min_agreement: float = 0.58,
     position_reversal: PositionReversalConfig | None = None,
     now: datetime | None = None,
     reliability_gates: set[str] | frozenset[str] | None = None,
@@ -156,18 +216,56 @@ def evaluate_position_exit(
 
     if stop_loss_fraction > 0 and exit_bid is not None:
         loss = premium_loss_fraction(entry, exit_bid)
-        if loss + 1e-12 >= stop_loss_fraction:
-            if not within_min_hold:
+        if loss + 1e-12 >= stop_loss_fraction and not within_min_hold:
+            thesis_failed = thesis_has_failed(
+                position,
+                forecast,
+                thesis_reversal_margin=thesis_reversal_margin,
+                min_hold_probability=stop_loss_min_hold_probability,
+                min_agreement=stop_loss_min_agreement,
+                opposite_edge_shift=opposite_edge_shift,
+            )
+            if not stop_loss_require_thesis_failure or thesis_failed:
+                detail = (
+                    f"stop loss: {loss:.0%} of entry premium lost "
+                    f"(limit {stop_loss_fraction:.0%}; entry {entry:.2f} bid {exit_bid:.2f})"
+                )
+                if stop_loss_require_thesis_failure and thesis_failed:
+                    detail += "; thesis failed"
                 return PositionExitSignal(
                     should_exit=True,
-                    reason=(
-                        f"stop loss: {loss:.0%} premium loss "
-                        f"(limit {stop_loss_fraction:.0%}; entry {entry:.2f} bid {exit_bid:.2f})"
-                    ),
+                    reason=detail,
                     trigger="stop_loss",
                     premium_loss_fraction=loss,
                     exit_bid=exit_bid,
                 )
+
+    if (
+        take_profit_capture_fraction > 0
+        and exit_bid is not None
+        and not within_min_hold
+    ):
+        capture = profit_capture_fraction(entry, exit_bid)
+        if capture + 1e-12 >= take_profit_capture_fraction:
+            if hold_to_expiry_enabled and hold_to_expiry_supported(
+                position,
+                forecast,
+                min_probability=hold_to_expiry_min_probability,
+                min_confidence=hold_to_expiry_min_confidence,
+                min_agreement=hold_to_expiry_min_agreement,
+            ):
+                return None
+            return PositionExitSignal(
+                should_exit=True,
+                reason=(
+                    f"take profit: captured {capture:.0%} of max gain to $1 "
+                    f"(threshold {take_profit_capture_fraction:.0%}; "
+                    f"entry {entry:.2f} cash-out {exit_bid:.2f})"
+                ),
+                trigger="take_profit",
+                premium_loss_fraction=premium_loss_fraction(entry, exit_bid),
+                exit_bid=exit_bid,
+            )
 
     reversal_cfg = position_reversal or PositionReversalConfig()
     if features is not None and reversal_cfg.enabled and position.side is not None:

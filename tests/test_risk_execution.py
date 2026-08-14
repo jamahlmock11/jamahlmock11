@@ -196,6 +196,99 @@ def test_position_manager_requires_exit_before_flip_and_rejects_duplicates():
     assert manager.position("T").side is ContractSide.NO
 
 
+def test_pyramiding_adds_to_same_side_position():
+    manager = PositionManager(
+        PositionManagerConfig(
+            allow_pyramiding=True,
+            max_trades_per_contract=3,
+        )
+    )
+    manager.enter(
+        intent_id="one",
+        contract="T",
+        side=ContractSide.YES,
+        quantity=1,
+        price=0.30,
+        timestamp=NOW,
+    )
+    manager.enter(
+        intent_id="two",
+        contract="T",
+        side=ContractSide.YES,
+        quantity=1,
+        price=0.40,
+        timestamp=NOW + timedelta(seconds=1),
+    )
+    position = manager.position("T")
+    assert position is not None
+    assert position.quantity == 2
+    assert position.entry_price == pytest.approx(0.35)
+    assert manager._trade_counts["T"] == 2
+
+
+def test_release_clears_entry_cooldown_for_reentry():
+    cfg = AppConfig(
+        risk=RiskConfig(
+            max_position_size=100,
+            max_contract_exposure=100,
+            max_trades_per_contract=3,
+            cooldown_seconds=60,
+        ),
+    )
+    risk = RiskManager(cfg, cooldown_sec=60, max_per_ticker_usd=100)
+    risk.begin_cycle()
+    risk.register_fill("T", 0.30)
+    risk.begin_cycle()
+    allowed, reason = risk.entry_allowed(
+        ticker="T",
+        edge=0.20,
+        notional=0.30,
+        intent_id="dup",
+    )
+    assert not allowed
+    assert "cooldown" in reason
+    risk.release("T", 0.30)
+    allowed, _ = risk.entry_allowed(
+        ticker="T",
+        edge=0.20,
+        notional=0.30,
+        intent_id="again",
+    )
+    assert allowed
+
+
+def test_max_three_entries_per_contract():
+    cfg = AppConfig(
+        risk=RiskConfig(
+            max_position_size=100,
+            max_contract_exposure=100,
+            max_trades_per_contract=3,
+            cooldown_seconds=0,
+        ),
+    )
+    risk = RiskManager(cfg, cooldown_sec=0, max_per_ticker_usd=100)
+    for i in range(3):
+        risk.begin_cycle()
+        allowed, _ = risk.entry_allowed(
+            ticker="T",
+            edge=0.20,
+            notional=0.30,
+            intent_id=f"entry-{i}",
+        )
+        assert allowed
+        risk.register_fill("T", 0.30)
+        risk.release("T", 0.30)
+    risk.begin_cycle()
+    allowed, reason = risk.entry_allowed(
+        ticker="T",
+        edge=0.20,
+        notional=0.30,
+        intent_id="entry-4",
+    )
+    assert not allowed
+    assert "contract trade limit" in reason
+
+
 def test_consecutive_losses_activate_risk_lock():
     cfg = AppConfig(risk=RiskConfig(max_consecutive_losses=2))
     risk = RiskManager(cfg)

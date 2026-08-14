@@ -355,6 +355,16 @@ class StrategyConfig(BaseModel):
         default=False,
         description="Block forecast BUY entries below min_setup_score.",
     )
+    require_forecast_alignment: bool = Field(
+        default=False,
+        description="Block entries on the side opposite the dominant model probability.",
+    )
+    forecast_alignment_min_probability: float = Field(
+        default=0.50,
+        ge=0.0,
+        le=1.0,
+        description="Minimum dominant-side probability before alignment is enforced.",
+    )
 
 
 class RiskConfig(BaseModel):
@@ -365,7 +375,17 @@ class RiskConfig(BaseModel):
     max_trades_per_contract: int = Field(default=2, gt=0)
     max_flips_per_contract: int = Field(default=1, ge=0)
     cooldown_seconds: float = Field(default=30.0, ge=0.0)
+    allow_pyramiding: bool = Field(
+        default=False,
+        description="Allow adding contracts on the same side while a position is open.",
+    )
     stop_loss_fraction: float = Field(default=0.45, ge=0.0, le=1.0)
+    stop_loss_require_thesis_failure: bool = Field(
+        default=False,
+        description="Only fire premium stop-loss when forecast evidence also failed.",
+    )
+    stop_loss_min_hold_probability: float = Field(default=0.48, ge=0.0, le=1.0)
+    stop_loss_min_agreement: float = Field(default=0.50, ge=0.0, le=1.0)
     opposite_edge_shift: float = Field(default=0.15, ge=0.0, le=1.0)
     thesis_reversal_margin: float = Field(default=0.10, ge=0.0, le=0.50)
     thesis_reversal_enabled: bool = False
@@ -374,7 +394,20 @@ class RiskConfig(BaseModel):
     recovery_hold_min_probability: float = Field(default=0.58, ge=0.0, le=1.0)
     recovery_hold_min_confidence: float = Field(default=0.58, ge=0.0, le=1.0)
     recovery_hold_min_agreement: float = Field(default=0.58, ge=0.0, le=1.0)
-    min_hold_seconds: float = Field(default=0.0, ge=0.0)
+    min_hold_seconds: float = 0.0
+    take_profit_capture_fraction: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="Exit when executable bid captures this share of max profit to $1.",
+    )
+    hold_to_expiry_enabled: bool = Field(
+        default=True,
+        description="When take-profit threshold is met, hold through expiry if model evidence is strong.",
+    )
+    hold_to_expiry_min_probability: float = Field(default=0.58, ge=0.0, le=1.0)
+    hold_to_expiry_min_confidence: float = Field(default=0.58, ge=0.0, le=1.0)
+    hold_to_expiry_min_agreement: float = Field(default=0.58, ge=0.0, le=1.0)
     position_reversal_enabled: bool = True
     position_reversal_window_seconds: float = Field(default=420.0, ge=0.0)
     position_reversal_min_hold_probability: float = Field(default=0.50, ge=0.0, le=1.0)

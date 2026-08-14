@@ -69,8 +69,8 @@ intelligence:
   enabled: false
 
 execution:
-  dry_run: false
-  orders_enabled: true
+  dry_run: true
+  orders_enabled: false
   max_position_usd: 1.50
   max_contracts_per_trade: 25
   min_trade_notional_usd: 0
@@ -118,8 +118,8 @@ longshot:
 
 strategy:
   contract_duration_seconds: 900
-  min_edge: 0.10
-  target_edge: 0.10
+  min_edge: 0.20
+  target_edge: 0.20
   min_confidence: 0.0
   min_signal_agreement: 0.55
   setup_score_enabled: true
@@ -134,18 +134,21 @@ strategy:
   max_entry_seconds_remaining: 900
   late_seconds: 360
   final_seconds: 360
-  final_min_edge: 0.10
+  final_min_edge: 0.20
   late_confidence_increment: 0.10
   late_favorite_seconds: 420
   late_favorite_poll_threshold: 0.80
   late_favorite_min_edge: 0.04
+  min_entry_executable_cost: 0.35
+  require_forecast_alignment: true
+  forecast_alignment_min_probability: 0.50
   order_quantity: 1
   min_trade_quality_score: 70
   max_do_not_trade_score: 40
   require_trade_quality: false
-  min_pattern_matches: 10
+  min_pattern_matches: 0
   external_data_enabled: false
-  entry_signal_persistence_polls: 2
+  entry_signal_persistence_polls: 1
   chop_zone_min_sigma: 0.0
   require_orderbook_depth: true
   window_regime_enabled: true
@@ -159,10 +162,11 @@ risk:
   max_position_size: 1.50
   max_consecutive_losses: 4
   max_trades_per_contract: 1
-  max_flips_per_contract: 0
-  cooldown_seconds: 300
+  max_flips_per_contract: 2
+  cooldown_seconds: 0
+  allow_pyramiding: false
   min_hold_seconds: 120
-  position_reversal_enabled: true
+  position_reversal_enabled: false
   position_reversal_window_seconds: 420
   position_reversal_min_hold_probability: 0.50
   position_reversal_late_hold_probability: 0.62
@@ -173,10 +177,19 @@ risk:
   kelly_fraction: 0.25
   kelly_max_fraction: 0.25
   kelly_bankroll_usd: 16.22
-  stop_loss_fraction: 0.55
+  stop_loss_fraction: 0.40
+  stop_loss_require_thesis_failure: true
+  stop_loss_min_hold_probability: 0.48
+  stop_loss_min_agreement: 0.50
+  take_profit_capture_fraction: 0.60
+  hold_to_expiry_enabled: true
+  hold_to_expiry_min_probability: 0.58
+  hold_to_expiry_min_confidence: 0.58
+  hold_to_expiry_min_agreement: 0.58
   opposite_edge_shift: 0.25
-  thesis_reversal_enabled: false
-  opposite_edge_exit_enabled: false
+  thesis_reversal_enabled: true
+  thesis_reversal_margin: 0.10
+  opposite_edge_exit_enabled: true
   recovery_hold_enabled: false
   recovery_hold_min_probability: 0.58
   recovery_hold_min_confidence: 0.58

@@ -149,6 +149,9 @@ class DecisionConfig:
     proxy_maximum_dispersion: float = 0.003
     proxy_entry_cutoff_seconds: float = 120.0
     stop_loss_fraction: float = 0.45
+    stop_loss_require_thesis_failure: bool = False
+    stop_loss_min_hold_probability: float = 0.48
+    stop_loss_min_agreement: float = 0.50
     opposite_edge_shift: float = 0.15
     thesis_reversal_margin: float = 0.10
     thesis_reversal_enabled: bool = False
@@ -158,11 +161,19 @@ class DecisionConfig:
     recovery_hold_min_confidence: float = 0.58
     recovery_hold_min_agreement: float = 0.58
     min_hold_seconds: float = 0.0
+    take_profit_capture_fraction: float = 0.0
+    hold_to_expiry_enabled: bool = False
+    hold_to_expiry_min_probability: float = 0.58
+    hold_to_expiry_min_confidence: float = 0.58
+    hold_to_expiry_min_agreement: float = 0.58
     position_reversal: PositionReversalConfig = field(default_factory=PositionReversalConfig)
     poll: PollConfig = field(default_factory=PollConfig)
     longshot: LongshotConfig = field(default_factory=LongshotConfig)
     chop_zone_min_sigma: float = 0.0
     require_orderbook_depth: bool = False
+    allow_pyramiding: bool = False
+    require_forecast_alignment: bool = False
+    forecast_alignment_min_probability: float = 0.50
 
     @property
     def effective_minimum_edge(self) -> Decimal:
@@ -220,6 +231,9 @@ def decision_config_from_app(
         proxy_minimum_constituents=config.data.min_supporting_venues,
         proxy_maximum_dispersion=config.data.max_supporting_dispersion,
         stop_loss_fraction=config.risk.stop_loss_fraction,
+        stop_loss_require_thesis_failure=config.risk.stop_loss_require_thesis_failure,
+        stop_loss_min_hold_probability=config.risk.stop_loss_min_hold_probability,
+        stop_loss_min_agreement=config.risk.stop_loss_min_agreement,
         opposite_edge_shift=config.risk.opposite_edge_shift,
         thesis_reversal_margin=config.risk.thesis_reversal_margin,
         thesis_reversal_enabled=False if ls.enabled else config.risk.thesis_reversal_enabled,
@@ -231,11 +245,23 @@ def decision_config_from_app(
         recovery_hold_min_confidence=config.risk.recovery_hold_min_confidence,
         recovery_hold_min_agreement=config.risk.recovery_hold_min_agreement,
         min_hold_seconds=config.risk.min_hold_seconds,
+        take_profit_capture_fraction=config.risk.take_profit_capture_fraction,
+        hold_to_expiry_enabled=config.risk.hold_to_expiry_enabled,
+        hold_to_expiry_min_probability=config.risk.hold_to_expiry_min_probability,
+        hold_to_expiry_min_confidence=config.risk.hold_to_expiry_min_confidence,
+        hold_to_expiry_min_agreement=config.risk.hold_to_expiry_min_agreement,
         position_reversal=reversal_config_from_risk(config.risk),
         poll=config.poll,
         longshot=config.longshot,
         chop_zone_min_sigma=strategy.chop_zone_min_sigma,
         require_orderbook_depth=strategy.require_orderbook_depth,
+        allow_pyramiding=config.risk.allow_pyramiding,
+        require_forecast_alignment=(
+            ls.require_forecast_alignment
+            if ls.enabled
+            else strategy.require_forecast_alignment
+        ),
+        forecast_alignment_min_probability=strategy.forecast_alignment_min_probability,
     )
 
 
@@ -564,6 +590,9 @@ class DecisionEngine:
                 predicted_side=predicted_side,
                 quantity=trade_quantity,
                 stop_loss_fraction=0.0 if cfg.longshot.enabled else cfg.stop_loss_fraction,
+                stop_loss_require_thesis_failure=cfg.stop_loss_require_thesis_failure,
+                stop_loss_min_hold_probability=cfg.stop_loss_min_hold_probability,
+                stop_loss_min_agreement=cfg.stop_loss_min_agreement,
                 opposite_edge_shift=cfg.opposite_edge_shift,
                 thesis_reversal_margin=cfg.thesis_reversal_margin,
                 thesis_reversal_enabled=cfg.thesis_reversal_enabled,
@@ -573,6 +602,11 @@ class DecisionEngine:
                 recovery_hold_min_confidence=cfg.recovery_hold_min_confidence,
                 recovery_hold_min_agreement=cfg.recovery_hold_min_agreement,
                 min_hold_seconds=cfg.min_hold_seconds,
+                take_profit_capture_fraction=cfg.take_profit_capture_fraction,
+                hold_to_expiry_enabled=cfg.hold_to_expiry_enabled,
+                hold_to_expiry_min_probability=cfg.hold_to_expiry_min_probability,
+                hold_to_expiry_min_confidence=cfg.hold_to_expiry_min_confidence,
+                hold_to_expiry_min_agreement=cfg.hold_to_expiry_min_agreement,
                 position_reversal=cfg.position_reversal,
                 now=observed_now,
             )
@@ -602,18 +636,20 @@ class DecisionEngine:
                     quantity=position.quantity,
                     target_edge=cfg.target_edge,
                 )
-            return DecisionResult(
-                action=DecisionAction.HOLD,
-                reason="existing same-side position; pyramiding is not allowed",
-                gate_failures=tuple(failures),
-                current_direction=current_direction,
-                predicted_direction=predicted_direction,
-                trade_direction=Direction.FLAT,
-                selected_side=position.side,
-                predicted_probability=forecast.p_up if position.side is ContractSide.YES else forecast.p_down,
-                quantity=position.quantity,
-                target_edge=cfg.target_edge,
-            )
+            if not cfg.allow_pyramiding:
+                return DecisionResult(
+                    action=DecisionAction.HOLD,
+                    reason="existing same-side position; pyramiding is not allowed",
+                    gate_failures=tuple(failures),
+                    current_direction=current_direction,
+                    predicted_direction=predicted_direction,
+                    trade_direction=Direction.FLAT,
+                    selected_side=position.side,
+                    predicted_probability=forecast.p_up if position.side is ContractSide.YES else forecast.p_down,
+                    quantity=position.quantity,
+                    target_edge=cfg.target_edge,
+                )
+            # Pyramiding enabled: evaluate same-side adds below; opposite side blocked at entry gates.
 
         executions = {}
         side_probabilities = {
@@ -738,6 +774,28 @@ class DecisionEngine:
                     cfg.min_entry_executable_cost,
                 )
             )
+        dominant_side = (
+            ContractSide.YES if forecast.p_up >= forecast.p_down else ContractSide.NO
+        )
+        dominant_prob = max(forecast.p_up, forecast.p_down)
+        alignment_required = (
+            cfg.longshot.require_forecast_alignment
+            if cfg.longshot.enabled
+            else cfg.require_forecast_alignment
+        )
+        if (
+            alignment_required
+            and dominant_prob + 1e-12 >= cfg.forecast_alignment_min_probability
+            and selected_side is not dominant_side
+        ):
+            failures.append(
+                _failure(
+                    "forecast_alignment",
+                    "best edge side conflicts with dominant forecast direction",
+                    selected_side.value,
+                    dominant_side.value,
+                )
+            )
         if (
             entry_ctx is None
             or entry_ctx.min_edge_override is None
@@ -851,6 +909,20 @@ class DecisionEngine:
             if poll_failure is not None:
                 failures.append(poll_failure)
 
+        if (
+            position is not None
+            and position.quantity > 0
+            and selected_side != position.side
+        ):
+            failures.append(
+                _failure(
+                    "open_position",
+                    "opposite position must be exited before entry",
+                    position.side.value,
+                    selected_side.value,
+                )
+            )
+
         if failures:
             return DecisionResult(
                 action=DecisionAction.NO_TRADE,
@@ -878,9 +950,18 @@ class DecisionEngine:
             if selected_edge + float(EDGE_TOLERANCE) >= cfg.target_edge
             else "meets hard minimum edge but is below target"
         )
+        reason = (
+            f"{selected_side.value} {target_text}{_crowd_context_suffix(entry_ctx)}"
+        )
+        if (
+            position is not None
+            and position.quantity > 0
+            and selected_side == position.side
+        ):
+            reason = f"add to {selected_side.value} position · {target_text}{_crowd_context_suffix(entry_ctx)}"
         return DecisionResult(
             action=action,
-            reason=f"{selected_side.value} {target_text}{_crowd_context_suffix(entry_ctx)}",
+            reason=reason,
             gate_failures=(),
             current_direction=current_direction,
             predicted_direction=predicted_direction,

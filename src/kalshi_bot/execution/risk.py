@@ -393,3 +393,5 @@ class RiskManager:
     def release(self, ticker: str, notional: float) -> None:
         self.state.open_exposure_usd = max(0.0, self.state.open_exposure_usd - notional)
         self.state.positions[ticker] = max(0.0, self.state.positions.get(ticker, 0.0) - notional)
+        # Allow a fresh entry after exit when a new setup appears (cooldown applies to entries only).
+        self.state.last_trade_ts.pop(ticker, None)
