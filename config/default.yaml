@@ -69,8 +69,8 @@ intelligence:
   enabled: false
 
 execution:
-  dry_run: true
-  orders_enabled: false
+  dry_run: false
+  orders_enabled: true
   max_position_usd: 1.50
   max_contracts_per_trade: 25
   min_trade_notional_usd: 0
