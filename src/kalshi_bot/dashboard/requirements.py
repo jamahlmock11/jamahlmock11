@@ -555,19 +555,31 @@ def build_trade_requirements(row: dict[str, Any]) -> dict[str, Any]:
         )
     )
 
-    requirements.append(
-        _req(
-            "kelly_size",
-            "Kelly position size",
-            status="fail" if blocked("kelly_size") else "pass",
-            detail=(
-                "zero affordable contracts"
-                if blocked("kelly_size")
-                else (payload.get("kelly_contracts") or "sized from edge")
-            ),
-            blocking=blocked("kelly_size"),
+    kelly_enabled = bool(thresholds.get("kelly_enabled", False))
+    if kelly_enabled:
+        requirements.append(
+            _req(
+                "kelly_size",
+                "Kelly position size",
+                status="fail" if blocked("kelly_size") else "pass",
+                detail=(
+                    "zero affordable contracts"
+                    if blocked("kelly_size")
+                    else (payload.get("kelly_contracts") or "sized from edge")
+                ),
+                blocking=blocked("kelly_size"),
+            )
         )
-    )
+    else:
+        requirements.append(
+            _req(
+                "position_size",
+                "Position size",
+                status="pass",
+                detail=f"{int(thresholds.get('order_quantity') or 1)} contract(s) · Kelly off",
+                blocking=False,
+            )
+        )
 
     risk_locked = bool(risk.get("locked"))
     requirements.append(
