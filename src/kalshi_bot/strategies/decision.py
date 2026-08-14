@@ -172,6 +172,8 @@ class DecisionConfig:
     chop_zone_min_sigma: float = 0.0
     require_orderbook_depth: bool = False
     allow_pyramiding: bool = False
+    require_forecast_alignment: bool = False
+    forecast_alignment_min_probability: float = 0.50
 
     @property
     def effective_minimum_edge(self) -> Decimal:
@@ -254,6 +256,12 @@ def decision_config_from_app(
         chop_zone_min_sigma=strategy.chop_zone_min_sigma,
         require_orderbook_depth=strategy.require_orderbook_depth,
         allow_pyramiding=config.risk.allow_pyramiding,
+        require_forecast_alignment=(
+            ls.require_forecast_alignment
+            if ls.enabled
+            else strategy.require_forecast_alignment
+        ),
+        forecast_alignment_min_probability=strategy.forecast_alignment_min_probability,
     )
 
 
@@ -764,6 +772,28 @@ class DecisionEngine:
                     "executable entry price is below the minimum for live entries",
                     selected_execution.executable_cost,
                     cfg.min_entry_executable_cost,
+                )
+            )
+        dominant_side = (
+            ContractSide.YES if forecast.p_up >= forecast.p_down else ContractSide.NO
+        )
+        dominant_prob = max(forecast.p_up, forecast.p_down)
+        alignment_required = (
+            cfg.longshot.require_forecast_alignment
+            if cfg.longshot.enabled
+            else cfg.require_forecast_alignment
+        )
+        if (
+            alignment_required
+            and dominant_prob + 1e-12 >= cfg.forecast_alignment_min_probability
+            and selected_side is not dominant_side
+        ):
+            failures.append(
+                _failure(
+                    "forecast_alignment",
+                    "best edge side conflicts with dominant forecast direction",
+                    selected_side.value,
+                    dominant_side.value,
                 )
             )
         if (

@@ -358,6 +358,10 @@ class TradingBot:
                 "min_data_completeness": self.config.strategy.min_data_completeness,
                 "late_confidence_increment": self.config.strategy.late_confidence_increment,
                 "min_entry_executable_cost": self.config.strategy.min_entry_executable_cost,
+                "require_forecast_alignment": self.config.strategy.require_forecast_alignment,
+                "forecast_alignment_min_probability": (
+                    self.config.strategy.forecast_alignment_min_probability
+                ),
                 "max_spread": self.config.strategy.max_spread,
                 "min_confidence": self.config.strategy.min_confidence,
                 "late_seconds": self.config.strategy.late_seconds,

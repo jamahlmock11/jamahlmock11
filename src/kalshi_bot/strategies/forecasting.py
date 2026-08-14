@@ -47,7 +47,7 @@ from kalshi_bot.learning.pattern_matcher import PatternMatchResult
 from kalshi_bot.market.discovery import DiscoveryConfig, MarketDiscovery
 from kalshi_bot.models.ensemble import EnsembleProbabilityModel
 from kalshi_bot.models.regime import classify_regime
-from kalshi_bot.strategies.decision import DecisionConfig, DecisionEngine
+from kalshi_bot.strategies.decision import DecisionEngine, decision_config_from_app
 from kalshi_bot.strategies.entry_filters import (
     EntrySignalTracker,
     apply_signal_persistence_gate,
@@ -55,7 +55,6 @@ from kalshi_bot.strategies.entry_filters import (
 )
 from kalshi_bot.strategies.forecast_setup import ForecastSetupAssessment, compute_forecast_setup_score
 from kalshi_bot.strategies.reversal_score import ReversalScoreAssessment
-from kalshi_bot.execution.position_reversal import reversal_config_from_risk
 from kalshi_bot.venues.kalshi import KalshiClient
 
 if TYPE_CHECKING:
@@ -121,11 +120,6 @@ class ForecastingScanner:
         )
         self.model = model or EnsembleProbabilityModel()
         ls = config.longshot
-        entry_window = (
-            ls.entry_window_seconds
-            if ls.enabled
-            else strategy.max_entry_seconds_remaining
-        )
         self.discovery = MarketDiscovery(
             DiscoveryConfig(
                 series_ticker="KXBTC15M",
@@ -136,71 +130,7 @@ class ForecastingScanner:
             )
         )
         self.decision_engine = decision_engine or DecisionEngine(
-            DecisionConfig(
-                minimum_edge=ls.min_edge if ls.enabled else strategy.min_edge,
-                target_edge=strategy.target_edge,
-                quantity=strategy.order_quantity,
-                maximum_benchmark_age=config.data.max_brti_age_seconds,
-                minimum_seconds_remaining=strategy.min_seconds_remaining,
-                maximum_seconds_remaining=entry_window,
-                minimum_confidence=ls.min_confidence if ls.enabled else strategy.min_confidence,
-                minimum_agreement=(
-                    ls.min_signal_agreement
-                    if ls.enabled
-                    else strategy.min_signal_agreement
-                ),
-                minimum_data_completeness=strategy.min_data_completeness,
-                minimum_depth=strategy.order_quantity,
-                maximum_spread=strategy.max_spread,
-                fee_rate=config.execution.fee_rate,
-                fee_per_contract=config.execution.fee_per_contract,
-                slippage_bps=config.execution.slippage_bps,
-                slippage_per_contract=config.execution.slippage_per_contract,
-                late_seconds=config.strategy.late_seconds,
-                late_minimum_edge=ls.min_edge if ls.enabled else config.strategy.target_edge,
-                final_seconds=config.strategy.final_seconds,
-                final_minimum_edge=ls.min_edge if ls.enabled else config.strategy.final_min_edge,
-                late_favorite_seconds=config.strategy.late_favorite_seconds,
-                late_favorite_poll_threshold=config.strategy.late_favorite_poll_threshold,
-                late_favorite_min_edge=config.strategy.late_favorite_min_edge,
-                min_entry_executable_cost=config.strategy.min_entry_executable_cost,
-                allow_proxy_data=(
-                    config.execution.dry_run
-                    and config.data.benchmark_mode == "constituent_proxy"
-                ),
-                proxy_minimum_constituents=config.data.min_supporting_venues,
-                proxy_maximum_dispersion=config.data.max_supporting_dispersion,
-                stop_loss_fraction=config.risk.stop_loss_fraction,
-                stop_loss_require_thesis_failure=config.risk.stop_loss_require_thesis_failure,
-                stop_loss_min_hold_probability=config.risk.stop_loss_min_hold_probability,
-                stop_loss_min_agreement=config.risk.stop_loss_min_agreement,
-                opposite_edge_shift=config.risk.opposite_edge_shift,
-                thesis_reversal_margin=config.risk.thesis_reversal_margin,
-                thesis_reversal_enabled=(
-                    False if ls.enabled else config.risk.thesis_reversal_enabled
-                ),
-                opposite_edge_exit_enabled=(
-                    False if ls.enabled else config.risk.opposite_edge_exit_enabled
-                ),
-                recovery_hold_enabled=(
-                    False if ls.enabled else config.risk.recovery_hold_enabled
-                ),
-                recovery_hold_min_probability=config.risk.recovery_hold_min_probability,
-                recovery_hold_min_confidence=config.risk.recovery_hold_min_confidence,
-                recovery_hold_min_agreement=config.risk.recovery_hold_min_agreement,
-                min_hold_seconds=config.risk.min_hold_seconds,
-                take_profit_capture_fraction=config.risk.take_profit_capture_fraction,
-                hold_to_expiry_enabled=config.risk.hold_to_expiry_enabled,
-                hold_to_expiry_min_probability=config.risk.hold_to_expiry_min_probability,
-                hold_to_expiry_min_confidence=config.risk.hold_to_expiry_min_confidence,
-                hold_to_expiry_min_agreement=config.risk.hold_to_expiry_min_agreement,
-                position_reversal=reversal_config_from_risk(config.risk),
-                poll=config.poll,
-                longshot=config.longshot,
-                chop_zone_min_sigma=config.strategy.chop_zone_min_sigma,
-                require_orderbook_depth=config.strategy.require_orderbook_depth,
-                allow_pyramiding=config.risk.allow_pyramiding,
-            )
+            decision_config_from_app(config)
         )
         self.entry_tracker = EntrySignalTracker(
             required_polls=config.strategy.entry_signal_persistence_polls,

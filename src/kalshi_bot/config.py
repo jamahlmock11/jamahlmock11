@@ -355,6 +355,16 @@ class StrategyConfig(BaseModel):
         default=False,
         description="Block forecast BUY entries below min_setup_score.",
     )
+    require_forecast_alignment: bool = Field(
+        default=False,
+        description="Block entries on the side opposite the dominant model probability.",
+    )
+    forecast_alignment_min_probability: float = Field(
+        default=0.50,
+        ge=0.0,
+        le=1.0,
+        description="Minimum dominant-side probability before alignment is enforced.",
+    )
 
 
 class RiskConfig(BaseModel):

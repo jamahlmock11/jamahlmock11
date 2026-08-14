@@ -7,13 +7,15 @@ import math
 from typing import Any
 
 DEFAULT_THRESHOLDS: dict[str, Any] = {
-    "min_edge": 0.15,
+    "min_edge": 0.20,
     "min_signal_agreement": 0.48,
     "min_data_completeness": 0.65,
     "min_seconds_remaining": 60.0,
     "max_entry_seconds_remaining": 900.0,
     "max_spread": 0.12,
-    "min_entry_executable_cost": 0.08,
+    "min_entry_executable_cost": 0.35,
+    "require_forecast_alignment": True,
+    "forecast_alignment_min_probability": 0.50,
     "late_favorite_seconds": 420.0,
     "late_favorite_poll_threshold": 0.78,
     "late_favorite_min_edge": 0.04,
@@ -120,6 +122,7 @@ GATE_LABELS: dict[str, str] = {
     "minimum_edge": "Minimum edge",
     "edge": "Minimum edge",
     "min_entry_price": "Minimum entry price",
+    "forecast_alignment": "Model direction",
     "exit_liquidity": "Exit bid depth",
     "kelly_sizing": "Kelly position size",
     "risk_lock": "Risk limits",
@@ -159,6 +162,7 @@ GATE_TO_REQUIREMENT: dict[str, str] = {
     "minimum_edge": "edge",
     "edge": "edge",
     "min_entry_price": "min_entry_price",
+    "forecast_alignment": "forecast_alignment",
     "exit_liquidity": "exit_liquidity",
     "kelly_sizing": "kelly_size",
     "risk_lock": "risk_lock",
@@ -275,6 +279,11 @@ def _format_gate_failure(failure: dict[str, Any]) -> str:
         if observed is not None and required is not None:
             return f"{label}: {_cents(observed)} · need ≥{_cents(required)}"
         return f"{label}: {reason or 'price too low'}"
+
+    if gate == "forecast_alignment":
+        if observed is not None and required is not None:
+            return f"{label}: picked {observed} · model favors {required}"
+        return f"{label}: {reason or 'side conflicts with model'}"
 
     if gate in {"last_minute", "time_window", "proxy_late_contract"}:
         if observed is not None and required is not None:
@@ -542,6 +551,45 @@ def build_trade_requirements(row: dict[str, Any]) -> dict[str, Any]:
                 else f"≥{_cents(min_price)}"
             ),
             blocking=blocked("min_entry_price"),
+        )
+    )
+
+    alignment_required = bool(thresholds.get("require_forecast_alignment"))
+    alignment_min = float(thresholds.get("forecast_alignment_min_probability", 0.50))
+    up_prob = _as_float(row.get("up_probability"))
+    down_prob = _as_float(row.get("down_probability"))
+    dominant_side = None
+    dominant_prob = None
+    if up_prob is not None and down_prob is not None:
+        dominant_side = "yes" if up_prob >= down_prob else "no"
+        dominant_prob = max(up_prob, down_prob)
+    trade_side = None
+    if action == "BUY_UP":
+        trade_side = "yes"
+    elif action == "BUY_DOWN":
+        trade_side = "no"
+    alignment_ok = (
+        not alignment_required
+        or dominant_prob is None
+        or dominant_prob + 1e-12 < alignment_min
+        or trade_side is None
+        or trade_side == dominant_side
+    )
+    requirements.append(
+        _req(
+            "forecast_alignment",
+            "Model direction",
+            status="pass" if alignment_ok and not blocked("forecast_alignment") else "fail",
+            detail=(
+                f"model {dominant_side.upper()} {_pct(dominant_prob)} · trade {trade_side or '—'}"
+                if dominant_side is not None and dominant_prob is not None
+                else (
+                    f"need model lean ≥{_pct(alignment_min)} on entry side"
+                    if alignment_required
+                    else "alignment not required"
+                )
+            ),
+            blocking=blocked("forecast_alignment"),
         )
     )
 

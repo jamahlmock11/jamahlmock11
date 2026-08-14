@@ -440,7 +440,38 @@ def test_proxy_requires_extra_edge_and_is_never_allowed_by_default():
     assert live_locked.action is DecisionAction.NO_TRADE
 
 
-def test_existing_position_exits_before_opposite_entry():
+def test_forecast_alignment_blocks_contrarian_entry():
+    cfg = DecisionConfig(
+        require_forecast_alignment=True,
+        forecast_alignment_min_probability=0.50,
+        minimum_agreement=0.48,
+        min_entry_executable_cost=0.35,
+    )
+    result = DecisionEngine(cfg).decide(
+        market(0.82),
+        forecast(0.62),
+        features(),
+        benchmark(),
+        now=NOW,
+    )
+    assert result.action is DecisionAction.NO_TRADE
+    assert any(f.gate == "forecast_alignment" for f in result.gate_failures)
+
+
+def test_min_entry_price_blocks_cheap_tickets():
+    cfg = DecisionConfig(
+        min_entry_executable_cost=0.35,
+        minimum_agreement=0.48,
+    )
+    result = DecisionEngine(cfg).decide(
+        market(0.30),
+        forecast(0.78),
+        features(),
+        benchmark(),
+        now=NOW,
+    )
+    assert result.action is DecisionAction.NO_TRADE
+    assert any(f.gate == "min_entry_price" for f in result.gate_failures)
     held = MarketPosition(ContractSide.YES, quantity=1, average_price=0.4)
     late_market = replace(
         market(0.52, held),

@@ -118,8 +118,8 @@ longshot:
 
 strategy:
   contract_duration_seconds: 900
-  min_edge: 0.15
-  target_edge: 0.15
+  min_edge: 0.20
+  target_edge: 0.20
   min_confidence: 0.0
   min_signal_agreement: 0.55
   setup_score_enabled: true
@@ -134,11 +134,14 @@ strategy:
   max_entry_seconds_remaining: 900
   late_seconds: 360
   final_seconds: 360
-  final_min_edge: 0.15
+  final_min_edge: 0.20
   late_confidence_increment: 0.10
   late_favorite_seconds: 420
   late_favorite_poll_threshold: 0.80
   late_favorite_min_edge: 0.04
+  min_entry_executable_cost: 0.35
+  require_forecast_alignment: true
+  forecast_alignment_min_probability: 0.50
   order_quantity: 1
   min_trade_quality_score: 70
   max_do_not_trade_score: 40
@@ -158,7 +161,7 @@ risk:
   max_contract_exposure: 1.50
   max_position_size: 1.50
   max_consecutive_losses: 4
-  max_trades_per_contract: 3
+  max_trades_per_contract: 1
   max_flips_per_contract: 2
   cooldown_seconds: 0
   allow_pyramiding: false
