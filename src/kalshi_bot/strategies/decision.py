@@ -670,8 +670,21 @@ class DecisionEngine:
             side: side_probabilities[side] - execution.executable_cost
             for side, execution in executions.items()
         }
+        seconds_remaining = (market.expiration - observed_now).total_seconds()
+        poll_snapshot = market_poll_snapshot(market.orderbook)
         if entry_ctx is not None and entry_ctx.forced_side is not None:
             selected_side = entry_ctx.forced_side
+        elif (
+            cfg.require_dominant_poll_side
+            and poll_snapshot.dominant_side is not None
+            and poll_snapshot.dominant_poll is not None
+            and (
+                cfg.minimum_dominant_poll is None
+                or poll_snapshot.dominant_poll + 1e-12 >= cfg.minimum_dominant_poll
+            )
+            and poll_snapshot.dominant_side in executions
+        ):
+            selected_side = poll_snapshot.dominant_side
         else:
             selected_side = max(edges, key=lambda side: (edges[side], side.value))
         selected_execution = executions[selected_side]
@@ -679,8 +692,6 @@ class DecisionEngine:
         edge_decimal = Decimal(str(side_probabilities[selected_side])) - Decimal(
             str(selected_execution.executable_cost)
         )
-        seconds_remaining = (market.expiration - observed_now).total_seconds()
-        poll_snapshot = market_poll_snapshot(market.orderbook)
         if cfg.minimum_dominant_poll is not None:
             min_poll = cfg.minimum_dominant_poll
             if (
@@ -729,7 +740,16 @@ class DecisionEngine:
         if entry_ctx is not None and entry_ctx.min_edge_override is not None:
             if entry_ctx.min_edge_override >= 0:
                 required_edge = Decimal(str(entry_ctx.min_edge_override))
-        if selected_execution.executable_cost + 1e-12 < cfg.min_entry_executable_cost:
+        crowd_follow_entry = (
+            entry_ctx is not None
+            and entry_ctx.extreme_poll_active
+            and poll_snapshot.dominant_side is not None
+            and selected_side is poll_snapshot.dominant_side
+        )
+        if (
+            not crowd_follow_entry
+            and selected_execution.executable_cost + 1e-12 < cfg.min_entry_executable_cost
+        ):
             failures.append(
                 _failure(
                     "min_entry_price",

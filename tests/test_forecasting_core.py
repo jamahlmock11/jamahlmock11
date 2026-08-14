@@ -536,3 +536,52 @@ def test_late_favorite_keeps_twenty_cent_floor_for_contrarian_side():
     )
     assert result.action is DecisionAction.NO_TRADE
     assert any(failure.gate == "minimum_edge" for failure in result.gate_failures)
+
+
+def _no_favorite_market(yes_ask: float = 0.03):
+    return replace(market(yes_ask=yes_ask), expiration=NOW + timedelta(seconds=300))
+
+
+def _poll_favorite_config(*, follow_extreme_poll: bool = False) -> DecisionConfig:
+    from kalshi_bot.config import LongshotConfig
+
+    return DecisionConfig(
+        min_entry_executable_cost=0.75,
+        minimum_dominant_poll=0.80,
+        require_dominant_poll_side=True,
+        longshot=LongshotConfig(
+            enabled=False,
+            follow_extreme_poll=follow_extreme_poll,
+            extreme_poll_threshold=0.80,
+            extreme_poll_late_seconds=300,
+            crowd_follow_price_band_cents=0.03,
+        ),
+    )
+
+
+def test_no_poll_favorite_selects_down_side_without_crowd_follow():
+    result = DecisionEngine(_poll_favorite_config()).decide(
+        _no_favorite_market(),
+        forecast(0.20),
+        features(),
+        benchmark(),
+        now=NOW,
+    )
+    assert result.selected_side is ContractSide.NO
+    assert result.executable_cost == pytest.approx(0.99, abs=0.02)
+    assert not any(failure.gate == "min_entry_price" for failure in result.gate_failures)
+    assert not any(failure.gate == "poll_favorite" for failure in result.gate_failures)
+
+
+def test_crowd_follow_active_at_extreme_poll_late_boundary():
+    result = DecisionEngine(_poll_favorite_config(follow_extreme_poll=True)).decide(
+        _no_favorite_market(),
+        forecast(0.20),
+        features(),
+        benchmark(),
+        now=NOW,
+    )
+    assert result.action is DecisionAction.BUY_DOWN
+    assert result.selected_side is ContractSide.NO
+    assert not any(failure.gate == "min_entry_price" for failure in result.gate_failures)
+
