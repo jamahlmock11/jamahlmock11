@@ -109,8 +109,8 @@ hour_edge:
   disable_tier_b: true
 
 execution:
-  dry_run: false
-  orders_enabled: true
+  dry_run: true
+  orders_enabled: false
   max_position_usd: 50
   max_contracts_per_trade: 25
   min_trade_notional_usd: 0

@@ -12,8 +12,10 @@ if [[ -n "${KALSHI_PRIVATE_KEY:-}" ]]; then
 fi
 
 existing_api_key=""
+existing_dry_run=""
 if [[ -f .env ]]; then
   existing_api_key="$(grep -E '^KALSHI_API_KEY_ID=' .env | head -n1 | cut -d= -f2- || true)"
+  existing_dry_run="$(grep -E '^DRY_RUN=' .env | head -n1 | cut -d= -f2- || true)"
 fi
 
 api_key_id="${KALSHI_API_KEY_ID:-$existing_api_key}"
@@ -23,10 +25,10 @@ if [[ -n "$api_key_id" && -f secrets/kalshi_private.key ]]; then
   has_creds=true
 fi
 
-default_dry_run="${DRY_RUN:-true}"
+default_dry_run="${DRY_RUN:-${existing_dry_run:-true}}"
 default_benchmark="${BENCHMARK_MODE:-constituent_proxy}"
-if [[ "$has_creds" == true ]]; then
-  default_dry_run="${DRY_RUN:-false}"
+if [[ "$has_creds" == true && -z "${DRY_RUN:-}" && -z "$existing_dry_run" ]]; then
+  default_dry_run="false"
   default_benchmark="${BENCHMARK_MODE:-kalshi_passthrough}"
 fi
 
