@@ -368,6 +368,7 @@ class ForecastingScanner:
             options_volatility=options_vol,
             market_prior=market_prior,
             window_regime=window_regime,
+            orderbook_skew=self.config.orderbook_skew,
         )
         if benchmark.is_proxy:
             # Basis uncertainty is represented by shrinking both probability

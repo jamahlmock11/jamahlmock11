@@ -9,6 +9,7 @@ from statistics import NormalDist
 
 from kalshi_bot.domain import FeatureSnapshot, ProbabilityEstimate, Regime, TrajectoryState
 from kalshi_bot.features.late_momentum import LateMomentumPattern
+from kalshi_bot.config import OrderbookSkewConfig
 from kalshi_bot.models.strike_gravity import assess_strike_gravity
 from kalshi_bot.strategies.entry_filters import WindowRegimeKind
 
@@ -39,6 +40,7 @@ BASE_WEIGHTS: dict[str, float] = {
     "acceleration_reversal": 0.07,
     "trend_mean_reversion": 0.07,
     "orderbook": 0.06,
+    "orderbook_skew": 0.08,
     "cross_exchange": 0.04,
     "market_prior": 0.02,
     "historical_prior": 0.02,
@@ -160,12 +162,34 @@ def _brti_settlement_core_probability(
     return _clip(blended)
 
 
+def _orderbook_skew_probability(skew: float) -> float:
+    """Map YES top-of-book skew (+1 bid-heavy) to P(up)."""
+    return _clip(0.5 + skew * 0.35)
+
+
+def _orderbook_skew_active(
+    features: FeatureSnapshot,
+    cfg: OrderbookSkewConfig | None,
+) -> bool:
+    if cfg is None or not cfg.ensemble_enabled:
+        return False
+    if features.seconds_remaining > cfg.ensemble_max_seconds_remaining:
+        return False
+    if abs(features.yes_top_skew) + 1e-12 < cfg.min_skew:
+        return False
+    if abs(features.z_distance_to_strike) + 1e-12 < cfg.min_z_distance:
+        return False
+    return True
+
+
 def _regime_weights(
     regime: Regime,
     seconds_remaining: float,
     *,
     settlement_window_seconds: float,
     window_regime: WindowRegimeKind | None = None,
+    orderbook_skew_active: bool = False,
+    orderbook_skew_window_seconds: float = 540.0,
 ) -> dict[str, float]:
     weights = dict(BASE_WEIGHTS)
     if regime in {Regime.TREND_UP, Regime.TREND_DOWN, Regime.BREAKOUT, Regime.BREAKDOWN}:
@@ -211,6 +235,14 @@ def _regime_weights(
     elif window_regime is WindowRegimeKind.TRENDING:
         weights["trajectory_momentum"] *= 1.15
         weights["trend_mean_reversion"] *= 0.90
+    if orderbook_skew_active:
+        weights["orderbook_skew"] *= 1.35
+        if seconds_remaining <= orderbook_skew_window_seconds:
+            weights["orderbook_skew"] *= 1.25
+        if window_regime is WindowRegimeKind.CHOPPY:
+            weights["orderbook_skew"] *= 1.20
+    else:
+        weights.pop("orderbook_skew", None)
     return weights
 
 
@@ -245,6 +277,7 @@ class EnsembleProbabilityModel:
         market_prior: float | None = None,
         historical_prior: float | None = None,
         window_regime: WindowRegimeKind | None = None,
+        orderbook_skew: OrderbookSkewConfig | None = None,
     ) -> ProbabilityEstimate:
         """Blend independent probability views, then shrink uncertainty honestly."""
         cfg = self.config
@@ -331,11 +364,21 @@ class EnsembleProbabilityModel:
             "market_prior": _clip(market_prior) if market_prior is not None else 0.5,
             "historical_prior": _clip(historical_prior) if historical_prior is not None else 0.5,
         }
+        skew_active = _orderbook_skew_active(features, orderbook_skew)
+        if skew_active:
+            components["orderbook_skew"] = _orderbook_skew_probability(features.yes_top_skew)
+        skew_window = (
+            orderbook_skew.ensemble_max_seconds_remaining
+            if orderbook_skew is not None
+            else 540.0
+        )
         weights = _regime_weights(
             regime,
             features.seconds_remaining,
             settlement_window_seconds=cfg.settlement_window_seconds,
             window_regime=window_regime,
+            orderbook_skew_active=skew_active,
+            orderbook_skew_window_seconds=skew_window,
         )
         weight_total = sum(weights.values())
         weighted = sum(components[name] * weights[name] for name in weights) / weight_total
@@ -388,6 +431,11 @@ class EnsembleProbabilityModel:
             (
                 f"late_momentum={features.late_momentum_pattern}"
                 if features.late_momentum_pattern != "none"
+                else ""
+            ),
+            (
+                f"orderbook_skew={features.yes_top_skew:+.2f}"
+                if skew_active
                 else ""
             ),
             "late-contract cap applied" if features.seconds_remaining <= cfg.late_seconds else "",

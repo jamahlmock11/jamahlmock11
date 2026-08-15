@@ -36,6 +36,15 @@ class SpotLagArbConfig(BaseModel):
 
 class OrderbookSkewConfig(BaseModel):
     enabled: bool = False
+    ensemble_enabled: bool = Field(
+        default=False,
+        description="Blend top-of-book YES skew into the forecast ensemble probability.",
+    )
+    ensemble_max_seconds_remaining: float = Field(
+        default=540.0,
+        ge=0.0,
+        description="Final N seconds where ensemble orderbook_skew component is active (9 min = 540).",
+    )
     top_levels: int = Field(default=5, ge=1, le=20)
     max_seconds_remaining: float = Field(default=180.0, ge=0.0)
     min_skew: float = Field(default=0.25, ge=0.0, le=1.0)
