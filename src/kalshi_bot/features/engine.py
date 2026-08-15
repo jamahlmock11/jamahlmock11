@@ -19,7 +19,7 @@ from kalshi_bot.domain import (
     utc_datetime,
 )
 from kalshi_bot.features.late_momentum import assess_late_momentum
-from kalshi_bot.market.orderbook import imbalance
+from kalshi_bot.market.orderbook import imbalance, skew_top_n
 
 HORIZONS = (5, 10, 15, 30, 60, 120, 180, 300)
 SECONDS_PER_YEAR = 365.25 * 24 * 60 * 60
@@ -283,6 +283,7 @@ class FeatureEngine:
             z_distance_to_strike=z_distance,
             mean_reversion_score=mean_reversion,
             orderbook_imbalance=imbalance(market.orderbook),
+            yes_top_skew=skew_top_n(market.orderbook, n=5),
             cross_venue_agreement=venue_agreement,
             cross_venue_dispersion=dispersion,
             data_completeness=completeness,

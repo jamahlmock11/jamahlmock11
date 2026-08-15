@@ -285,6 +285,7 @@ class FeatureSnapshot:
     sample_count: int
     oldest_sample_age: float
     rationale: Mapping[str, str] = field(default_factory=dict)
+    yes_top_skew: float = 0.0
     settlement_effective_strike: float | None = None
     settlement_locked_fraction: float = 0.0
     late_momentum_pattern: str = "none"
