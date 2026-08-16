@@ -160,7 +160,7 @@ risk:
   max_contract_exposure: 2.0
   max_position_size: 2.0
   max_consecutive_losses: 4
-  max_trades_per_contract: 1
+  max_trades_per_contract: 2
   max_flips_per_contract: 0
   cooldown_seconds: 300
   min_hold_seconds: 120
