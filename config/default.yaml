@@ -45,6 +45,7 @@ spot_lag:
 orderbook_skew:
   enabled: false
   ensemble_enabled: true
+  down_skew_enabled: false
   ensemble_max_seconds_remaining: 540
   top_levels: 5
   max_seconds_remaining: 180

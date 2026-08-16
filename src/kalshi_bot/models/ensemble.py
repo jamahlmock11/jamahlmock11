@@ -173,6 +173,8 @@ def _orderbook_skew_active(
 ) -> bool:
     if cfg is None or not cfg.ensemble_enabled:
         return False
+    if not cfg.down_skew_enabled and features.yes_top_skew + 1e-12 < 0:
+        return False
     if features.seconds_remaining > cfg.ensemble_max_seconds_remaining:
         return False
     if abs(features.yes_top_skew) + 1e-12 < cfg.min_skew:

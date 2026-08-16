@@ -40,6 +40,10 @@ class OrderbookSkewConfig(BaseModel):
         default=False,
         description="Blend top-of-book YES skew into the forecast ensemble probability.",
     )
+    down_skew_enabled: bool = Field(
+        default=True,
+        description="When false, ignore ask-heavy (negative) YES book skew in the ensemble.",
+    )
     ensemble_max_seconds_remaining: float = Field(
         default=540.0,
         ge=0.0,
