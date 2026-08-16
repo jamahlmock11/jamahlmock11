@@ -173,7 +173,7 @@ risk:
   position_reversal_min_forecast_probability: 0.48
   certainty_hold:
     enabled: true
-    min_probability: 1.0
+    min_probability: 0.95
     use_raw_probability: true
   kelly_enabled: false
   kelly_fraction: 0.25
