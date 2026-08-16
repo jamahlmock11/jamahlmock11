@@ -165,7 +165,7 @@ risk:
   cooldown_seconds: 300
   min_hold_seconds: 120
   position_reversal_enabled: true
-  position_reversal_window_seconds: 420
+  position_reversal_window_seconds: 300
   position_reversal_min_hold_probability: 0.50
   position_reversal_late_hold_probability: 0.62
   position_reversal_min_z_support: -0.30

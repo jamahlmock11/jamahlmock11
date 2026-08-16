@@ -86,6 +86,29 @@ def test_reversal_holds_when_path_still_supports_position():
     assert not assessment.should_reverse
 
 
+def test_reversal_skips_early_contract_when_outside_late_window():
+    """Weak path signals must not exit with 8+ minutes left (outside reversal window)."""
+    assessment = evaluate_position_reversal(
+        position_side=ContractSide.YES,
+        features=features(
+            seconds_remaining=498.0,
+            current_price=62_917.68,
+            strike=62_920.65,
+            z_distance=-0.18,
+            short_trend=0.0,
+        ),
+        forecast=forecast(0.485),
+        cfg=PositionReversalConfig(
+            window_seconds=300.0,
+            min_hold_probability=0.50,
+            late_hold_probability=0.62,
+            min_z_support=-0.30,
+        ),
+    )
+    assert not assessment.should_reverse
+    assert "held path intact" in assessment.reason
+
+
 def test_position_exit_uses_reversal_signal():
     book = parse_orderbook_fp(
         {
