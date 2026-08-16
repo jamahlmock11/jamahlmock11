@@ -317,7 +317,7 @@ class StrategyConfig(BaseModel):
     min_pattern_matches: int = Field(default=10, ge=0)
     external_data_enabled: bool = False
     entry_signal_persistence_polls: int = Field(
-        default=3,
+        default=1,
         ge=1,
         description="Consecutive polls where side+edge must hold before entry.",
     )
@@ -371,7 +371,7 @@ class RiskConfig(BaseModel):
     max_contract_exposure: float = Field(default=25.0, gt=0.0)
     max_position_size: float = Field(default=50.0, gt=0.0)
     max_consecutive_losses: int = Field(default=4, gt=0)
-    max_trades_per_contract: int = Field(default=2, gt=0)
+    max_trades_per_contract: int = Field(default=1, gt=0)
     max_flips_per_contract: int = Field(default=1, ge=0)
     cooldown_seconds: float = Field(default=30.0, ge=0.0)
     stop_loss_fraction: float = Field(default=0.45, ge=0.0, le=1.0)

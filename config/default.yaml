@@ -147,7 +147,7 @@ strategy:
   require_trade_quality: false
   min_pattern_matches: 10
   external_data_enabled: false
-  entry_signal_persistence_polls: 2
+  entry_signal_persistence_polls: 1
   chop_zone_min_sigma: 0.0
   require_orderbook_depth: true
   window_regime_enabled: true
