@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 
 from kalshi_bot.domain import (
     BenchmarkQuote,
+    ContractSide,
     FeatureSnapshot,
     MarketSnapshot,
     RollingPricePoint,
@@ -283,7 +284,8 @@ class FeatureEngine:
             z_distance_to_strike=z_distance,
             mean_reversion_score=mean_reversion,
             orderbook_imbalance=imbalance(market.orderbook),
-            yes_top_skew=skew_top_n(market.orderbook, n=5),
+            yes_top_skew=skew_top_n(market.orderbook, n=5, side=ContractSide.YES),
+            no_top_skew=skew_top_n(market.orderbook, n=5, side=ContractSide.NO),
             cross_venue_agreement=venue_agreement,
             cross_venue_dispersion=dispersion,
             data_completeness=completeness,

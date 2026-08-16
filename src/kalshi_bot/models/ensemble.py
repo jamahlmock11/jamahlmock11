@@ -162,9 +162,25 @@ def _brti_settlement_core_probability(
     return _clip(blended)
 
 
-def _orderbook_skew_probability(skew: float) -> float:
-    """Map YES top-of-book skew (+1 bid-heavy) to P(up)."""
-    return _clip(0.5 + skew * 0.35)
+def _orderbook_skew_probability(
+    yes_skew: float,
+    no_skew: float,
+    *,
+    min_skew: float,
+) -> float:
+    """Blend YES and NO top-of-book skew into P(up).
+
+    YES bid-heavy raises P(up); NO bid-heavy lowers P(up). Each book only
+    contributes when |skew| meets min_skew.
+    """
+    contributions: list[float] = []
+    if abs(yes_skew) + 1e-12 >= min_skew:
+        contributions.append(0.5 + yes_skew * 0.35)
+    if abs(no_skew) + 1e-12 >= min_skew:
+        contributions.append(0.5 - no_skew * 0.35)
+    if not contributions:
+        return 0.5
+    return _clip(sum(contributions) / len(contributions))
 
 
 def _orderbook_skew_active(
@@ -175,7 +191,9 @@ def _orderbook_skew_active(
         return False
     if features.seconds_remaining > cfg.ensemble_max_seconds_remaining:
         return False
-    if abs(features.yes_top_skew) + 1e-12 < cfg.min_skew:
+    yes_ok = abs(features.yes_top_skew) + 1e-12 >= cfg.min_skew
+    no_ok = abs(features.no_top_skew) + 1e-12 >= cfg.min_skew
+    if not yes_ok and not no_ok:
         return False
     if abs(features.z_distance_to_strike) + 1e-12 < cfg.min_z_distance:
         return False
@@ -366,7 +384,12 @@ class EnsembleProbabilityModel:
         }
         skew_active = _orderbook_skew_active(features, orderbook_skew)
         if skew_active:
-            components["orderbook_skew"] = _orderbook_skew_probability(features.yes_top_skew)
+            min_skew = orderbook_skew.min_skew if orderbook_skew is not None else 0.25
+            components["orderbook_skew"] = _orderbook_skew_probability(
+                features.yes_top_skew,
+                features.no_top_skew,
+                min_skew=min_skew,
+            )
         skew_window = (
             orderbook_skew.ensemble_max_seconds_remaining
             if orderbook_skew is not None
@@ -434,7 +457,7 @@ class EnsembleProbabilityModel:
                 else ""
             ),
             (
-                f"orderbook_skew={features.yes_top_skew:+.2f}"
+                f"orderbook_skew=yes{features.yes_top_skew:+.2f}/no{features.no_top_skew:+.2f}"
                 if skew_active
                 else ""
             ),

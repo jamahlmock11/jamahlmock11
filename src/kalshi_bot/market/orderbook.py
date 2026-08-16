@@ -175,10 +175,15 @@ def top_levels(
     return book.levels(side, asks=asks)[: max(n, 0)]
 
 
-def skew_top_n(book: OrderBookSnapshot, *, n: int = 5) -> float:
-    """Top-N bid vs ask size skew on YES (+1 = bid heavy, -1 = ask heavy)."""
-    bid_size = sum(level.size for level in top_levels(book, ContractSide.YES, asks=False, n=n))
-    ask_size = sum(level.size for level in top_levels(book, ContractSide.YES, asks=True, n=n))
+def skew_top_n(
+    book: OrderBookSnapshot,
+    *,
+    n: int = 5,
+    side: ContractSide = ContractSide.YES,
+) -> float:
+    """Top-N bid vs ask size skew (+1 = bid heavy, -1 = ask heavy)."""
+    bid_size = sum(level.size for level in top_levels(book, side, asks=False, n=n))
+    ask_size = sum(level.size for level in top_levels(book, side, asks=True, n=n))
     total = bid_size + ask_size
     if total <= 0:
         return 0.0
