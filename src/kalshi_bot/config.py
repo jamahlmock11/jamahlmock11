@@ -317,7 +317,7 @@ class StrategyConfig(BaseModel):
     min_pattern_matches: int = Field(default=10, ge=0)
     external_data_enabled: bool = False
     entry_signal_persistence_polls: int = Field(
-        default=1,
+        default=2,
         ge=1,
         description="Consecutive polls where side+edge must hold before entry.",
     )
