@@ -366,6 +366,25 @@ class StrategyConfig(BaseModel):
     )
 
 
+class CertaintyHoldConfig(BaseModel):
+    """Hold open positions until expiry when the model is highly certain of settlement side."""
+
+    enabled: bool = Field(
+        default=False,
+        description="When true, skip stop-loss/reversal exits if held-side probability meets threshold.",
+    )
+    min_probability: float = Field(
+        default=1.0,
+        ge=0.0,
+        le=1.0,
+        description="Minimum P(expire on held side); 1.0 = model must be fully certain.",
+    )
+    use_raw_probability: bool = Field(
+        default=True,
+        description="Use uncapped raw_p_up (ensemble calibrated p is capped at ~97%/90% late).",
+    )
+
+
 class RiskConfig(BaseModel):
     max_daily_loss: float = Field(default=100.0, gt=0.0)
     max_contract_exposure: float = Field(default=25.0, gt=0.0)
@@ -391,6 +410,7 @@ class RiskConfig(BaseModel):
     position_reversal_min_z_support: float = Field(default=-0.30)
     position_reversal_wrong_side_seconds: float = Field(default=120.0, ge=0.0)
     position_reversal_min_forecast_probability: float = Field(default=0.48, ge=0.0, le=1.0)
+    certainty_hold: CertaintyHoldConfig = Field(default_factory=CertaintyHoldConfig)
     kelly_enabled: bool = True
     kelly_fraction: float = Field(
         default=0.25,

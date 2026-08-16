@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
-from kalshi_bot.config import AppConfig, LongshotConfig, PollConfig
+from kalshi_bot.config import AppConfig, LongshotConfig, PollConfig, CertaintyHoldConfig
 from kalshi_bot.domain import (
     BenchmarkQuote,
     ContractSide,
@@ -159,6 +159,7 @@ class DecisionConfig:
     recovery_hold_min_agreement: float = 0.58
     min_hold_seconds: float = 0.0
     position_reversal: PositionReversalConfig = field(default_factory=PositionReversalConfig)
+    certainty_hold: CertaintyHoldConfig = field(default_factory=CertaintyHoldConfig)
     poll: PollConfig = field(default_factory=PollConfig)
     longshot: LongshotConfig = field(default_factory=LongshotConfig)
     chop_zone_min_sigma: float = 0.0
@@ -232,6 +233,7 @@ def decision_config_from_app(
         recovery_hold_min_agreement=config.risk.recovery_hold_min_agreement,
         min_hold_seconds=config.risk.min_hold_seconds,
         position_reversal=reversal_config_from_risk(config.risk),
+        certainty_hold=config.risk.certainty_hold,
         poll=config.poll,
         longshot=config.longshot,
         chop_zone_min_sigma=strategy.chop_zone_min_sigma,
@@ -574,6 +576,7 @@ class DecisionEngine:
                 recovery_hold_min_agreement=cfg.recovery_hold_min_agreement,
                 min_hold_seconds=cfg.min_hold_seconds,
                 position_reversal=cfg.position_reversal,
+                certainty_hold=cfg.certainty_hold,
                 now=observed_now,
             )
             if exit_signal is not None:

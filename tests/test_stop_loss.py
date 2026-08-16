@@ -15,7 +15,9 @@ from kalshi_bot.domain import (
     Regime,
     TrajectoryState,
 )
+from kalshi_bot.config import CertaintyHoldConfig
 from kalshi_bot.execution.stop_loss import (
+    certainty_hold_active,
     evaluate_position_exit,
     premium_loss_fraction,
     recovery_hold_supported,
@@ -524,3 +526,47 @@ def test_stop_loss_still_triggers_during_min_hold():
     )
     assert signal_after_hold is not None
     assert signal_after_hold.trigger == "stop_loss"
+
+
+def test_certainty_hold_blocks_stop_loss_exit():
+    from kalshi_bot.config import CertaintyHoldConfig
+
+    market = MarketSnapshot(
+        ticker="KXBTC15M-TEST",
+        status="active",
+        rules="BRTI",
+        strike=65000,
+        expiration=NOW + timedelta(minutes=5),
+        open_time=NOW - timedelta(minutes=10),
+        reference="BRTI",
+        orderbook=book(yes_bid=0.10),
+        current_position=MarketPosition(
+            side=ContractSide.YES,
+            quantity=5,
+            average_price=0.50,
+            opened_at=NOW - timedelta(seconds=300),
+        ),
+    )
+    forecast = ProbabilityEstimate(
+        p_up=0.90,
+        p_down=0.10,
+        confidence=0.9,
+        signal_agreement=0.95,
+        component_probabilities={"terminal": 0.99},
+        regime=Regime.TREND_UP,
+        raw_p_up=0.99,
+    )
+    cfg = CertaintyHoldConfig(enabled=True, min_probability=0.98, use_raw_probability=True)
+    assert certainty_hold_active(market.current_position, forecast, cfg)
+    signal = evaluate_position_exit(
+        market=market,
+        position=market.current_position,
+        forecast=forecast,
+        failures=(),
+        predicted_side=ContractSide.YES,
+        quantity=5,
+        stop_loss_fraction=0.55,
+        certainty_hold=cfg,
+        now=NOW,
+    )
+    assert signal is None

@@ -41,7 +41,7 @@ from kalshi_bot.market.poll_alignment import (
     market_poll_snapshot,
     poll_gate_config_from_model,
 )
-from kalshi_bot.config import HourEdgeConfig, HourStrategyConfig, LongshotConfig, PollConfig
+from kalshi_bot.config import HourEdgeConfig, HourStrategyConfig, LongshotConfig, PollConfig, CertaintyHoldConfig
 
 
 @dataclass(frozen=True)
@@ -72,6 +72,7 @@ class HourDecisionConfig:
     recovery_hold_min_agreement: float = 0.58
     min_hold_seconds: float = 0.0
     position_reversal: PositionReversalConfig = field(default_factory=PositionReversalConfig)
+    certainty_hold: CertaintyHoldConfig = field(default_factory=CertaintyHoldConfig)
 
 
 class HourDecisionEngine:
@@ -341,6 +342,7 @@ class HourDecisionEngine:
                 recovery_hold_min_agreement=cfg.recovery_hold_min_agreement,
                 min_hold_seconds=cfg.min_hold_seconds,
                 position_reversal=cfg.position_reversal,
+                certainty_hold=cfg.certainty_hold,
                 now=observed_now,
             )
             if exit_signal is not None:

@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
+from kalshi_bot.config import CertaintyHoldConfig
 from kalshi_bot.domain import (
     ContractSide,
     FeatureSnapshot,
@@ -101,6 +102,27 @@ def thesis_reversal_triggered(
     return False
 
 
+def certainty_hold_active(
+    position: MarketPosition,
+    forecast: ProbabilityEstimate,
+    cfg: CertaintyHoldConfig | None,
+) -> bool:
+    """True when the model is sufficiently certain the held side wins at settlement."""
+    if cfg is None or not cfg.enabled or position.side is None:
+        return False
+    if cfg.use_raw_probability:
+        held_prob = (
+            forecast.raw_p_up
+            if position.side is ContractSide.YES
+            else 1.0 - forecast.raw_p_up
+        )
+    else:
+        held_prob = (
+            forecast.p_up if position.side is ContractSide.YES else forecast.p_down
+        )
+    return held_prob + 1e-12 >= cfg.min_probability
+
+
 def evaluate_position_exit(
     *,
     market: MarketSnapshot,
@@ -121,11 +143,15 @@ def evaluate_position_exit(
     recovery_hold_min_agreement: float = 0.58,
     min_hold_seconds: float = 0.0,
     position_reversal: PositionReversalConfig | None = None,
+    certainty_hold: CertaintyHoldConfig | None = None,
     now: datetime | None = None,
     reliability_gates: set[str] | frozenset[str] | None = None,
 ) -> PositionExitSignal | None:
     """Return an exit signal when stop-loss or thesis protections trigger."""
     if position.quantity <= 0:
+        return None
+
+    if certainty_hold_active(position, forecast, certainty_hold):
         return None
 
     observed_now = utc_datetime(now or datetime.now(timezone.utc))
