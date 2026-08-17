@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Mapping
 
 from kalshi_bot.config import HourStrategyConfig
-from kalshi_bot.market.discovery import DiscoveryConfig, discover_current_market, DiscoveryResult
+from kalshi_bot.domain import MarketSnapshot
+from kalshi_bot.market.discovery import DiscoveryConfig, discover_current_market, DiscoveryResult, validate_market
 
 
 @dataclass(frozen=True)
@@ -82,6 +84,58 @@ def select_nearest_strike_markets(
         scored.append((abs(strike - reference_price), raw))
     scored.sort(key=lambda item: (item[0], str(getattr(item[1], "ticker", ""))))
     return [raw for _, raw in scored[: max(count, 1)]]
+
+
+@dataclass(frozen=True)
+class HourDiscoveryBatch:
+    """All valid strike markets for the active hourly expiration."""
+
+    markets: tuple[MarketSnapshot, ...]
+    rejections: Mapping[str, tuple[str, ...]]
+    expiration: datetime | None = None
+
+
+def discover_all_hour_markets(
+    markets: list,
+    *,
+    orderbooks: dict | None = None,
+    now: datetime,
+    config: HourDiscoveryConfig,
+    reference_price: float | None = None,
+    strike_count: int = 10,
+) -> HourDiscoveryBatch:
+    """Return every valid strike for the nearest active hourly expiration."""
+    hour_cfg = config.hour
+    discovery_cfg = DiscoveryConfig(
+        series_ticker=hour_cfg.series_ticker,
+        minimum_seconds_remaining=hour_cfg.min_seconds_remaining,
+        maximum_seconds_remaining=hour_cfg.contract_duration_seconds,
+        minimum_depth=config.minimum_depth,
+        maximum_spread=config.maximum_spread,
+    )
+    hourly = filter_hourly_markets(markets, config=config)
+    if reference_price is not None and hourly:
+        hourly = select_nearest_strike_markets(hourly, reference_price, count=strike_count)
+
+    accepted: list[MarketSnapshot] = []
+    rejections: dict[str, tuple[str, ...]] = {}
+    for raw in hourly:
+        ticker = str(getattr(raw, "ticker", "") or "<missing-ticker>")
+        book = orderbooks.get(ticker) if orderbooks is not None else None
+        validation = validate_market(raw, orderbook=book, now=now, config=discovery_cfg)
+        if validation.accepted and validation.snapshot is not None:
+            accepted.append(validation.snapshot)
+        else:
+            rejections[ticker] = validation.reasons
+
+    if not accepted:
+        return HourDiscoveryBatch((), rejections, None)
+
+    target_expiration = min(market.expiration for market in accepted)
+    same_hour = tuple(
+        market for market in accepted if market.expiration == target_expiration
+    )
+    return HourDiscoveryBatch(same_hour, rejections, target_expiration)
 
 
 def discover_hour_market(

@@ -275,6 +275,8 @@ class HourTradingBot:
                 "open_exposure_usd": self.risk.state.open_exposure_usd,
             },
         }
+        if cycle.strike_candidates is not None:
+            journal_payload["strike_candidates"] = list(cycle.strike_candidates)
         if cycle.terminal_forecast is not None:
             tf = cycle.terminal_forecast
             journal_payload["terminal"] = {

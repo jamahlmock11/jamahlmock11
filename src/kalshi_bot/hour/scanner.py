@@ -35,7 +35,14 @@ from kalshi_bot.domain import (
     SupportingAggregate,
 )
 from kalshi_bot.features.engine import FeatureEngineConfig
-from kalshi_bot.hour.discovery import HourDiscoveryConfig, discover_hour_market
+from kalshi_bot.hour.discovery import HourDiscoveryConfig, discover_all_hour_markets, discover_hour_market
+from kalshi_bot.hour.mispricing import MispricingAssessment
+from kalshi_bot.hour.strike_selection import (
+    candidate_summary,
+    rank_terminal_candidate,
+    select_best_strike_candidate,
+    StrikeCandidateResult,
+)
 from kalshi_bot.hour.feature_engine import HourFeatureBundle, HourFeatureEngine
 from kalshi_bot.hour.probability_model import HourProbabilityModel, model_stability
 from kalshi_bot.hour.regime_detector import classify_hour_regime
@@ -82,6 +89,7 @@ class HourForecastCycle:
     terminal_forecast: TerminalForecast | None = None
     mispricing: MispricingAssessment | None = None
     terminal_explanation: str | None = None
+    strike_candidates: tuple[dict, ...] | None = None
 
     @property
     def features(self) -> FeatureSnapshot | None:
@@ -202,6 +210,271 @@ class HourForecastingScanner:
             return self.prediction_store.build_calibrator(cutoff=observed_at)
         except Exception:
             return None
+
+    def _scan_terminal_multi(
+        self,
+        *,
+        observed_at: datetime,
+        markets: list[MarketSnapshot],
+        benchmark: BenchmarkQuote,
+        supporting: SupportingAggregate | None,
+        supporting_reason: str,
+        discovered_rejections: dict,
+        risk_locked: bool,
+        duplicate_entry: bool,
+        risk_manager: RiskManager | None,
+    ) -> HourForecastCycle:
+        terminal_cfg = self.config.terminal_probability
+        calibrator = self._load_calibrator(observed_at)
+        self._calibrator = calibrator
+
+        if self.prediction_store is not None:
+            for market in markets:
+                self.prediction_store.resolve_expired(
+                    now=observed_at,
+                    settlement_brti=benchmark.price,
+                    ticker=market.ticker,
+                    strike=market.strike,
+                )
+
+        calibration_pass = True
+        if terminal_cfg.calibration.enabled and self.prediction_store is not None:
+            calibration_pass = self.prediction_store.calibration_pass(
+                min_samples=terminal_cfg.calibration.min_samples_per_bucket,
+                max_gap=terminal_cfg.calibration.max_calibration_gap,
+            )
+
+        evaluated: list[StrikeCandidateResult] = []
+        candidate_rows: list[dict] = []
+
+        for market in markets:
+            try:
+                bundle = self.features.compute_bundle(
+                    market, now=observed_at, supporting=supporting
+                )
+            except ValueError:
+                continue
+
+            features = bundle.features
+            trend = bundle.trend
+            vol = bundle.volatility
+            regime = classify_hour_regime(features, trend, vol)
+            window_regime = (
+                classify_window_regime(features)
+                if self.config.strategy.window_regime_enabled
+                else None
+            )
+            options_vol = self._option_volatility(features.seconds_remaining)
+            market_prior = (
+                (market.yes_bid + market.yes_ask) / 2
+                if market.yes_bid is not None and market.yes_ask is not None
+                else None
+            )
+
+            try:
+                terminal = self.terminal_engine.estimate(
+                    features,
+                    regime,
+                    trend,
+                    vol,
+                    market_strike=market.strike,
+                    settlement_reference=market.reference or "CME CF BRTI",
+                    options_volatility=options_vol,
+                    market_prior=market_prior,
+                    window_regime=window_regime,
+                    calibrator=calibrator if calibrator and calibrator.fit_cutoff else None,
+                )
+            except ValueError:
+                continue
+
+            if benchmark.is_proxy:
+                shrunk = 0.5 + (terminal.calibrated_p_yes - 0.5) * 0.80
+                terminal = replace(
+                    terminal,
+                    calibrated_p_yes=shrunk,
+                    calibrated_p_no=1.0 - shrunk,
+                    confidence=terminal.confidence * 0.80,
+                    notes=terminal.notes + (
+                        "unofficial proxy: probability/confidence shrunk",
+                    ),
+                )
+
+            decision, mispricing, stability_swing = self.terminal_decision_engine.decide(
+                market,
+                terminal,
+                features,
+                benchmark,
+                now=observed_at,
+                risk_locked=risk_locked,
+                duplicate_entry=duplicate_entry,
+                risk_manager=risk_manager,
+                calibration_pass=calibration_pass,
+                regime=regime,
+            )
+
+            has_position = (
+                market.current_position is not None
+                and market.current_position.quantity > 0
+            )
+            rank_key = rank_terminal_candidate(
+                market=market,
+                decision=decision,
+                mispricing=mispricing,
+                has_position=has_position,
+            )
+            summary = candidate_summary(market, decision, mispricing)
+            evaluated.append(
+                StrikeCandidateResult(
+                    market=market,
+                    terminal=terminal,
+                    decision=decision,
+                    mispricing=mispricing,
+                    stability_swing=stability_swing,
+                    rank_key=rank_key,
+                    summary=summary,
+                )
+            )
+            candidate_rows.append(
+                {
+                    "ticker": market.ticker,
+                    "strike": market.strike,
+                    "action": decision.action.value,
+                    "edge": decision.edge,
+                    "required_edge": mispricing.required_edge if mispricing else None,
+                    "yes_net_edge": mispricing.yes_net_edge if mispricing else None,
+                    "no_net_edge": mispricing.no_net_edge if mispricing else None,
+                    "yes_ask": market.yes_ask,
+                    "no_ask": market.no_ask,
+                    "summary": summary,
+                    "rank_key": rank_key,
+                    "gate_count": len(decision.gate_failures),
+                }
+            )
+
+            if self.prediction_store is not None:
+                self.prediction_store.record(
+                    timestamp=observed_at,
+                    ticker=market.ticker,
+                    strike=terminal.strike,
+                    expiration=market.expiration,
+                    brti_price=terminal.current_brti,
+                    seconds_remaining=terminal.seconds_remaining,
+                    predicted_p_yes=terminal.raw_p_yes,
+                    calibrated_p_yes=terminal.calibrated_p_yes,
+                    market_yes_ask=market.yes_ask,
+                    market_no_ask=market.no_ask,
+                    yes_net_edge=mispricing.yes_net_edge if mispricing else None,
+                    no_net_edge=mispricing.no_net_edge if mispricing else None,
+                    volatility=features.realized_vol,
+                    regime=regime.value if regime else None,
+                    confidence=terminal.confidence,
+                    signal_agreement=terminal.signal_agreement,
+                    action=decision.action.value,
+                    payload={"summary": summary, "rank_key": rank_key},
+                )
+
+        best = select_best_strike_candidate(evaluated)
+        if best is None:
+            reason = "no evaluable strike candidates for active hourly contract"
+            return HourForecastCycle(
+                observed_at,
+                "FAILED",
+                reason,
+                benchmark=benchmark,
+                supporting=supporting,
+                decision=self._no_trade(reason, "strike_selection", discovered_rejections),
+                market_rejections=discovered_rejections,
+                strike_candidates=tuple(candidate_rows),
+            )
+
+        market = best.market
+        terminal = best.terminal
+        decision = best.decision
+        mispricing = best.mispricing
+        stability_swing = best.stability_swing
+
+        decision = apply_signal_persistence_gate(
+            decision,
+            ticker=market.ticker,
+            tracker=self.entry_tracker,
+        )
+
+        try:
+            bundle = self.features.compute_bundle(
+                market, now=observed_at, supporting=supporting
+            )
+            features = bundle.features
+            trend = bundle.trend
+            trajectory = forecast_trajectory(
+                current_price=features.current_price,
+                strike=features.strike,
+                seconds_remaining=features.seconds_remaining,
+                trend=trend,
+                realized_vol=features.realized_vol,
+                trajectory=features.trajectory,
+                z_distance=features.z_distance_to_strike,
+            )
+            regime = classify_hour_regime(features, trend, bundle.volatility)
+        except ValueError:
+            bundle = None
+            features = None
+            trend = None
+            trajectory = None
+            regime = None
+
+        forecast = terminal.as_probability_estimate(regime=regime)
+        stability = model_stability(forecast)
+        liquidity_pass = not any(f.gate == "liquidity" for f in decision.gate_failures)
+        explanation = format_terminal_explanation(
+            terminal,
+            mispricing,
+            decision,
+            calibration_pass=calibration_pass,
+            liquidity_pass=liquidity_pass,
+            stability_swing=stability_swing,
+        )
+        selection_note = (
+            f"Selected {best.summary} from {len(evaluated)} strike candidates"
+        )
+        explanation = f"{selection_note}\n{explanation}"
+
+        health = (
+            "PROXY"
+            if benchmark.is_proxy
+            else "DEGRADED"
+            if supporting is None
+            else "HEALTHY"
+        )
+        reason = f"{decision.reason}; {selection_note}\n{explanation}"
+        if benchmark.is_proxy:
+            reason = f"{reason}; unofficial constituent proxy (PAPER only)"
+        if supporting_reason:
+            reason = f"{reason}; supporting feeds: {supporting_reason}"
+
+        return HourForecastCycle(
+            timestamp=observed_at,
+            data_health=health,
+            reason=reason,
+            market=market,
+            benchmark=benchmark,
+            supporting=supporting,
+            bundle=bundle,
+            trend=trend,
+            trajectory=trajectory,
+            regime=regime,
+            forecast=forecast,
+            decision=decision,
+            options_volatility=self._option_volatility(
+                features.seconds_remaining if features else 0
+            ),
+            market_rejections=discovered_rejections,
+            intelligence=None,
+            model_stability=stability,
+            terminal_forecast=terminal,
+            mispricing=mispricing,
+            terminal_explanation=explanation,
+            strike_candidates=tuple(candidate_rows),
+        )
 
     def _scan_terminal(
         self,
@@ -435,16 +708,97 @@ class HourForecastingScanner:
             config=self.discovery_config,
             reference_price=reference_price,
         )
+        discovery_batch = discover_all_hour_markets(
+            candidate_markets,
+            orderbooks=orderbooks,
+            now=observed_at,
+            config=self.discovery_config,
+            reference_price=reference_price,
+            strike_count=10,
+        )
+        candidate_markets_snapshots = list(discovery_batch.markets)
         market = discovered.market
+        if self.terminal_mode and candidate_markets_snapshots:
+            market = candidate_markets_snapshots[0]
+        elif market is None and candidate_markets_snapshots:
+            market = candidate_markets_snapshots[0]
         if market is None:
             reason = f"no valid active {series} 1-hour BRTI contract"
             return HourForecastCycle(
                 observed_at,
                 "FAILED",
                 reason,
-                decision=self._no_trade(reason, "market_discovery", discovered.rejections),
-                market_rejections=dict(discovered.rejections),
+                decision=self._no_trade(reason, "market_discovery", discovery_batch.rejections),
+                market_rejections=dict(discovery_batch.rejections),
             )
+
+        if self.terminal_mode and candidate_markets_snapshots:
+            for idx, snap in enumerate(candidate_markets_snapshots):
+                candidate_markets_snapshots[idx] = replace(
+                    snap,
+                    current_position=self.position_lookup(snap.ticker),
+                    open_orders=self.orders_lookup(snap.ticker),
+                )
+            try:
+                benchmark = self.benchmark.get_quote(now=observed_at)
+            except (BenchmarkDataError, SupportingFeedError) as exc:
+                reason = f"primary BRTI unavailable: {exc}"
+                return HourForecastCycle(
+                    observed_at,
+                    "FAILED",
+                    reason,
+                    market=market,
+                    decision=self._no_trade(reason, "primary_brti", str(exc)),
+                    market_rejections=dict(discovery_batch.rejections),
+                )
+            if isinstance(self.benchmark, KalshiCFBenchmarkClient):
+                try:
+                    raw = self.benchmark.kalshi.get(
+                        "/cfbenchmarks/values",
+                        params={"id": self.benchmark.index_id},
+                    )
+                    envelope = raw.get("data", raw) if isinstance(raw, dict) else raw
+                    history = parse_kalshi_cfbenchmarks_history(
+                        envelope,
+                        now=observed_at,
+                        history_seconds=self.features.config.history_seconds,
+                    )
+                    if history:
+                        self.features.add_quotes(history)
+                    else:
+                        self.features.add_quote(benchmark)
+                except Exception:
+                    self.features.add_quote(benchmark)
+            else:
+                self.features.add_quote(benchmark)
+
+            supporting: SupportingAggregate | None = None
+            supporting_reason = ""
+            if benchmark.is_proxy and isinstance(self.benchmark, ConstituentBRTIProxy):
+                supporting = self.benchmark.last_aggregate
+            else:
+                try:
+                    supporting = self.supporting.get_aggregate(now=observed_at)
+                    if supporting.dispersion > self.config.data.max_supporting_dispersion:
+                        supporting_reason = (
+                            f"supporting venue dispersion {supporting.dispersion:.4%} exceeds limit"
+                        )
+                        supporting = None
+                except InsufficientSupportingFeeds as exc:
+                    supporting_reason = str(exc)
+
+            return self._scan_terminal_multi(
+                observed_at=observed_at,
+                markets=candidate_markets_snapshots,
+                benchmark=benchmark,
+                supporting=supporting,
+                supporting_reason=supporting_reason,
+                discovered_rejections=dict(discovery_batch.rejections),
+                risk_locked=risk_locked,
+                duplicate_entry=duplicate_entry,
+                risk_manager=risk_manager,
+            )
+
         market = replace(
             market,
             current_position=self.position_lookup(market.ticker),
@@ -539,28 +893,6 @@ class HourForecastingScanner:
             if market.yes_bid is not None and market.yes_ask is not None
             else None
         )
-
-        if self.terminal_mode:
-            return self._scan_terminal(
-                observed_at=observed_at,
-                market=market,
-                benchmark=benchmark,
-                supporting=supporting,
-                supporting_reason=supporting_reason,
-                bundle=bundle,
-                features=features,
-                trend=trend,
-                vol=vol,
-                regime=regime,
-                trajectory=trajectory,
-                options_vol=options_vol,
-                market_prior=market_prior,
-                window_regime=window_regime,
-                discovered_rejections=dict(discovered.rejections),
-                risk_locked=risk_locked,
-                duplicate_entry=duplicate_entry,
-                risk_manager=risk_manager,
-            )
 
         forecast = self.model.estimate(
             features,
