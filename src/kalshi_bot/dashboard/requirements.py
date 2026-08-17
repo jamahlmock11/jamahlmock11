@@ -779,4 +779,34 @@ def enrich_decision(row: dict[str, Any]) -> dict[str, Any]:
     payload = _parse_payload(row)
     enriched.update(build_trade_requirements(row))
     enriched["reversal_status"] = build_reversal_status(payload)
+    terminal = payload.get("terminal")
+    mispricing = payload.get("mispricing")
+    if terminal:
+        enriched["terminal_forecast"] = terminal
+        enriched["terminal_explanation"] = terminal.get("explanation") or payload.get(
+            "terminal_explanation"
+        )
+        enriched["expected_terminal_brti"] = terminal.get("expected_terminal_brti")
+        enriched["terminal_p_yes"] = terminal.get("p_yes")
+        enriched["terminal_p_no"] = terminal.get("p_no")
+        enriched["terminal_volatility"] = terminal.get("terminal_volatility")
+    if mispricing:
+        enriched["mispricing"] = mispricing
+        enriched["yes_net_edge_pp"] = (
+            round(float(mispricing["yes_net_edge"]) * 100, 1)
+            if mispricing.get("yes_net_edge") is not None
+            else None
+        )
+        enriched["no_net_edge_pp"] = (
+            round(float(mispricing["no_net_edge"]) * 100, 1)
+            if mispricing.get("no_net_edge") is not None
+            else None
+        )
+        enriched["required_edge_pp"] = (
+            round(float(mispricing["required_edge"]) * 100, 1)
+            if mispricing.get("required_edge") is not None
+            else None
+        )
+    if payload.get("terminal_mode"):
+        enriched["terminal_mode"] = True
     return enriched

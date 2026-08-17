@@ -40,6 +40,13 @@ from kalshi_bot.hour.feature_engine import HourFeatureBundle, HourFeatureEngine
 from kalshi_bot.hour.probability_model import HourProbabilityModel, model_stability
 from kalshi_bot.hour.regime_detector import classify_hour_regime
 from kalshi_bot.hour.trajectory_model import TrajectoryForecast, forecast_trajectory
+from kalshi_bot.hour.terminal_decision import (
+    HourTerminalDecisionEngine,
+    format_terminal_explanation,
+    terminal_decision_config_from_app,
+)
+from kalshi_bot.hour.terminal_probability import TerminalForecast, TerminalProbabilityEngine
+from kalshi_bot.hour.prediction_store import PredictionStore
 from kalshi_bot.hour.trend_engine import TrendSnapshot
 from kalshi_bot.intelligence.orchestrator import IntelligenceOrchestrator, IntelligenceReport
 from kalshi_bot.strategies.decision import DecisionEngine, decision_config_from_app
@@ -72,6 +79,9 @@ class HourForecastCycle:
     market_rejections: dict[str, tuple[str, ...]] | None = None
     intelligence: IntelligenceReport | None = None
     model_stability: float | None = None
+    terminal_forecast: TerminalForecast | None = None
+    mispricing: MispricingAssessment | None = None
+    terminal_explanation: str | None = None
 
     @property
     def features(self) -> FeatureSnapshot | None:
@@ -99,6 +109,7 @@ class HourForecastingScanner:
         intelligence: IntelligenceOrchestrator | None = None,
         position_lookup: PositionLookup | None = None,
         orders_lookup: OrdersLookup | None = None,
+        prediction_store: PredictionStore | None = None,
     ) -> None:
         self.kalshi = kalshi
         self.benchmark = benchmark
@@ -133,6 +144,28 @@ class HourForecastingScanner:
         self.entry_tracker = EntrySignalTracker(
             required_polls=config.strategy.entry_signal_persistence_polls,
         )
+        terminal_cfg = config.terminal_probability
+        self.terminal_mode = terminal_cfg.enabled
+        if self.terminal_mode:
+            self.terminal_engine = TerminalProbabilityEngine(
+                model=self.model,
+                model_version=hour_cfg.model_version,
+            )
+            self.terminal_decision_engine = HourTerminalDecisionEngine(
+                terminal_decision_config_from_app(config)
+            )
+            self.prediction_store = prediction_store or PredictionStore(
+                terminal_cfg.predictions_db_path
+            )
+            self.entry_tracker = EntrySignalTracker(
+                required_polls=terminal_cfg.signal_persistence_polls,
+            )
+            self._calibrator = None
+        else:
+            self.terminal_engine = None
+            self.terminal_decision_engine = None
+            self.prediction_store = None
+            self._calibrator = None
 
     @staticmethod
     def _no_trade(reason: str, gate: str, observed: object = None) -> DecisionResult:
@@ -160,6 +193,191 @@ class HourForecastingScanner:
             return smile.atm_iv(self.config.pricing.default_iv) if smile else None
         except Exception:
             return None
+
+    def _load_calibrator(self, observed_at: datetime):
+        terminal_cfg = self.config.terminal_probability
+        if not terminal_cfg.calibration.enabled or self.prediction_store is None:
+            return None
+        try:
+            return self.prediction_store.build_calibrator(cutoff=observed_at)
+        except Exception:
+            return None
+
+    def _scan_terminal(
+        self,
+        *,
+        observed_at: datetime,
+        market: MarketSnapshot,
+        benchmark: BenchmarkQuote,
+        supporting: SupportingAggregate | None,
+        supporting_reason: str,
+        bundle: HourFeatureBundle,
+        features: FeatureSnapshot,
+        trend: TrendSnapshot,
+        vol,
+        regime: Regime,
+        trajectory: TrajectoryForecast,
+        options_vol: float | None,
+        market_prior: float | None,
+        window_regime,
+        discovered_rejections: dict,
+        risk_locked: bool,
+        duplicate_entry: bool,
+        risk_manager: RiskManager | None,
+    ) -> HourForecastCycle:
+        terminal_cfg = self.config.terminal_probability
+        calibrator = self._load_calibrator(observed_at)
+        self._calibrator = calibrator
+
+        if self.prediction_store is not None:
+            self.prediction_store.resolve_expired(
+                now=observed_at,
+                settlement_brti=benchmark.price,
+                ticker=market.ticker,
+                strike=market.strike,
+            )
+
+        try:
+            terminal = self.terminal_engine.estimate(
+                features,
+                regime,
+                trend,
+                vol,
+                market_strike=market.strike,
+                settlement_reference=market.reference or "CME CF BRTI",
+                options_volatility=options_vol,
+                market_prior=market_prior,
+                window_regime=window_regime,
+                calibrator=calibrator if calibrator and calibrator.fit_cutoff else None,
+            )
+        except ValueError as exc:
+            reason = f"terminal probability failed: {exc}"
+            return HourForecastCycle(
+                observed_at,
+                "FAILED",
+                reason,
+                market=market,
+                benchmark=benchmark,
+                supporting=supporting,
+                bundle=bundle,
+                trend=trend,
+                trajectory=trajectory,
+                regime=regime,
+                decision=self._no_trade(reason, "terminal_probability", str(exc)),
+                market_rejections=discovered_rejections,
+            )
+
+        if benchmark.is_proxy:
+            shrunk = 0.5 + (terminal.calibrated_p_yes - 0.5) * 0.80
+            terminal = replace(
+                terminal,
+                calibrated_p_yes=shrunk,
+                calibrated_p_no=1.0 - shrunk,
+                confidence=terminal.confidence * 0.80,
+                notes=terminal.notes + ("unofficial proxy: probability/confidence shrunk",),
+            )
+
+        calibration_pass = True
+        if terminal_cfg.calibration.enabled and self.prediction_store is not None:
+            calibration_pass = self.prediction_store.calibration_pass(
+                min_samples=terminal_cfg.calibration.min_samples_per_bucket,
+                max_gap=terminal_cfg.calibration.max_calibration_gap,
+            )
+
+        decision, mispricing, stability_swing = self.terminal_decision_engine.decide(
+            market,
+            terminal,
+            features,
+            benchmark,
+            now=observed_at,
+            risk_locked=risk_locked,
+            duplicate_entry=duplicate_entry,
+            risk_manager=risk_manager,
+            calibration_pass=calibration_pass,
+            regime=regime,
+        )
+        decision = apply_signal_persistence_gate(
+            decision,
+            ticker=market.ticker,
+            tracker=self.entry_tracker,
+        )
+
+        forecast = terminal.as_probability_estimate()
+        stability = model_stability(forecast)
+        liquidity_pass = not any(
+            f.gate == "liquidity" for f in decision.gate_failures
+        )
+        explanation = format_terminal_explanation(
+            terminal,
+            mispricing,
+            decision,
+            calibration_pass=calibration_pass,
+            liquidity_pass=liquidity_pass,
+            stability_swing=stability_swing,
+        )
+
+        if self.prediction_store is not None:
+            self.prediction_store.record(
+                timestamp=observed_at,
+                ticker=market.ticker,
+                strike=terminal.strike,
+                expiration=market.expiration,
+                brti_price=terminal.current_brti,
+                seconds_remaining=terminal.seconds_remaining,
+                predicted_p_yes=terminal.raw_p_yes,
+                calibrated_p_yes=terminal.calibrated_p_yes,
+                market_yes_ask=market.yes_ask,
+                market_no_ask=market.no_ask,
+                yes_net_edge=mispricing.yes_net_edge if mispricing else None,
+                no_net_edge=mispricing.no_net_edge if mispricing else None,
+                volatility=features.realized_vol,
+                regime=regime.value if regime else None,
+                confidence=terminal.confidence,
+                signal_agreement=terminal.signal_agreement,
+                action=decision.action.value,
+                payload={
+                    "explanation": explanation,
+                    "required_edge": mispricing.required_edge if mispricing else None,
+                    "expected_terminal_brti": terminal.expected_terminal_brti,
+                    "terminal_volatility": terminal.terminal_volatility,
+                    "normalized_strike_distance": terminal.normalized_strike_distance,
+                },
+            )
+
+        health = (
+            "PROXY"
+            if benchmark.is_proxy
+            else "DEGRADED"
+            if supporting is None
+            else "HEALTHY"
+        )
+        reason = f"{decision.reason}\n{explanation}"
+        if benchmark.is_proxy:
+            reason = f"{reason}; unofficial constituent proxy (PAPER only)"
+        if supporting_reason:
+            reason = f"{reason}; supporting feeds: {supporting_reason}"
+
+        return HourForecastCycle(
+            timestamp=observed_at,
+            data_health=health,
+            reason=reason,
+            market=market,
+            benchmark=benchmark,
+            supporting=supporting,
+            bundle=bundle,
+            trend=trend,
+            trajectory=trajectory,
+            regime=regime,
+            forecast=forecast,
+            decision=decision,
+            options_volatility=options_vol,
+            market_rejections=discovered_rejections,
+            intelligence=None,
+            model_stability=stability,
+            terminal_forecast=terminal,
+            mispricing=mispricing,
+            terminal_explanation=explanation,
+        )
 
     def scan(
         self,
@@ -321,6 +539,29 @@ class HourForecastingScanner:
             if market.yes_bid is not None and market.yes_ask is not None
             else None
         )
+
+        if self.terminal_mode:
+            return self._scan_terminal(
+                observed_at=observed_at,
+                market=market,
+                benchmark=benchmark,
+                supporting=supporting,
+                supporting_reason=supporting_reason,
+                bundle=bundle,
+                features=features,
+                trend=trend,
+                vol=vol,
+                regime=regime,
+                trajectory=trajectory,
+                options_vol=options_vol,
+                market_prior=market_prior,
+                window_regime=window_regime,
+                discovered_rejections=dict(discovered.rejections),
+                risk_locked=risk_locked,
+                duplicate_entry=duplicate_entry,
+                risk_manager=risk_manager,
+            )
+
         forecast = self.model.estimate(
             features,
             regime,

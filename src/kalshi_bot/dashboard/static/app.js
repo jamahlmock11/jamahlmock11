@@ -137,6 +137,24 @@
           : "FLAT";
         const reqs = renderRequirementsList(row.requirements);
 
+        const terminalBlock =
+          row.terminal_mode && row.terminal_forecast
+            ? `
+        <div class="hero-terminal">
+          <div class="hero-terminal-title">Terminal forecast</div>
+          <div class="hero-terminal-grid">
+            <span>BRTI ${row.brti_price != null ? money(row.brti_price) : "—"}</span>
+            <span>Exp terminal ${row.expected_terminal_brti != null ? money(row.expected_terminal_brti) : "—"}</span>
+            <span>P(YES) ${row.terminal_p_yes != null ? (row.terminal_p_yes * 100).toFixed(1) + "%" : "—"}</span>
+            <span>P(NO) ${row.terminal_p_no != null ? (row.terminal_p_no * 100).toFixed(1) + "%" : "—"}</span>
+            <span>YES edge ${row.yes_net_edge_pp != null ? row.yes_net_edge_pp + "pp" : "—"}</span>
+            <span>NO edge ${row.no_net_edge_pp != null ? row.no_net_edge_pp + "pp" : "—"}</span>
+            <span>Need ${row.required_edge_pp != null ? row.required_edge_pp + "pp" : "—"}</span>
+          </div>
+          <pre class="hero-explanation">${row.terminal_explanation || ""}</pre>
+        </div>`
+            : "";
+
         return `
       <article class="decision-hero ${signalClass(signal)}">
         <div class="hero-signal-bar">
@@ -192,6 +210,7 @@
           <span class="hero-why-label">${signal === "notrade" ? "Why no trade" : "Status"}</span>
           <span class="hero-why-text">${whyText}</span>
         </div>
+        ${terminalBlock}
         <div class="requirements-panel">
           <div class="requirements-head">
             <h3>Trade requirements</h3>

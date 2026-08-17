@@ -180,6 +180,15 @@ def build_assessment(decision: dict[str, Any]) -> dict[str, Any]:
         "data_health": decision.get("data_health"),
         "regime": decision.get("regime"),
         "reversal_status": decision.get("reversal_status"),
+        "terminal_mode": decision.get("terminal_mode"),
+        "terminal_forecast": decision.get("terminal_forecast"),
+        "terminal_explanation": decision.get("terminal_explanation"),
+        "expected_terminal_brti": decision.get("expected_terminal_brti"),
+        "terminal_p_yes": decision.get("terminal_p_yes"),
+        "terminal_p_no": decision.get("terminal_p_no"),
+        "yes_net_edge_pp": decision.get("yes_net_edge_pp"),
+        "no_net_edge_pp": decision.get("no_net_edge_pp"),
+        "required_edge_pp": decision.get("required_edge_pp"),
     }
 
 

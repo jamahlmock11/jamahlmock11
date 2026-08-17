@@ -237,6 +237,7 @@ class HourTradingBot:
         journal_payload: dict = {
             "horizon": "1h",
             "model_version": self.config.hour.model_version,
+            "terminal_mode": self.config.terminal_probability.enabled,
             "required_edge": (
                 cycle.decision.required_edge if cycle.decision else None
             ),
@@ -274,6 +275,28 @@ class HourTradingBot:
                 "open_exposure_usd": self.risk.state.open_exposure_usd,
             },
         }
+        if cycle.terminal_forecast is not None:
+            tf = cycle.terminal_forecast
+            journal_payload["terminal"] = {
+                "strike": tf.strike,
+                "current_brti": tf.current_brti,
+                "expected_terminal_brti": tf.expected_terminal_brti,
+                "terminal_volatility": tf.terminal_volatility,
+                "p_yes": tf.calibrated_p_yes,
+                "p_no": tf.calibrated_p_no,
+                "confidence": tf.confidence,
+                "normalized_strike_distance": tf.normalized_strike_distance,
+                "explanation": cycle.terminal_explanation,
+            }
+        if cycle.mispricing is not None:
+            mp = cycle.mispricing
+            journal_payload["mispricing"] = {
+                "required_edge": mp.required_edge,
+                "yes_net_edge": mp.yes_net_edge,
+                "no_net_edge": mp.no_net_edge,
+                "best_side": mp.best_side.value if mp.best_side else None,
+                "best_net_edge": mp.best_net_edge,
+            }
         if cycle.features is not None:
             from kalshi_bot.models.strike_gravity import assess_strike_gravity
 
@@ -375,6 +398,8 @@ class HourTradingBot:
             table.add_row("Regime", cycle.regime.value)
         if decision:
             table.add_row("Decision", decision.action.value)
+            if cycle.terminal_explanation:
+                table.add_row("Terminal", cycle.terminal_explanation.replace("\n", " · "))
             if decision.edge is not None:
                 table.add_row("Edge", f"{decision.edge:.1%}")
             if decision.required_edge is not None:

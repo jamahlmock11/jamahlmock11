@@ -395,8 +395,8 @@ def test_1h_yaml_loads_without_validation_error():
     assert cfg.hour.max_entry_seconds_remaining == pytest.approx(2400)
     assert cfg.strategy.minimum_dominant_poll is None
     assert cfg.strategy.require_dominant_poll_side is False
-    assert cfg.strategy.min_entry_executable_cost == pytest.approx(0.75)
-    assert cfg.longshot.crowd_follow_price_band_cents == pytest.approx(0.03)
-    assert cfg.strategy.min_edge == pytest.approx(0.15)
+    assert cfg.strategy.min_entry_executable_cost == pytest.approx(0.0)
+    assert cfg.terminal_probability.enabled is True
+    assert cfg.strategy.min_edge == pytest.approx(0.10)
     assert cfg.strategy.late_seconds == pytest.approx(600)
     assert cfg.risk.min_hold_seconds == pytest.approx(120)
