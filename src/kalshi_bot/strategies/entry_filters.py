@@ -175,4 +175,5 @@ def apply_signal_persistence_gate(
         size_multiplier=decision.size_multiplier,
         quantity=decision.quantity,
         execution=decision.execution,
+        forecast_alignment=decision.forecast_alignment,
     )

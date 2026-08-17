@@ -16,6 +16,18 @@ cross_venue:
   min_edge_usd: 0.01
   order_size: 5
 
+forecast_alignment:
+  enabled: true
+  dominant_min_probability: 0.52
+  contrarian_edge_premium: 0.05
+  exceptional_edge_threshold: 0.22
+  min_conflict_confidence: 0.60
+  min_conflict_agreement: 0.62
+  min_selected_probability: 0.40
+  min_stability_confidence: 0.55
+  min_stability_agreement: 0.55
+  max_probability_deterioration: 0.08
+
 lag_reversal:
   enabled: true
   entry_enabled: false
@@ -148,8 +160,6 @@ strategy:
   require_trade_quality: false
   min_pattern_matches: 10
   block_opposing_patterns: true
-  require_forecast_alignment: true
-  forecast_alignment_min_probability: 0.52
   block_rally_contrarian_entries: true
   external_data_enabled: false
   entry_signal_persistence_polls: 2

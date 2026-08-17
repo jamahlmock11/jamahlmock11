@@ -66,6 +66,69 @@ class MeanReversionConfig(BaseModel):
     time_in_force: str = "good_til_canceled"
 
 
+class ForecastAlignmentConfig(BaseModel):
+    """Dynamic confidence/risk filter for contrarian mispricing entries (not a hard block)."""
+
+    enabled: bool = Field(
+        default=True,
+        description="Apply forecast-alignment risk filtering on contrarian entries.",
+    )
+    dominant_min_probability: float = Field(
+        default=0.52,
+        ge=0.0,
+        le=1.0,
+        description="Minimum dominant forecast probability before a side conflict applies.",
+    )
+    contrarian_edge_premium: float = Field(
+        default=0.05,
+        ge=0.0,
+        le=0.50,
+        description="Extra edge required when best-value side conflicts with forecast.",
+    )
+    exceptional_edge_threshold: float = Field(
+        default=0.22,
+        ge=0.0,
+        le=0.50,
+        description="Allow stable contrarian entries when mispricing exceeds this edge.",
+    )
+    min_conflict_confidence: float = Field(
+        default=0.60,
+        ge=0.0,
+        le=1.0,
+        description="Minimum ensemble confidence for contrarian confirmation.",
+    )
+    min_conflict_agreement: float = Field(
+        default=0.62,
+        ge=0.0,
+        le=1.0,
+        description="Minimum signal agreement for contrarian confirmation.",
+    )
+    min_selected_probability: float = Field(
+        default=0.40,
+        ge=0.0,
+        le=1.0,
+        description="Selected side must retain at least this strike-expiry probability.",
+    )
+    min_stability_confidence: float = Field(
+        default=0.55,
+        ge=0.0,
+        le=1.0,
+        description="Minimum confidence to treat probability as stable.",
+    )
+    min_stability_agreement: float = Field(
+        default=0.55,
+        ge=0.0,
+        le=1.0,
+        description="Minimum agreement to treat probability as stable.",
+    )
+    max_probability_deterioration: float = Field(
+        default=0.08,
+        ge=0.0,
+        le=0.50,
+        description="Max allowed drop in selected-side probability per poll before PASS.",
+    )
+
+
 class LagReversalConfig(BaseModel):
     """Momentum-exhaustion + Kalshi lag reversal score (optional entries)."""
 
@@ -323,16 +386,6 @@ class StrategyConfig(BaseModel):
         default=True,
         description="Block entries when enough similar historical setups lost money.",
     )
-    require_forecast_alignment: bool = Field(
-        default=True,
-        description="Block entries on the side opposite the dominant ensemble forecast.",
-    )
-    forecast_alignment_min_probability: float = Field(
-        default=0.52,
-        ge=0.0,
-        le=1.0,
-        description="Minimum dominant forecast probability before alignment is enforced.",
-    )
     block_rally_contrarian_entries: bool = Field(
         default=True,
         description=(
@@ -472,6 +525,9 @@ class AppConfig(BaseModel):
     spot_lag: SpotLagArbConfig = Field(default_factory=SpotLagArbConfig)
     orderbook_skew: OrderbookSkewConfig = Field(default_factory=OrderbookSkewConfig)
     mean_reversion: MeanReversionConfig = Field(default_factory=MeanReversionConfig)
+    forecast_alignment: ForecastAlignmentConfig = Field(
+        default_factory=ForecastAlignmentConfig
+    )
     lag_reversal: LagReversalConfig = Field(default_factory=LagReversalConfig)
     agents: AgentsConfig = Field(default_factory=AgentsConfig)
     intelligence: IntelligenceConfig = Field(default_factory=IntelligenceConfig)

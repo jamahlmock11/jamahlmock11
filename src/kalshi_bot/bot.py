@@ -462,6 +462,8 @@ class TradingBot:
             "min_entry_score": self.config.lag_reversal.min_entry_score,
             "rationale": lag_eval.rationale if lag_eval is not None else None,
         }
+        if cycle.decision is not None and cycle.decision.forecast_alignment is not None:
+            payload["forecast_alignment"] = cycle.decision.forecast_alignment
         if cycle.reversal_assessment is not None:
             ra = cycle.reversal_assessment
             if isinstance(ra, ReversalScoreAssessment):

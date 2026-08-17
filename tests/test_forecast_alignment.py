@@ -1,4 +1,4 @@
-"""Tests for forecast alignment and rally contrarian entry gates."""
+"""Tests for dynamic forecast-alignment risk filtering."""
 
 from __future__ import annotations
 
@@ -6,16 +6,22 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from kalshi_bot.config import PollConfig
+from kalshi_bot.config import ForecastAlignmentConfig, PollConfig
 from kalshi_bot.domain import (
     BenchmarkQuote,
     ContractSide,
     DecisionAction,
     FeatureSnapshot,
+    ProbabilityEstimate,
+    Regime,
     TrajectoryState,
 )
 from kalshi_bot.market.orderbook import parse_orderbook_fp
 from kalshi_bot.strategies.decision import DecisionConfig, DecisionEngine
+from kalshi_bot.strategies.forecast_alignment import (
+    ForecastAlignmentTracker,
+    evaluate_forecast_alignment,
+)
 
 NOW = datetime(2026, 8, 8, 12, 0, tzinfo=timezone.utc)
 
@@ -81,14 +87,12 @@ def _features(
     )
 
 
-def _forecast(*, p_up: float):
-    from kalshi_bot.domain import ProbabilityEstimate, Regime
-
+def _forecast(*, p_up: float, confidence: float = 0.75, agreement: float = 0.70):
     return ProbabilityEstimate(
         p_up=p_up,
         p_down=1 - p_up,
-        confidence=0.75,
-        signal_agreement=0.70,
+        confidence=confidence,
+        signal_agreement=agreement,
         component_probabilities={"terminal_distribution": p_up},
         regime=Regime.TREND_UP if p_up >= 0.5 else Regime.TREND_DOWN,
         raw_p_up=p_up,
@@ -112,19 +116,14 @@ def _engine(**overrides) -> DecisionEngine:
         minimum_confidence=0.0,
         minimum_agreement=0.55,
         poll=PollConfig(mode="disabled"),
+        forecast_alignment=ForecastAlignmentConfig(),
     )
     base.update(overrides)
     return DecisionEngine(DecisionConfig(**base))
 
 
-def test_forecast_alignment_blocks_no_when_ensemble_favors_up():
-    """Cheap NO book edge must not override a dominant UP ensemble forecast."""
-    engine = _engine(
-        require_forecast_alignment=True,
-        forecast_alignment_min_probability=0.52,
-        block_rally_contrarian_entries=False,
-    )
-    # YES expensive (low edge), NO cheap (high edge) but ensemble says UP 62%.
+def test_conflict_requires_stronger_edge_instead_of_hard_block():
+    engine = _engine(block_rally_contrarian_entries=False)
     decision = engine.decide(
         _market(yes_ask=0.72),
         _forecast(p_up=0.62),
@@ -133,14 +132,70 @@ def test_forecast_alignment_blocks_no_when_ensemble_favors_up():
         now=NOW,
     )
     assert decision.action is DecisionAction.NO_TRADE
-    assert any(f.gate == "forecast_alignment" for f in decision.gate_failures)
     assert decision.selected_side is ContractSide.NO
+    assert decision.forecast_alignment is not None
+    assert decision.forecast_alignment["conflict_status"] == "conflict"
+    assert decision.forecast_alignment["final_decision"] == "pass"
+    assert any(f.gate == "forecast_alignment" for f in decision.gate_failures)
+    assert "stronger mispricing" in decision.forecast_alignment["reason"]
+
+
+def test_exceptional_edge_allows_stable_contrarian_entry():
+    engine = _engine(block_rally_contrarian_entries=False)
+    decision = engine.decide(
+        _market(yes_ask=0.86),
+        _forecast(p_up=0.62),
+        _features(current_price=65_050, short_trend=0.0001),
+        _benchmark(),
+        now=NOW,
+    )
+    assert decision.action is DecisionAction.BUY_DOWN
+    assert decision.forecast_alignment is not None
+    assert decision.forecast_alignment["conflict_status"] == "conflict"
+    assert decision.forecast_alignment["final_decision"] == "allow"
+    assert decision.forecast_alignment["exceptional_edge"] is True
+
+
+def test_deteriorating_probability_passes_contrarian_setup():
+    engine = _engine(block_rally_contrarian_entries=False)
+    engine.decide(
+        _market(yes_ask=0.86),
+        _forecast(p_up=0.55),
+        _features(current_price=65_050, short_trend=0.0001),
+        _benchmark(),
+        now=NOW,
+    )
+    decision = engine.decide(
+        _market(yes_ask=0.86),
+        _forecast(p_up=0.68),
+        _features(current_price=65_050, short_trend=0.0001),
+        _benchmark(),
+        now=NOW,
+    )
+    assert decision.action is DecisionAction.NO_TRADE
+    assert decision.forecast_alignment is not None
+    assert decision.forecast_alignment["probability_deteriorating"] is True
+    assert decision.forecast_alignment["final_decision"] == "pass"
+
+
+def test_aligned_entry_logs_alignment_metadata():
+    engine = _engine(block_rally_contrarian_entries=True)
+    decision = engine.decide(
+        _market(yes_ask=0.40),
+        _forecast(p_up=0.62),
+        _features(current_price=65_050, short_trend=0.0003),
+        _benchmark(),
+        now=NOW,
+    )
+    assert decision.action is DecisionAction.BUY_UP
+    assert decision.forecast_alignment is not None
+    assert decision.forecast_alignment["conflict_status"] == "aligned"
+    assert decision.forecast_alignment["final_decision"] == "allow"
 
 
 def test_rally_gate_blocks_no_when_spot_above_strike_and_rallying():
-    """NO entries must not fire while BTC is above strike and moving up."""
     engine = _engine(
-        require_forecast_alignment=False,
+        forecast_alignment=ForecastAlignmentConfig(enabled=False),
         block_rally_contrarian_entries=True,
     )
     decision = engine.decide(
@@ -154,17 +209,22 @@ def test_rally_gate_blocks_no_when_spot_above_strike_and_rallying():
     assert any(f.gate == "spot_momentum_alignment" for f in decision.gate_failures)
 
 
-def test_aligned_yes_entry_allowed_when_ensemble_and_spot_agree():
-    engine = _engine(
-        require_forecast_alignment=True,
-        block_rally_contrarian_entries=True,
+def test_evaluate_forecast_alignment_log_fields():
+    tracker = ForecastAlignmentTracker()
+    assessment, failure = evaluate_forecast_alignment(
+        ticker="KXBTC15M-TEST",
+        selected_side=ContractSide.NO,
+        side_probabilities={ContractSide.YES: 0.62, ContractSide.NO: 0.38},
+        forecast=_forecast(p_up=0.62),
+        executable_cost=0.30,
+        edge=0.08,
+        required_edge=0.10,
+        cfg=ForecastAlignmentConfig(),
+        tracker=tracker,
     )
-    decision = engine.decide(
-        _market(yes_ask=0.40),
-        _forecast(p_up=0.62),
-        _features(current_price=65_050, short_trend=0.0003),
-        _benchmark(),
-        now=NOW,
-    )
-    assert decision.action is DecisionAction.BUY_UP
-    assert not any(f.gate == "forecast_alignment" for f in decision.gate_failures)
+    log = assessment.as_log_dict()
+    assert log["model_probability"] == pytest.approx(0.38)
+    assert log["kalshi_price"] == pytest.approx(0.30)
+    assert log["edge"] == pytest.approx(0.08)
+    assert log["forecast_direction"] == "UP"
+    assert failure is not None

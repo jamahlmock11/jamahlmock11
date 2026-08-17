@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
-from kalshi_bot.config import AppConfig, LongshotConfig, PollConfig
+from kalshi_bot.config import AppConfig, ForecastAlignmentConfig, LongshotConfig, PollConfig
 from kalshi_bot.domain import (
     BenchmarkQuote,
     ContractSide,
@@ -38,6 +38,10 @@ from kalshi_bot.strategies.longshot import (
     resolve_longshot_entries,
 )
 from kalshi_bot.strategies.entry_filters import is_in_chop_zone
+from kalshi_bot.strategies.forecast_alignment import (
+    ForecastAlignmentTracker,
+    evaluate_forecast_alignment,
+)
 from kalshi_bot.market.poll_alignment import (
     PollConfig as PollAlignmentConfig,
     PollSnapshot,
@@ -163,9 +167,10 @@ class DecisionConfig:
     longshot: LongshotConfig = field(default_factory=LongshotConfig)
     chop_zone_min_sigma: float = 0.0
     require_orderbook_depth: bool = False
-    require_forecast_alignment: bool = True
-    forecast_alignment_min_probability: float = 0.52
     block_rally_contrarian_entries: bool = True
+    forecast_alignment: ForecastAlignmentConfig = field(
+        default_factory=ForecastAlignmentConfig
+    )
 
     @property
     def effective_minimum_edge(self) -> Decimal:
@@ -239,9 +244,8 @@ def decision_config_from_app(
         longshot=config.longshot,
         chop_zone_min_sigma=strategy.chop_zone_min_sigma,
         require_orderbook_depth=strategy.require_orderbook_depth,
-        require_forecast_alignment=strategy.require_forecast_alignment,
-        forecast_alignment_min_probability=strategy.forecast_alignment_min_probability,
         block_rally_contrarian_entries=strategy.block_rally_contrarian_entries,
+        forecast_alignment=config.forecast_alignment,
     )
 
 
@@ -289,6 +293,7 @@ def _late_favorite_edge_floor(
 class DecisionEngine:
     def __init__(self, config: DecisionConfig | None = None) -> None:
         self.config = config or DecisionConfig()
+        self.alignment_tracker = ForecastAlignmentTracker()
 
     def _common_gates(
         self,
@@ -744,6 +749,27 @@ class DecisionEngine:
                     cfg.min_entry_executable_cost,
                 )
             )
+
+        alignment_assessment = None
+        if not cfg.longshot.enabled or not cfg.longshot.require_forecast_alignment:
+            alignment_assessment, alignment_failure = evaluate_forecast_alignment(
+                ticker=market.ticker,
+                selected_side=selected_side,
+                side_probabilities=side_probabilities,
+                forecast=forecast,
+                executable_cost=selected_execution.executable_cost,
+                edge=selected_edge,
+                required_edge=float(required_edge),
+                cfg=cfg.forecast_alignment,
+                tracker=self.alignment_tracker,
+            )
+            if alignment_failure is not None:
+                failures.append(alignment_failure)
+            required_edge = max(
+                required_edge,
+                Decimal(str(alignment_assessment.effective_required_edge)),
+            )
+
         if (
             entry_ctx is None
             or entry_ctx.min_edge_override is None
@@ -758,29 +784,6 @@ class DecisionEngine:
                         float(required_edge),
                     )
                 )
-
-        dominant_side = (
-            ContractSide.YES if forecast.p_up >= forecast.p_down else ContractSide.NO
-        )
-        dominant_prob = max(forecast.p_up, forecast.p_down)
-        alignment_required = (
-            cfg.longshot.require_forecast_alignment
-            if cfg.longshot.enabled
-            else cfg.require_forecast_alignment
-        )
-        if (
-            alignment_required
-            and dominant_prob + 1e-12 >= cfg.forecast_alignment_min_probability
-            and selected_side is not dominant_side
-        ):
-            failures.append(
-                _failure(
-                    "forecast_alignment",
-                    "best edge side conflicts with dominant forecast direction",
-                    selected_side.value,
-                    dominant_side.value,
-                )
-            )
 
         if cfg.block_rally_contrarian_entries:
             strike = (
@@ -911,6 +914,9 @@ class DecisionEngine:
             if poll_failure is not None:
                 failures.append(poll_failure)
 
+        alignment_log = (
+            alignment_assessment.as_log_dict() if alignment_assessment is not None else None
+        )
         if failures:
             return DecisionResult(
                 action=DecisionAction.NO_TRADE,
@@ -927,6 +933,7 @@ class DecisionEngine:
                 required_edge=float(required_edge),
                 quantity=trade_quantity,
                 execution=selected_execution,
+                forecast_alignment=alignment_log,
             )
         action = (
             DecisionAction.BUY_UP
@@ -954,6 +961,7 @@ class DecisionEngine:
             quantity=trade_quantity,
             execution=selected_execution,
             size_multiplier=size_multiplier,
+            forecast_alignment=alignment_log,
         )
 
 
