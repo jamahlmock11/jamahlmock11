@@ -40,7 +40,8 @@ terminal_probability:
   probability_stability_max_swing: 0.08
   require_orderbook_depth: true
   max_spread: 0.05
-  min_entry_executable_cost: 0.0
+  min_entry_executable_cost: 0.50
+  max_entry_executable_cost: 0.50
   thesis_invalid_min_probability: 0.45
   thesis_invalid_margin: 0.12
   fallback_min_edge: 0.10
@@ -89,7 +90,8 @@ strategy:
   late_favorite_seconds: 0
   late_favorite_poll_threshold: 0.80
   late_favorite_min_edge: 0.04
-  min_entry_executable_cost: 0.0
+  min_entry_executable_cost: 0.50
+  max_entry_executable_cost: 0.50
   minimum_dominant_poll: null
   require_dominant_poll_side: false
   order_quantity: 1
@@ -142,7 +144,7 @@ risk:
   position_reversal_min_z_support: -0.30
   position_reversal_wrong_side_seconds: 120
   position_reversal_min_forecast_probability: 0.48
-  kelly_enabled: true
+  kelly_enabled: false
   kelly_fraction: 0.25
   kelly_max_fraction: 0.25
   kelly_bankroll_usd: 16.22

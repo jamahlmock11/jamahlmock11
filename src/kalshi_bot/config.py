@@ -469,6 +469,12 @@ class TerminalProbabilityConfig(BaseModel):
     require_orderbook_depth: bool = True
     max_spread: float = Field(default=0.05, ge=0.0, le=1.0)
     min_entry_executable_cost: float = Field(default=0.0, ge=0.0, le=1.0)
+    max_entry_executable_cost: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description="When set, block entries above this executable price (e.g. 0.50 for 50¢ only).",
+    )
     thesis_invalid_min_probability: float = Field(default=0.45, ge=0.0, le=1.0)
     thesis_invalid_margin: float = Field(default=0.12, ge=0.0, le=1.0)
     fallback_min_edge: float = Field(default=0.10, ge=0.0, le=1.0)

@@ -593,6 +593,19 @@ class HourTerminalDecisionEngine:
                     tcfg.min_entry_executable_cost,
                 )
             )
+        if (
+            tcfg.max_entry_executable_cost is not None
+            and selected_mispricing.executable_cost
+            > tcfg.max_entry_executable_cost + 1e-12
+        ):
+            failures.append(
+                _failure(
+                    "max_entry_price",
+                    "executable entry price above configured ceiling",
+                    selected_mispricing.executable_cost,
+                    tcfg.max_entry_executable_cost,
+                )
+            )
 
         if tcfg.forecast_alignment:
             side_prob = selected_mispricing.model_probability
