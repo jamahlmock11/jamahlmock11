@@ -127,7 +127,87 @@ def test_dashboard_api(tmp_path: Path):
     assert "total_trades" in analytics
 
 
-def test_build_reversal_status_signal_only():
+def test_dashboard_edge_desk_split_horizons(tmp_path: Path):
+    db15 = tmp_path / "15m.db"
+    db1h = tmp_path / "1h.db"
+    j15 = TradeJournal(db15)
+    j1h = TradeJournal(db1h)
+    now = datetime.now(timezone.utc)
+
+    def _cycle(ticker: str):
+        return SimpleNamespace(
+            timestamp=now,
+            data_health="HEALTHY",
+            reason="scan",
+            market=SimpleNamespace(
+                ticker=ticker,
+                strike=65000,
+                expiration=now + timedelta(minutes=30),
+                yes_bid=0.68,
+                yes_ask=0.70,
+                no_bid=0.30,
+                no_ask=0.32,
+                current_position=None,
+            ),
+            benchmark=SimpleNamespace(price=65020, is_proxy=False),
+            features=None,
+            forecast=None,
+            regime=None,
+            decision=DecisionResult(
+                action=DecisionAction.NO_TRADE,
+                reason="test",
+                gate_failures=(),
+                current_direction=Direction.FLAT,
+                predicted_direction=Direction.UP,
+                trade_direction=Direction.FLAT,
+            ),
+        )
+
+    j15.log_decision(_cycle("KXBTC15M-X"), dry_run=False, payload={"horizon": "15m"})
+    j1h.log_decision(
+        _cycle("KXBTCD-X"),
+        dry_run=False,
+        payload={
+            "horizon": "1h",
+            "terminal_mode": True,
+            "mispricing_enabled": False,
+            "strike_candidates": [
+                {
+                    "ticker": "KXBTCD-A",
+                    "strike": 64000,
+                    "action": "NO_TRADE",
+                    "p_yes": 0.9,
+                    "yes_net_edge": -0.2,
+                    "no_net_edge": 0.1,
+                    "required_edge": 0.08,
+                    "yes_ask": 0.9,
+                    "no_ask": 0.1,
+                    "strong_evidence": True,
+                }
+            ],
+            "terminal": {
+                "p_yes": 0.72,
+                "p_no": 0.28,
+                "expected_terminal_brti": 65100,
+                "explanation": "terminal test",
+            },
+        },
+    )
+
+    from kalshi_bot.journal import CombinedTradeJournal
+
+    combined = CombinedTradeJournal([db15, db1h])
+    client = TestClient(create_app(journal=combined))
+    desk = client.get("/api/edge-desk").json()
+    assert desk["assessment_15m"] is not None
+    assert desk["assessment_1h"] is not None
+    assert desk["assessment_15m"]["horizon"] == "15m"
+    assert desk["assessment_1h"]["horizon"] == "1h"
+    assert desk["rules_15m"]
+    assert desk["rules_1h"]
+    assert len(desk["assessment_1h"]["strike_candidates"]) == 1
+
+
     status = build_reversal_status(
         {
             "lag_reversal": {

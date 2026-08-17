@@ -809,4 +809,11 @@ def enrich_decision(row: dict[str, Any]) -> dict[str, Any]:
         )
     if payload.get("terminal_mode"):
         enriched["terminal_mode"] = True
+    if payload.get("mispricing_enabled") is not None:
+        enriched["mispricing_enabled"] = bool(payload.get("mispricing_enabled"))
+    strike_candidates = payload.get("strike_candidates")
+    if strike_candidates:
+        enriched["strike_candidates"] = strike_candidates
+    if payload.get("model_version"):
+        enriched["model_version"] = payload.get("model_version")
     return enriched

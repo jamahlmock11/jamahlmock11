@@ -238,6 +238,7 @@ class HourTradingBot:
             "horizon": "1h",
             "model_version": self.config.hour.model_version,
             "terminal_mode": self.config.terminal_probability.enabled,
+            "mispricing_enabled": self.config.terminal_probability.mispricing_enabled,
             "required_edge": (
                 cycle.decision.required_edge if cycle.decision else None
             ),

@@ -33,11 +33,59 @@
 
     <section class="section decisions-section">
       <div class="section-head">
-        <h2 class="section-title">Live decisions</h2>
+        <h2 class="section-title">Live bots</h2>
         <span class="section-hint">green = in trade · yellow = close · red = blocked</span>
       </div>
-      <div class="decision-heroes" id="decisionHeroes">
-        <div class="hero-placeholder">Loading decisions…</div>
+
+      <div class="bot-panel" id="panel15m" data-horizon="15m">
+        <div class="bot-panel-head">
+          <div>
+            <h3 class="bot-panel-title">BTC 15 minute</h3>
+            <p class="bot-panel-summary" id="summary15m">—</p>
+          </div>
+          <span class="bot-panel-badge" id="badge15m">15m</span>
+        </div>
+        <div class="bot-rules" id="rules15m"></div>
+        <div class="decision-heroes" id="hero15m">
+          <div class="hero-placeholder">Waiting for 15m bot scan…</div>
+        </div>
+      </div>
+
+      <div class="bot-panel bot-panel-hour" id="panel1h" data-horizon="1h">
+        <div class="bot-panel-head">
+          <div>
+            <h3 class="bot-panel-title">BTC 1 hour</h3>
+            <p class="bot-panel-summary" id="summary1h">—</p>
+          </div>
+          <span class="bot-panel-badge">1h · KXBTCD</span>
+        </div>
+        <div class="bot-rules" id="rules1h"></div>
+        <div class="decision-heroes" id="hero1h">
+          <div class="hero-placeholder">Waiting for 1h bot scan…</div>
+        </div>
+        <div class="strike-candidates-wrap" id="strikeCandidates1h" hidden>
+          <div class="strike-candidates-head">
+            <h4>All strikes this hour</h4>
+            <span class="strike-candidates-hint">ranked · selected strike highlighted</span>
+          </div>
+          <div class="table-wrap compact">
+            <table class="strike-table">
+              <thead>
+                <tr>
+                  <th>Strike</th>
+                  <th>Action</th>
+                  <th>P(YES)</th>
+                  <th>YES edge</th>
+                  <th>NO edge</th>
+                  <th>Need</th>
+                  <th>Book</th>
+                  <th>Strong</th>
+                </tr>
+              </thead>
+              <tbody id="strikeCandidatesBody"></tbody>
+            </table>
+          </div>
+        </div>
       </div>
     </section>
 
@@ -62,7 +110,7 @@
 
     <section class="section">
       <div class="section-head">
-        <h2 class="section-title">Active edge rules</h2>
+        <h2 class="section-title">Combined rules</h2>
       </div>
       <p class="rules-summary" id="rulesSummary">—</p>
       <div class="rules-grid" id="rulesGrid">
@@ -94,6 +142,7 @@
           <thead>
             <tr>
               <th>Time</th>
+              <th>Bot</th>
               <th>Action</th>
               <th>Time left</th>
               <th>Edge</th>

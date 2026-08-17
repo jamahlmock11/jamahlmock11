@@ -189,7 +189,21 @@ def build_assessment(decision: dict[str, Any]) -> dict[str, Any]:
         "yes_net_edge_pp": decision.get("yes_net_edge_pp"),
         "no_net_edge_pp": decision.get("no_net_edge_pp"),
         "required_edge_pp": decision.get("required_edge_pp"),
+        "strike_candidates": decision.get("strike_candidates") or [],
+        "mispricing_enabled": decision.get("mispricing_enabled"),
+        "model_version": decision.get("model_version"),
+        "terminal_mode": decision.get("terminal_mode"),
     }
+
+
+def assessments_by_horizon(decisions: list[dict[str, Any]]) -> dict[str, dict[str, Any] | None]:
+    """Latest enriched assessment per bot horizon."""
+    by_horizon: dict[str, dict[str, Any] | None] = {"15m": None, "1h": None}
+    for row in decisions:
+        horizon = row.get("horizon") or "15m"
+        if horizon in by_horizon and by_horizon[horizon] is None:
+            by_horizon[horizon] = build_assessment(row)
+    return by_horizon
 
 
 def latest_assessments(decisions: list[dict[str, Any]]) -> list[dict[str, Any]]:
