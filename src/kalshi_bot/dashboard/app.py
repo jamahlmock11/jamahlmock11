@@ -54,7 +54,13 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
             rows = store.recent_decisions(limit)
         else:
             rows = store.recent_decisions(limit)
-        return [enrich_decision(row) for row in rows]
+        enriched: list[dict] = []
+        for row in rows:
+            try:
+                enriched.append(enrich_decision(row))
+            except Exception:
+                enriched.append(dict(row))
+        return enriched
 
     @app.get("/", response_class=HTMLResponse)
     def index(request: Request) -> HTMLResponse:
@@ -65,7 +71,10 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
         stats = _stats()
         last = stats.get("last_decision")
         if last:
-            stats["last_decision"] = enrich_decision(last)
+            try:
+                stats["last_decision"] = enrich_decision(last)
+            except Exception:
+                stats["last_decision"] = dict(last)
         return stats
 
     @app.get("/api/summary")

@@ -212,6 +212,7 @@
 
   function renderReversalStatus(status) {
     const banner = $("reversalBanner");
+    if (!banner) return;
     if (!status) {
       banner.hidden = true;
       return;
@@ -556,31 +557,61 @@
       .join("\n") || "—";
   }
 
-  async function refresh() {
+  async function fetchJson(url, { required = false, fallback = null } = {}) {
     try {
-      const [stats, trades, decisions, signals, scans, analytics] = await Promise.all([
-        fetch("/api/stats").then((r) => {
-          if (!r.ok) throw new Error(`stats HTTP ${r.status}`);
-          return r.json();
-        }),
-        fetch("/api/trades?limit=300").then((r) => {
-          if (!r.ok) throw new Error(`trades HTTP ${r.status}`);
-          return r.json();
-        }),
-        fetch("/api/decisions?limit=100").then((r) => {
-          if (!r.ok) throw new Error(`decisions HTTP ${r.status}`);
-          return r.json();
-        }),
-        fetch("/api/signals?limit=100").then((r) => r.ok ? r.json() : { signals: [] }),
-        fetch("/api/scans?limit=40").then((r) => r.ok ? r.json() : { scans: [] }),
-        fetch("/api/analytics").then((r) => r.ok ? r.json() : null),
-      ]);
+      const response = await fetch(url);
+      if (!response.ok) {
+        throw new Error(`${url} HTTP ${response.status}`);
+      }
+      return await response.json();
+    } catch (err) {
+      console.warn("Dashboard fetch failed:", err);
+      if (required) throw err;
+      return fallback;
+    }
+  }
+
+  async function refresh() {
+    let hadCoreData = false;
+    try {
+      const [statsResult, tradesResult, decisionsResult, signalsResult, scansResult, analyticsResult] =
+        await Promise.allSettled([
+          fetchJson("/api/stats", { required: true }),
+          fetchJson("/api/trades?limit=300", { required: true }),
+          fetchJson("/api/decisions?limit=100", { required: true }),
+          fetchJson("/api/signals?limit=100", { fallback: { signals: [] } }),
+          fetchJson("/api/scans?limit=40", { fallback: { scans: [] } }),
+          fetchJson("/api/analytics", { fallback: null }),
+        ]);
+
+      const stats =
+        statsResult.status === "fulfilled" ? statsResult.value : null;
+      const trades =
+        tradesResult.status === "fulfilled" ? tradesResult.value : null;
+      const decisions =
+        decisionsResult.status === "fulfilled" ? decisionsResult.value : null;
+
+      hadCoreData = Boolean(stats && trades && decisions);
+      if (!hadCoreData) {
+        throw new Error("Core dashboard API unavailable");
+      }
+
       $("offlineBanner").hidden = true;
       state.trades = trades.trades || [];
       renderStats(stats);
       renderTrades();
       renderDecisions(decisions.decisions || []);
       renderCurrentDecision((decisions.decisions || [])[0]);
+
+      const signals =
+        signalsResult.status === "fulfilled"
+          ? signalsResult.value
+          : { signals: [] };
+      const scans =
+        scansResult.status === "fulfilled" ? scansResult.value : { scans: [] };
+      const analytics =
+        analyticsResult.status === "fulfilled" ? analyticsResult.value : null;
+
       renderSignals(signals.signals || []);
       renderScans(scans.scans || []);
       renderAnalytics(analytics);
@@ -588,8 +619,10 @@
       $("pulse").classList.add("off");
       $("mode").textContent = "OFFLINE";
       $("offlineBanner").hidden = false;
-      $("decisionReason").textContent =
-        "Cannot reach the dashboard API. Open port 8787 from the Cursor Ports tab.";
+      if (!hadCoreData) {
+        $("decisionReason").textContent =
+          "Cannot reach the dashboard API. Open port 8787 from the Cursor Ports tab, then reload.";
+      }
       console.error(err);
     }
   }
