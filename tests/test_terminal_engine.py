@@ -142,11 +142,11 @@ def test_terminal_probability_above_strike_when_brti_above():
 
 def test_dynamic_edge_bands():
     cfg = load_yaml_config("config/1h.yaml").terminal_probability
-    assert required_edge_for_minutes(55, cfg) == pytest.approx(0.10)
-    assert required_edge_for_minutes(40, cfg) == pytest.approx(0.12)
-    assert required_edge_for_minutes(20, cfg) == pytest.approx(0.14)
-    assert required_edge_for_minutes(10, cfg) == pytest.approx(0.16)
-    assert required_edge_for_minutes(3, cfg) == pytest.approx(0.18)
+    assert required_edge_for_minutes(55, cfg) == pytest.approx(0.06)
+    assert required_edge_for_minutes(40, cfg) == pytest.approx(0.08)
+    assert required_edge_for_minutes(20, cfg) == pytest.approx(0.10)
+    assert required_edge_for_minutes(10, cfg) == pytest.approx(0.12)
+    assert required_edge_for_minutes(3, cfg) == pytest.approx(0.14)
 
 
 def test_mispricing_buys_yes_when_underpriced():
@@ -289,9 +289,82 @@ def test_1h_yaml_terminal_config_loaded():
     cfg = load_yaml_config("config/1h.yaml")
     assert cfg.terminal_probability.enabled is True
     assert cfg.terminal_probability.intelligence_overlay is False
-    assert cfg.terminal_probability.minimum_confidence == pytest.approx(0.60)
+    assert cfg.terminal_probability.minimum_confidence == pytest.approx(0.52)
+    assert cfg.terminal_probability.exclude_coin_flip_band is True
+    assert cfg.terminal_probability.exclude_longshot_band is True
+    assert cfg.orderbook_skew.ensemble_enabled is True
     assert cfg.intelligence.enabled is False
     assert cfg.poll.mode == "disabled"
+
+
+def test_coin_flip_band_blocks_near_fifty_cent_entries():
+    features = hour_features()
+    trend = classify_trend(dict(features.changes))
+    vol = _vol(features)
+    terminal = replace(
+        TerminalProbabilityEngine().estimate(
+            features,
+            Regime.TREND_UP,
+            trend,
+            vol,
+            market_strike=65_000,
+        ),
+        calibrated_p_yes=0.72,
+        calibrated_p_no=0.28,
+        confidence=0.75,
+        signal_agreement=0.70,
+    )
+    market = hour_market(yes_ask=0.50, minutes_remaining=35)
+    app_cfg = load_yaml_config("config/1h.yaml")
+    decision_engine = HourTerminalDecisionEngine(
+        terminal_decision_config_from_app(app_cfg)
+    )
+    decision, _, _ = decision_engine.decide(
+        market,
+        terminal,
+        features,
+        benchmark(),
+        now=NOW,
+        calibration_pass=True,
+    )
+    assert decision.action is DecisionAction.NO_TRADE
+    assert any(f.gate == "coin_flip_band" for f in decision.gate_failures)
+
+
+def test_favorite_band_allows_sixty_to_eighty_cent_entries():
+    features = hour_features()
+    trend = classify_trend(dict(features.changes))
+    vol = _vol(features)
+    terminal = replace(
+        TerminalProbabilityEngine().estimate(
+            features,
+            Regime.TREND_UP,
+            trend,
+            vol,
+            market_strike=65_000,
+        ),
+        calibrated_p_yes=0.78,
+        calibrated_p_no=0.22,
+        confidence=0.75,
+        signal_agreement=0.70,
+    )
+    market = hour_market(yes_ask=0.68, minutes_remaining=35)
+    app_cfg = load_yaml_config("config/1h.yaml")
+    decision_engine = HourTerminalDecisionEngine(
+        terminal_decision_config_from_app(app_cfg)
+    )
+    decision, mispricing, _ = decision_engine.decide(
+        market,
+        terminal,
+        features,
+        benchmark(),
+        now=NOW,
+        calibration_pass=True,
+    )
+    assert mispricing is not None
+    assert mispricing.best_side is ContractSide.YES
+    assert not any(f.gate == "coin_flip_band" for f in decision.gate_failures)
+    assert not any(f.gate == "longshot_band" for f in decision.gate_failures)
 
 
 def test_no_strike_blocks_trade():

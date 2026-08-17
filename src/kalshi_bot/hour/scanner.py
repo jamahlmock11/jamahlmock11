@@ -132,7 +132,10 @@ class HourForecastingScanner:
                 late_momentum_window_seconds=config.strategy.late_seconds,
             )
         )
-        self.model = model or HourProbabilityModel(model_version=hour_cfg.model_version)
+        self.model = model or HourProbabilityModel(
+            model_version=hour_cfg.model_version,
+            orderbook_skew=config.orderbook_skew,
+        )
         self.discovery_config = HourDiscoveryConfig(
             hour=hour_cfg,
             minimum_depth=hour_cfg.order_quantity,

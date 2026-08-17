@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 
+from kalshi_bot.config import OrderbookSkewConfig
 from kalshi_bot.domain import FeatureSnapshot, ProbabilityEstimate, Regime
 from kalshi_bot.hour.trend_engine import TrendClassification, TrendSnapshot
 from kalshi_bot.hour.volatility_model import VolatilitySnapshot
@@ -51,11 +52,13 @@ class HourProbabilityModel:
         self,
         ensemble: EnsembleProbabilityModel | None = None,
         model_version: str = "hour-v1.0.0",
+        orderbook_skew: OrderbookSkewConfig | None = None,
     ) -> None:
         self.ensemble = ensemble or EnsembleProbabilityModel(
             EnsembleConfig(late_seconds=60.0)
         )
         self.model_version = model_version
+        self.orderbook_skew = orderbook_skew
 
     def estimate(
         self,
@@ -74,6 +77,7 @@ class HourProbabilityModel:
             options_volatility=options_volatility,
             market_prior=market_prior,
             window_regime=window_regime,
+            orderbook_skew=self.orderbook_skew,
         )
 
         adjustment = (

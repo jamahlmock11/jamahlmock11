@@ -475,6 +475,32 @@ class TerminalProbabilityConfig(BaseModel):
         le=1.0,
         description="When set, block entries above this executable price (e.g. 0.50 for 50¢ only).",
     )
+    exclude_longshot_band: bool = Field(
+        default=False,
+        description="Block cheap longshot entries below longshot_max_executable_cost.",
+    )
+    longshot_max_executable_cost: float = Field(
+        default=0.42,
+        ge=0.0,
+        le=1.0,
+        description="Executable cost ceiling for longshot exclusion (e.g. 0.42 = 42¢).",
+    )
+    exclude_coin_flip_band: bool = Field(
+        default=False,
+        description="Block coin-flip entries inside the configured price band.",
+    )
+    coin_flip_min_executable_cost: float = Field(
+        default=0.42,
+        ge=0.0,
+        le=1.0,
+        description="Lower bound of coin-flip exclusion band (inclusive).",
+    )
+    coin_flip_max_executable_cost: float = Field(
+        default=0.58,
+        ge=0.0,
+        le=1.0,
+        description="Upper bound of coin-flip exclusion band (inclusive).",
+    )
     thesis_invalid_min_probability: float = Field(default=0.45, ge=0.0, le=1.0)
     thesis_invalid_margin: float = Field(default=0.12, ge=0.0, le=1.0)
     fallback_min_edge: float = Field(default=0.10, ge=0.0, le=1.0)

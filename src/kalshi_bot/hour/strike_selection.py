@@ -21,12 +21,13 @@ class StrikeCandidateResult:
 
 
 def _price_band_score(mispricing: MispricingAssessment | None) -> int:
+    """Score favorite-band executable prices (excludes coin-flip and longshot bands)."""
     if mispricing is None:
         return 0
     score = 0
-    if mispricing.yes is not None and 0.49 <= mispricing.yes.executable_cost <= 0.51:
+    if mispricing.yes is not None and 0.60 <= mispricing.yes.executable_cost <= 0.80:
         score += 1
-    if mispricing.no is not None and 0.49 <= mispricing.no.executable_cost <= 0.51:
+    if mispricing.no is not None and 0.60 <= mispricing.no.executable_cost <= 0.80:
         score += 1
     return score
 

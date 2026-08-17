@@ -358,6 +358,37 @@ class HourTerminalDecisionEngine:
         return failures
 
     @staticmethod
+    def _entry_price_band_failures(
+        executable_cost: float,
+        tcfg: TerminalProbabilityConfig,
+    ) -> list[GateFailure]:
+        failures: list[GateFailure] = []
+        if tcfg.exclude_longshot_band and (
+            executable_cost + 1e-12 < tcfg.longshot_max_executable_cost
+        ):
+            failures.append(
+                _failure(
+                    "longshot_band",
+                    "executable entry price is in the longshot band (disabled)",
+                    executable_cost,
+                    f">={tcfg.longshot_max_executable_cost}",
+                )
+            )
+        if tcfg.exclude_coin_flip_band:
+            low = tcfg.coin_flip_min_executable_cost
+            high = tcfg.coin_flip_max_executable_cost
+            if low <= executable_cost <= high:
+                failures.append(
+                    _failure(
+                        "coin_flip_band",
+                        "executable entry price is in the coin-flip band (disabled)",
+                        executable_cost,
+                        f"outside [{low}, {high}]",
+                    )
+                )
+        return failures
+
+    @staticmethod
     def _can_exit(market: MarketSnapshot, side: ContractSide, quantity: float) -> bool:
         return depth(market.orderbook, side, asks=False) + 1e-12 >= quantity
 
@@ -606,6 +637,9 @@ class HourTerminalDecisionEngine:
                     tcfg.max_entry_executable_cost,
                 )
             )
+        failures.extend(
+            self._entry_price_band_failures(selected_mispricing.executable_cost, tcfg)
+        )
 
         if tcfg.forecast_alignment:
             side_prob = selected_mispricing.model_probability
