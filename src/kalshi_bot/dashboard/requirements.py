@@ -11,7 +11,7 @@ DEFAULT_THRESHOLDS: dict[str, Any] = {
     "min_signal_agreement": 0.48,
     "min_data_completeness": 0.65,
     "min_seconds_remaining": 60.0,
-    "max_entry_seconds_remaining": 660.0,
+    "max_entry_seconds_remaining": 780.0,
     "max_spread": 0.12,
     "min_entry_executable_cost": 0.08,
     "late_favorite_seconds": 420.0,
