@@ -88,6 +88,7 @@ def build_assessment(decision: dict[str, Any]) -> dict[str, Any]:
 
     rec = _recommendation(decision)
     blocker = decision.get("primary_blocker") or decision.get("blocking_summary") or ""
+    reason = decision.get("reason") or ""
     if rec != "skip":
         blocker = ""
 
@@ -105,6 +106,7 @@ def build_assessment(decision: dict[str, Any]) -> dict[str, Any]:
         "quality": quality,
         "rec": rec,
         "blocker": blocker,
+        "reason": reason,
         "decision_action": decision.get("action"),
         "ts": decision.get("ts"),
     }

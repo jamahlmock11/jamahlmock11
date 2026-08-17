@@ -40,6 +40,35 @@
     return `${v > 0 ? "+" : ""}${money(v)}`;
   }
 
+  function formatAction(action) {
+    const a = (action || "NO_TRADE").toUpperCase().replace(/_/g, " ");
+    return a;
+  }
+
+  function actionCssClass(action) {
+    const a = (action || "NO_TRADE").toLowerCase();
+    if (a === "buy_up" || a === "buy_down") return "act-buy_up";
+    if (a === "hold") return "act-hold";
+    if (a === "exit") return "act-exit";
+    return "act-no_trade";
+  }
+
+  function heroSkin(rec) {
+    if (rec === "buy") return "hero-buy";
+    if (rec === "hold") return "hero-hold";
+    if (rec === "exit") return "hero-exit";
+    return "hero-skip";
+  }
+
+  function whyLabel(rec, action) {
+    const a = (action || "").toUpperCase();
+    if (rec === "skip" || a === "NO_TRADE") return "Why no trade";
+    if (a === "HOLD") return "Why hold";
+    if (a === "EXIT") return "Why exit";
+    if (rec === "buy") return "Why buy";
+    return "Reason";
+  }
+
   function renderRules(rules) {
     const grid = $("rulesGrid");
     if (!rules || !rules.length) {
@@ -57,25 +86,80 @@
       .join("");
   }
 
-  function actionClass(action) {
-    if (action === "pass") return "act-pass";
-    if (action === "block") return "act-block";
-    return "";
+  function renderDecisionHeroes(rows) {
+    const container = $("decisionHeroes");
+    if (!rows || !rows.length) {
+      container.innerHTML =
+        '<div class="hero-placeholder">No live decisions yet. Bots will populate this after the next scan.</div>';
+      return;
+    }
+
+    container.innerHTML = rows
+      .map((row) => {
+        const action = row.decision_action || "NO_TRADE";
+        const rec = row.rec || "skip";
+        const tau = row.tau_left_min != null ? `${row.tau_left_min}m left` : "—";
+        const netEdge =
+          row.net_edge_cents != null ? `${row.net_edge_cents}¢` : "—";
+        const ensemble =
+          row.ensemble_pct != null ? `${Number(row.ensemble_pct).toFixed(0)}%` : "—";
+        const quality = row.quality != null ? `${row.quality}%` : "—";
+        const whyText = row.blocker || row.reason || "No blockers — requirements met.";
+        const whyBlocked = rec === "skip" && row.blocker;
+        const horizonLabel = row.horizon === "1h" ? "1 hour" : "15 minute";
+
+        return `
+      <article class="decision-hero ${heroSkin(rec)}">
+        <div class="hero-top">
+          <div class="hero-meta">
+            <span class="hero-horizon">BTC · ${horizonLabel}</span>
+            <span class="hero-ticker">${row.ticker || "—"}</span>
+          </div>
+          <span class="hero-tau">${tau}</span>
+        </div>
+        <div class="hero-action ${actionCssClass(action)}">${formatAction(action)}</div>
+        <div class="hero-pick">
+          <span class="hero-pick-label">Kalshi pick</span>
+          <span class="hero-pick-value">${row.book || "—"}</span>
+        </div>
+        <div class="hero-metrics">
+          <div class="hero-metric">
+            <span>Net edge</span>
+            <strong>${netEdge}</strong>
+          </div>
+          <div class="hero-metric">
+            <span>Ensemble</span>
+            <strong>${ensemble}</strong>
+          </div>
+          <div class="hero-metric">
+            <span>Quality</span>
+            <strong>${quality}</strong>
+          </div>
+        </div>
+        <div class="hero-why">
+          <span class="hero-why-label">${whyLabel(rec, action)}</span>
+          <span class="hero-why-text ${whyBlocked ? "blocked" : ""}">${whyText}</span>
+        </div>
+      </article>`;
+      })
+      .join("");
   }
 
-  function recClass(rec) {
-    if (rec === "buy") return "rec-buy";
-    if (rec === "skip") return "rec-skip";
-    if (rec === "hold") return "rec-hold";
-    if (rec === "exit") return "rec-exit";
-    return "";
+  function renderStatsStrip(stats) {
+    const pnl = stats.closed_pnl_usd || 0;
+    $("statFills").textContent = String(stats.live_trades || 0);
+    const pnlEl = $("statPnl");
+    pnlEl.textContent = signedMoney(pnl);
+    pnlEl.className = `stat-value ${pnl > 0 ? "pos" : pnl < 0 ? "neg" : ""}`;
+    $("statNotional").textContent = money(stats.notional_usd);
+    $("statEdge").textContent = `${Number(stats.avg_edge_pct || stats.avg_edge || 0).toFixed(1)}%`;
   }
 
-  function qualityClass(q) {
-    if (q == null) return "";
-    if (q >= 80) return "q-high";
-    if (q >= 50) return "q-mid";
-    return "q-low";
+  function decisionBadgeClass(rec) {
+    if (rec === "buy") return "buy";
+    if (rec === "hold") return "hold";
+    if (rec === "exit") return "exit";
+    return "skip";
   }
 
   function renderAssessments(rows) {
@@ -83,44 +167,26 @@
     $("assessmentsEmpty").hidden = rows.length > 0;
     body.innerHTML = rows
       .map((row) => {
-        const label = row.horizon ? `${row.asset} · ${row.horizon}` : row.asset;
+        const label = row.horizon ? `${row.horizon}` : "—";
         const tau =
           row.tau_left_min != null ? `${row.tau_left_min}m` : "—";
-        const sidePoll =
-          row.side_poll_pct != null ? `${Number(row.side_poll_pct).toFixed(0)}%` : "—";
         const netEdge =
           row.net_edge_cents != null ? `${row.net_edge_cents}¢` : "—";
         const ensemble =
           row.ensemble_pct != null ? `${Number(row.ensemble_pct).toFixed(0)}%` : "—";
-        const quality =
-          row.quality != null ? String(row.quality) : "—";
+        const actionLabel = formatAction(row.decision_action);
         return `
       <tr>
         <td><span class="asset-label">${label}</span></td>
         <td class="mono">${tau}</td>
         <td class="mono">${row.book || "—"}</td>
-        <td><span class="gate-action ${actionClass(row.action)}">${row.action || "—"}</span></td>
-        <td class="mono">${row.side || "—"}</td>
-        <td class="mono">${sidePoll}</td>
+        <td><span class="decision-badge ${decisionBadgeClass(row.rec)}">${actionLabel}</span></td>
         <td class="mono">${netEdge}</td>
         <td class="mono">${ensemble}</td>
-        <td><span class="quality ${qualityClass(row.quality)}">${quality}</span></td>
-        <td><span class="rec ${recClass(row.rec)}">${row.rec || "—"}</span></td>
         <td class="blocker-cell">${row.blocker || "—"}</td>
       </tr>`;
       })
       .join("");
-  }
-
-  function renderMiniStats(stats) {
-    const el = $("miniStats");
-    const pnl = stats.closed_pnl_usd || 0;
-    el.innerHTML = `
-      <article><span>Fills</span><strong>${stats.live_trades || 0} live</strong></article>
-      <article><span>P/L</span><strong class="${pnl >= 0 ? "pos" : "neg"}">${signedMoney(pnl)}</strong></article>
-      <article><span>Notional</span><strong>${money(stats.notional_usd)}</strong></article>
-      <article><span>Avg edge</span><strong>${Number(stats.avg_edge_pct || stats.avg_edge || 0).toFixed(1)}%</strong></article>
-    `;
   }
 
   function renderTrades(trades) {
@@ -167,10 +233,12 @@
     const mkts = payload.market_count ?? 0;
     const entries = payload.entries ?? 0;
     const exits = payload.exits ?? 0;
-    $("scanStatus").textContent = `Last scan: ${fmtClock(ts)} | ${mkts} market${mkts === 1 ? "" : "s"} | entries=${entries} exits=${exits}`;
+    $("scanStatus").textContent =
+      `Last scan ${fmtClock(ts)} · ${mkts} market${mkts === 1 ? "" : "s"} · entries ${entries} · exits ${exits}`;
     $("headerMode").textContent = payload.mode || "—";
     $("headerMode").className = `edge-mode ${(payload.mode || "").toLowerCase()}`;
-    $("footerPulse").textContent = payload.mode === "LIVE" ? "live" : payload.mode === "PAPER" ? "paper" : "connected";
+    $("footerPulse").textContent =
+      payload.mode === "LIVE" ? "live" : payload.mode === "PAPER" ? "paper" : "connected";
   }
 
   async function refresh() {
@@ -187,10 +255,12 @@
       ]);
 
       $("offlineBanner").hidden = true;
+      const assessments = desk.assessments || [];
+      renderDecisionHeroes(assessments);
+      renderStatsStrip(desk.stats || {});
+      renderAssessments(assessments);
       renderRules(desk.rules);
       $("rulesSummary").textContent = desk.rules_summary || "—";
-      renderAssessments(desk.assessments || []);
-      renderMiniStats(desk.stats || {});
       renderTrades(trades.trades || []);
       renderDecisions(decisionsResp.decisions || []);
       updateScanStatus(desk);

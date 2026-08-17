@@ -9,44 +9,65 @@
 <body>
   <main class="edge-shell">
     <header class="edge-header">
-      <h1 class="edge-title">edge</h1>
-      <span class="edge-mode" id="headerMode">—</span>
-    </header>
-
-    <section class="card rules-card">
-      <h2 class="card-title">Active Edge Rules</h2>
-      <div class="rules-grid" id="rulesGrid">
-        <div class="rules-loading">Loading rules…</div>
+      <div class="header-brand">
+        <h1 class="edge-title">edge</h1>
+        <span class="edge-mode" id="headerMode">—</span>
       </div>
-    </section>
-
-    <section class="card controls-card">
-      <div class="controls-row">
-        <button type="button" class="btn-scan" id="scanBtn">Scan markets</button>
+      <div class="header-controls">
+        <button type="button" class="btn-scan" id="scanBtn">Refresh</button>
         <label class="auto-refresh">
           <input type="checkbox" id="autoRefresh" checked />
-          Auto-refresh (10s)
+          Auto 10s
         </label>
       </div>
-      <p class="scan-status" id="scanStatus">Waiting for first scan…</p>
+    </header>
+
+    <p class="scan-status" id="scanStatus">Waiting for first scan…</p>
+
+    <section class="section decisions-section">
+      <div class="section-head">
+        <h2 class="section-title">Live decisions</h2>
+        <span class="section-hint">15m + 1h · latest per bot</span>
+      </div>
+      <div class="decision-heroes" id="decisionHeroes">
+        <div class="hero-placeholder">Loading decisions…</div>
+      </div>
     </section>
 
-    <section class="card assessments-card">
-      <p class="rules-summary" id="rulesSummary">—</p>
+    <section class="stats-strip" id="statsStrip" aria-label="Session stats">
+      <article class="stat-chip">
+        <span class="stat-label">Live fills</span>
+        <strong class="stat-value" id="statFills">0</strong>
+      </article>
+      <article class="stat-chip">
+        <span class="stat-label">Closed P/L</span>
+        <strong class="stat-value" id="statPnl">$0.00</strong>
+      </article>
+      <article class="stat-chip">
+        <span class="stat-label">Notional</span>
+        <strong class="stat-value" id="statNotional">$0</strong>
+      </article>
+      <article class="stat-chip">
+        <span class="stat-label">Avg edge</span>
+        <strong class="stat-value" id="statEdge">0%</strong>
+      </article>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
+        <h2 class="section-title">Market detail</h2>
+        <span class="section-hint">full scan rows</span>
+      </div>
       <div class="table-wrap">
         <table class="assessments-table">
           <thead>
             <tr>
-              <th>Asset</th>
-              <th>τ left</th>
+              <th>Bot</th>
+              <th>Time left</th>
               <th>Kalshi pick</th>
-              <th>Action</th>
-              <th>Side</th>
-              <th>Side poll</th>
-              <th>Net edge</th>
+              <th>Decision</th>
+              <th>Edge</th>
               <th>Ensemble</th>
-              <th>Quality</th>
-              <th>Rec</th>
               <th>Blocker</th>
             </tr>
           </thead>
@@ -57,8 +78,15 @@
     </section>
 
     <details class="card more-card">
-      <summary>Session stats &amp; fills</summary>
-      <div class="mini-stats" id="miniStats"></div>
+      <summary>Active edge rules</summary>
+      <p class="rules-summary" id="rulesSummary">—</p>
+      <div class="rules-grid" id="rulesGrid">
+        <div class="rules-loading">Loading rules…</div>
+      </div>
+    </details>
+
+    <details class="card more-card">
+      <summary>Recent fills</summary>
       <div class="table-wrap compact">
         <table>
           <thead>
@@ -82,7 +110,7 @@
             <tr>
               <th>Time</th>
               <th>Action</th>
-              <th>τ left</th>
+              <th>Time left</th>
               <th>Edge</th>
               <th>Blocker</th>
             </tr>
