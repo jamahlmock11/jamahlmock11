@@ -56,9 +56,12 @@ def create_app(
         base.update(merged)
         return base
 
-    def _decisions(limit: int) -> list[dict]:
+    def _decisions(limit: int, per_horizon: bool = False) -> list[dict]:
         if isinstance(store, CombinedTradeJournal):
-            rows = store.recent_decisions(limit)
+            if per_horizon:
+                rows = store.recent_decisions_per_horizon(max(1, min(limit, 10)))
+            else:
+                rows = store.recent_decisions(limit)
         else:
             rows = store.recent_decisions(limit)
         return [enrich_decision(row) for row in rows]
@@ -115,7 +118,7 @@ def create_app(
     @app.get("/api/edge-desk")
     def api_edge_desk(limit: int = Query(50, ge=1, le=200)) -> dict:
         stats = _stats()
-        decisions = _decisions(limit)
+        decisions = _decisions(limit, per_horizon=True)
         last = decisions[0] if decisions else None
         mode = "PAPER"
         if last is not None:

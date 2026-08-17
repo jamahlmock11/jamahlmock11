@@ -208,6 +208,7 @@ def test_dashboard_edge_desk_split_horizons(tmp_path: Path):
     assert len(desk["assessment_1h"]["strike_candidates"]) == 1
 
 
+def test_build_reversal_status_signal_only():
     status = build_reversal_status(
         {
             "lag_reversal": {

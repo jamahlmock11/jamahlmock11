@@ -80,6 +80,17 @@ class CombinedTradeJournal:
         merged.sort(key=lambda row: float(row.get("ts") or 0), reverse=True)
         return merged[:limit]
 
+    def recent_decisions_per_horizon(self, limit_per_horizon: int = 1) -> list[dict[str, Any]]:
+        """Latest decision(s) from each bot journal — avoids 15m flood hiding 1h rows."""
+        merged: list[dict[str, Any]] = []
+        for horizon, journal in self.journals:
+            for row in journal.recent_decisions(limit_per_horizon):
+                item = dict(row)
+                item["horizon"] = horizon
+                merged.append(item)
+        merged.sort(key=lambda row: float(row.get("ts") or 0), reverse=True)
+        return merged
+
 
 class TradeJournal:
     def __init__(self, path: str | Path = DEFAULT_DB):

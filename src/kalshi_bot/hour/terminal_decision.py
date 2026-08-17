@@ -87,6 +87,24 @@ def format_terminal_explanation(
     liquidity_pass: bool,
     stability_swing: float,
 ) -> str:
+    if mispricing is None:
+        mins = terminal.seconds_remaining / 60.0
+        action_label = decision.action.value.replace("_", " ")
+        return (
+            f"Strike: ${terminal.strike:,.0f}\n"
+            f"Current BRTI: ${terminal.current_brti:,.0f}\n"
+            f"Time remaining: {mins:.0f}m\n"
+            f"Expected terminal BRTI: ${terminal.expected_terminal_brti:,.0f}\n"
+            f"P(YES): {terminal.calibrated_p_yes:.1%}\n"
+            f"P(NO): {terminal.calibrated_p_no:.1%}\n"
+            f"Confidence: {terminal.confidence:.1%}\n"
+            f"Agreement: {terminal.signal_agreement:.1%}\n"
+            f"Stability swing: {stability_swing * 100:.1f}pp\n"
+            f"Calibration: {'PASS' if calibration_pass else 'WARN'}\n"
+            f"Liquidity: {'PASS' if liquidity_pass else 'FAIL'}\n"
+            f"Decision: {action_label}"
+        )
+
     yes_ask = (
         f"{mispricing.yes.ask_price * 100:.0f}¢"
         if mispricing.yes is not None and mispricing.yes.ask_price is not None
