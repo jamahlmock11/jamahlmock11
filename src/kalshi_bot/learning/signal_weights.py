@@ -49,6 +49,9 @@ class SignalWeightTracker:
             if correct:
                 self.records[name].correct += 1
 
+    def should_update(self) -> bool:
+        return any(record.total >= self.minimum_samples for record in self.records.values())
+
     def accuracies(self) -> dict[str, float]:
         return {name: record.accuracy for name, record in self.records.items()}
 

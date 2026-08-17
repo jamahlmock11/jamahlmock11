@@ -147,6 +147,7 @@ strategy:
   max_do_not_trade_score: 40
   require_trade_quality: false
   min_pattern_matches: 10
+  block_opposing_patterns: true
   external_data_enabled: false
   entry_signal_persistence_polls: 2
   chop_zone_min_sigma: 0.0

@@ -319,6 +319,10 @@ class StrategyConfig(BaseModel):
     max_do_not_trade_score: float = Field(default=40.0, ge=0.0, le=100.0)
     require_trade_quality: bool = True
     min_pattern_matches: int = Field(default=10, ge=0)
+    block_opposing_patterns: bool = Field(
+        default=True,
+        description="Block entries when enough similar historical setups lost money.",
+    )
     external_data_enabled: bool = False
     entry_signal_persistence_polls: int = Field(
         default=2,

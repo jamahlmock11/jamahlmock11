@@ -117,16 +117,20 @@ class TradeRecorder:
                 """
                 UPDATE trade_records
                 SET outcome = ?, pnl = ?, exit_ts = ?
-                WHERE ticker = ? AND outcome IS NULL
-                ORDER BY entry_ts DESC
-                LIMIT 1
+                WHERE id = (
+                    SELECT id FROM trade_records
+                    WHERE ticker = ? AND outcome IS NULL
+                    ORDER BY entry_ts DESC
+                    LIMIT 1
+                )
                 """,
                 (outcome, pnl, now, ticker),
             )
-        if ticker in self.pending:
-            self.pending[ticker].outcome = outcome
-            self.pending[ticker].pnl = pnl
-            self.pending[ticker].exit_ts = now
+        pending = self.pending.pop(ticker, None)
+        if pending is not None:
+            pending.outcome = outcome
+            pending.pnl = pnl
+            pending.exit_ts = now
 
     def training_rows(self, limit: int = 5000) -> list[dict[str, Any]]:
         with sqlite3.connect(self.db_path) as conn:

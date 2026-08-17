@@ -106,6 +106,7 @@ class ForecastingScanner:
         intelligence: IntelligenceOrchestrator | None = None,
         position_lookup: PositionLookup | None = None,
         orders_lookup: OrdersLookup | None = None,
+        pattern_matcher: PatternMatcher | None = None,
     ) -> None:
         self.kalshi = kalshi
         self.benchmark = benchmark
@@ -202,7 +203,7 @@ class ForecastingScanner:
             confidence_threshold=ls.min_confidence if ls.enabled else config.strategy.min_confidence,
         )
         self.enriched_engine = EnrichedFeatureEngine()
-        self.pattern_matcher = PatternMatcher()
+        self.pattern_matcher = pattern_matcher or PatternMatcher()
         self.external_data = ExternalDataProvider(
             enabled=config.strategy.external_data_enabled,
         )
@@ -504,6 +505,30 @@ class ForecastingScanner:
                 decision,
                 trade_tier=trade_quality.trade_tier,
                 size_multiplier=trade_quality.size_multiplier,
+            )
+        if (
+            self.config.strategy.block_opposing_patterns
+            and pattern_match is not None
+            and pattern_match.similar_setup_found
+            and pattern_match.match_count >= self.config.strategy.min_pattern_matches
+            and pattern_match.recommendation == "historical evidence opposes trade"
+            and decision.action in {DecisionAction.BUY_UP, DecisionAction.BUY_DOWN}
+        ):
+            decision = replace(
+                decision,
+                action=DecisionAction.NO_TRADE,
+                reason=(
+                    f"pattern memory blocked entry: {pattern_match.match_count} similar "
+                    f"setups won only {pattern_match.win_rate:.0%}"
+                ),
+                gate_failures=decision.gate_failures + (
+                    GateFailure(
+                        gate="pattern_memory",
+                        reason="similar historical setups underperformed",
+                        observed=pattern_match.win_rate,
+                        required=0.45,
+                    ),
+                ),
             )
         if intel_skip and decision.action in {
             DecisionAction.BUY_UP,

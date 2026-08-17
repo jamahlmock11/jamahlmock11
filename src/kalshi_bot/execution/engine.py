@@ -38,6 +38,7 @@ class ExecutionReport:
     detail: str
     payload: dict[str, Any]
     trade_id: str | None = None
+    realized_pnl: float | None = None
 
 
 class ExecutionEngine:
@@ -377,7 +378,15 @@ class ExecutionEngine:
                     detail=detail,
                     payload=payload,
                 )
-                return ExecutionReport(True, self.dry_run, "forecast_exit", detail, payload, trade_id)
+                return ExecutionReport(
+                    True,
+                    self.dry_run,
+                    "forecast_exit",
+                    detail,
+                    payload,
+                    trade_id,
+                    exit_record.realized_pnl,
+                )
             except (PositionManagerError, Exception) as exc:
                 return ExecutionReport(
                     False,
