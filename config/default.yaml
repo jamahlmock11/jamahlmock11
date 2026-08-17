@@ -18,7 +18,7 @@ cross_venue:
 
 forecast_alignment:
   enabled: true
-  dominant_min_probability: 0.52
+  dominant_min_probability: 0.50
   contrarian_edge_premium: 0.05
   exceptional_edge_threshold: 0.22
   min_conflict_confidence: 0.60

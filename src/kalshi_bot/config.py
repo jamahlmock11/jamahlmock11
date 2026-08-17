@@ -74,7 +74,7 @@ class ForecastAlignmentConfig(BaseModel):
         description="Apply forecast-alignment risk filtering on contrarian entries.",
     )
     dominant_min_probability: float = Field(
-        default=0.52,
+        default=0.50,
         ge=0.0,
         le=1.0,
         description="Minimum dominant forecast probability before a side conflict applies.",
