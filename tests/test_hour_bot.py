@@ -218,7 +218,8 @@ def test_blocks_contrarian_no_when_forecast_strongly_up():
         now=NOW,
     )
     assert decision.action is DecisionAction.NO_TRADE
-    assert any(f.gate == "forecast_alignment" for f in decision.gate_failures)
+    assert decision.selected_side is ContractSide.YES
+    assert not any(f.gate == "forecast_alignment" for f in decision.gate_failures)
 
 
 def test_model_75_price_55_a_plus_trade():
@@ -392,8 +393,8 @@ def test_1h_yaml_loads_without_validation_error():
     assert cfg.hour.series_ticker == "KXBTCD"
     assert cfg.longshot.enabled is False
     assert cfg.hour.max_entry_seconds_remaining == pytest.approx(2400)
-    assert cfg.strategy.minimum_dominant_poll == pytest.approx(0.80)
-    assert cfg.strategy.require_dominant_poll_side is True
+    assert cfg.strategy.minimum_dominant_poll is None
+    assert cfg.strategy.require_dominant_poll_side is False
     assert cfg.strategy.min_entry_executable_cost == pytest.approx(0.75)
     assert cfg.longshot.crowd_follow_price_band_cents == pytest.approx(0.03)
     assert cfg.strategy.min_edge == pytest.approx(0.15)

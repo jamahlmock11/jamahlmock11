@@ -481,23 +481,42 @@ class HourDecisionEngine:
                 entry_timing=edge_assessment.entry_timing,
             )
 
-        selected_side = max(valid_edges, key=lambda side: (valid_edges[side], side.value))
+        dominant_side = (
+            ContractSide.YES if forecast.p_up >= forecast.p_down else ContractSide.NO
+        )
         if entry_ctx is not None and entry_ctx.forced_side is not None:
-            if entry_ctx.forced_side in valid_edges:
-                selected_side = entry_ctx.forced_side
-            else:
+            if entry_ctx.forced_side is not dominant_side:
                 failures.append(
                     _failure(
-                        "extreme_poll_favorite",
-                        "extreme poll favorite is not executable",
+                        "forecast_direction",
+                        "poll/longshot override conflicts with forecast direction",
                         entry_ctx.forced_side.value,
-                        entry_ctx.max_entry_price,
+                        dominant_side.value,
                     )
                 )
-        selected_edge = valid_edges.get(selected_side)
-        if selected_edge is None:
-            selected_side = max(valid_edges, key=lambda side: (valid_edges[side], side.value))
-            selected_edge = valid_edges[selected_side]
+        selected_side = dominant_side
+        if selected_side not in valid_edges:
+            failures.append(
+                _failure(
+                    f"{selected_side.value.lower()}_edge",
+                    "forecast direction has no executable edge",
+                    valid_edges.get(selected_side),
+                    "positive edge on forecast side",
+                )
+            )
+            return DecisionResult(
+                action=DecisionAction.NO_TRADE,
+                reason="forecast direction has no executable edge",
+                gate_failures=tuple(failures),
+                current_direction=current_direction,
+                predicted_direction=predicted_direction,
+                trade_direction=Direction.FLAT,
+                target_edge=edge_cfg.preferred_edge,
+                required_edge=edge_assessment.required_edge,
+                trade_tier=TradeTier.NONE,
+                entry_timing=edge_assessment.entry_timing,
+            )
+        selected_edge = valid_edges[selected_side]
         selected_execution = executions[selected_side]
         required = (
             entry_ctx.min_edge_override
@@ -506,29 +525,6 @@ class HourDecisionEngine:
         )
         if not cfg.longshot.enabled:
             required = edge_assessment.required_edge
-
-        dominant_side = (
-            ContractSide.YES if forecast.p_up >= forecast.p_down else ContractSide.NO
-        )
-        dominant_prob = max(forecast.p_up, forecast.p_down)
-        alignment_required = (
-            cfg.longshot.require_forecast_alignment
-            if cfg.longshot.enabled
-            else hour.require_forecast_alignment
-        )
-        if (
-            alignment_required
-            and dominant_prob + 1e-12 >= hour.forecast_alignment_min_probability
-            and selected_side is not dominant_side
-        ):
-            failures.append(
-                _failure(
-                    "forecast_alignment",
-                    "best edge side conflicts with dominant forecast direction",
-                    selected_side.value,
-                    dominant_side.value,
-                )
-            )
 
         if cfg.longshot.enabled:
             if selected_edge is None or (

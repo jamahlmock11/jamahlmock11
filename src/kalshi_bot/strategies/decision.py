@@ -642,7 +642,7 @@ class DecisionEngine:
                 )
 
         entry_ctx = None
-        if cfg.longshot.enabled or cfg.longshot.follow_extreme_poll:
+        if cfg.longshot.enabled:
             poll_cfg = poll_gate_config_from_model(cfg.poll)
             entry_ctx = resolve_longshot_entries(
                 executions,
@@ -671,9 +671,34 @@ class DecisionEngine:
             for side, execution in executions.items()
         }
         if entry_ctx is not None and entry_ctx.forced_side is not None:
-            selected_side = entry_ctx.forced_side
-        else:
-            selected_side = max(edges, key=lambda side: (edges[side], side.value))
+            if entry_ctx.forced_side is not predicted_side:
+                failures.append(
+                    _failure(
+                        "forecast_direction",
+                        "poll/longshot override conflicts with forecast direction",
+                        entry_ctx.forced_side.value,
+                        predicted_side.value,
+                    )
+                )
+        selected_side = predicted_side
+        if selected_side not in executions:
+            failures.append(
+                _failure(
+                    f"{selected_side.value.lower()}_execution",
+                    "forecast direction side is not executable",
+                    None,
+                    predicted_side.value,
+                )
+            )
+            return DecisionResult(
+                action=DecisionAction.NO_TRADE,
+                reason="forecast direction is not executable",
+                gate_failures=tuple(failures),
+                current_direction=current_direction,
+                predicted_direction=predicted_direction,
+                trade_direction=Direction.FLAT,
+                target_edge=cfg.target_edge,
+            )
         selected_execution = executions[selected_side]
         selected_edge = edges[selected_side]
         edge_decimal = Decimal(str(side_probabilities[selected_side])) - Decimal(
