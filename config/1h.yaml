@@ -29,6 +29,8 @@ hour:
 strategy:
   contract_duration_seconds: 3600
   use_edge_based_side_pick: false
+  contrarian_fallback_enabled: true
+  aligned_edge_premium: 0.02
   min_edge: 0.15
   target_edge: 0.15
   min_confidence: 0.0
@@ -92,7 +94,11 @@ poll:
   mode: legacy
 
 forecast_alignment:
-  enabled: false
+  enabled: true
+  contrarian_edge_premium: 0.10
+  exceptional_edge_threshold: 0.25
+  min_conflict_confidence: 0.68
+  min_conflict_agreement: 0.70
   favorable_min: 0.85
   favorable_max: 0.90
   low_poll_threshold: 0.85

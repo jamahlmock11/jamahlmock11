@@ -396,9 +396,22 @@ class StrategyConfig(BaseModel):
     use_edge_based_side_pick: bool = Field(
         default=False,
         description=(
-            "When false, enter on the model forecast side when it matches the "
-            "Kalshi poll favorite instead of picking whichever side has best edge."
+            "When false, prefer model+Kalshi aligned entries; optional contrarian "
+            "fallback when contrarian_fallback_enabled is true."
         ),
+    )
+    contrarian_fallback_enabled: bool = Field(
+        default=True,
+        description=(
+            "After aligned entry fails, allow a contrarian mispricing entry only when "
+            "forecast_alignment confirms a perfect setup against model and Kalshi."
+        ),
+    )
+    aligned_edge_premium: float = Field(
+        default=0.02,
+        ge=0.0,
+        le=0.50,
+        description="Extra edge required on model+Kalshi aligned entries.",
     )
     external_data_enabled: bool = False
     entry_signal_persistence_polls: int = Field(

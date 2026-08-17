@@ -106,6 +106,8 @@ def _engine(**overrides) -> DecisionEngine:
         minimum_agreement=0.55,
         poll=PollConfig(mode="disabled"),
         use_edge_based_side_pick=False,
+        contrarian_fallback_enabled=False,
+        aligned_edge_premium=0.0,
         forecast_alignment=ForecastAlignmentConfig(enabled=False),
         block_rally_contrarian_entries=True,
     )
@@ -152,7 +154,10 @@ def test_blocks_when_model_and_kalshi_disagree():
 
 
 def test_edge_based_pick_still_available_when_enabled():
-    decision = _engine(use_edge_based_side_pick=True).decide(
+    decision = _engine(
+        use_edge_based_side_pick=True,
+        contrarian_fallback_enabled=False,
+    ).decide(
         _market(yes_ask=0.21),
         _forecast(p_up=0.38),
         _features(),
@@ -160,3 +165,29 @@ def test_edge_based_pick_still_available_when_enabled():
         now=NOW,
     )
     assert decision.selected_side is ContractSide.YES
+
+
+def test_contrarian_fallback_only_when_perfect_mispricing():
+    decision = _engine(
+        contrarian_fallback_enabled=True,
+        aligned_edge_premium=0.0,
+        block_rally_contrarian_entries=False,
+        forecast_alignment=ForecastAlignmentConfig(
+            enabled=True,
+            exceptional_edge_threshold=0.15,
+            min_conflict_confidence=0.60,
+            min_conflict_agreement=0.62,
+            min_stability_confidence=0.55,
+            min_stability_agreement=0.55,
+        ),
+    ).decide(
+        _market(yes_ask=0.21),
+        _forecast(p_up=0.38),
+        _features(short_trend=0.0),
+        _benchmark(),
+        now=NOW,
+    )
+    assert decision.action is DecisionAction.BUY_UP
+    assert "contrarian mispricing" in decision.reason
+    assert decision.forecast_alignment is not None
+    assert decision.forecast_alignment["entry_path"] == "contrarian"

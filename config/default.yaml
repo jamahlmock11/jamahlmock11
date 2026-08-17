@@ -17,15 +17,15 @@ cross_venue:
   order_size: 5
 
 forecast_alignment:
-  enabled: false
+  enabled: true
   dominant_min_probability: 0.50
-  contrarian_edge_premium: 0.05
-  exceptional_edge_threshold: 0.22
-  min_conflict_confidence: 0.60
-  min_conflict_agreement: 0.62
-  min_selected_probability: 0.40
-  min_stability_confidence: 0.55
-  min_stability_agreement: 0.55
+  contrarian_edge_premium: 0.10
+  exceptional_edge_threshold: 0.25
+  min_conflict_confidence: 0.68
+  min_conflict_agreement: 0.70
+  min_selected_probability: 0.45
+  min_stability_confidence: 0.60
+  min_stability_agreement: 0.60
   max_probability_deterioration: 0.08
 
 lag_reversal:
@@ -133,10 +133,10 @@ longshot:
 
 strategy:
   contract_duration_seconds: 900
-  min_edge: 0.10
-  target_edge: 0.10
-  min_confidence: 0.0
-  min_signal_agreement: 0.55
+  min_edge: 0.12
+  target_edge: 0.12
+  min_confidence: 0.55
+  min_signal_agreement: 0.60
   setup_score_enabled: true
   setup_score_weight: 0.30
   entry_sweet_spot_min_seconds: 180
@@ -162,8 +162,10 @@ strategy:
   block_opposing_patterns: true
   block_rally_contrarian_entries: true
   use_edge_based_side_pick: false
+  contrarian_fallback_enabled: true
+  aligned_edge_premium: 0.02
   external_data_enabled: false
-  entry_signal_persistence_polls: 2
+  entry_signal_persistence_polls: 3
   chop_zone_min_sigma: 0.0
   require_orderbook_depth: true
   window_regime_enabled: true

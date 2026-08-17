@@ -375,7 +375,9 @@ def test_final_minute_uses_locked_brti_average():
     ],
 )
 def test_hard_edge_boundary_up(probability, yes_ask, expected):
-    result = DecisionEngine(DecisionConfig()).decide(
+    result = DecisionEngine(
+        DecisionConfig(aligned_edge_premium=0.0, contrarian_fallback_enabled=False)
+    ).decide(
         market(yes_ask),
         forecast(probability),
         features(),
