@@ -22,9 +22,7 @@ fi
 LIVE_FLAG=()
 if [[ "${1:-}" == "--live" ]]; then
   LIVE_FLAG=(--live)
-fi
-# Auto-live when credentials are present (e.g. from environment secrets).
-if [[ -z "${LIVE_FLAG[*]:-}" && -n "${KALSHI_API_KEY_ID:-}" && -f secrets/kalshi_private.key ]]; then
+elif [[ "${DRY_RUN:-true}" == "false" && -n "${KALSHI_API_KEY_ID:-}" && -f secrets/kalshi_private.key ]]; then
   LIVE_FLAG=(--live)
 fi
 

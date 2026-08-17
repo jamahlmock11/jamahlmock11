@@ -26,7 +26,6 @@ fi
 default_dry_run="${DRY_RUN:-true}"
 default_benchmark="${BENCHMARK_MODE:-constituent_proxy}"
 if [[ "$has_creds" == true ]]; then
-  default_dry_run="${DRY_RUN:-false}"
   default_benchmark="${BENCHMARK_MODE:-kalshi_passthrough}"
 fi
 
