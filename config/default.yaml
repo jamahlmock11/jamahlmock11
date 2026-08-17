@@ -17,7 +17,7 @@ cross_venue:
   order_size: 5
 
 forecast_alignment:
-  enabled: true
+  enabled: false
   dominant_min_probability: 0.50
   contrarian_edge_premium: 0.05
   exceptional_edge_threshold: 0.22
@@ -161,6 +161,7 @@ strategy:
   min_pattern_matches: 10
   block_opposing_patterns: true
   block_rally_contrarian_entries: true
+  use_edge_based_side_pick: false
   external_data_enabled: false
   entry_signal_persistence_polls: 2
   chop_zone_min_sigma: 0.0

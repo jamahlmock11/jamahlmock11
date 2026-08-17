@@ -393,6 +393,13 @@ class StrategyConfig(BaseModel):
             "and YES when spot is below strike with downward momentum."
         ),
     )
+    use_edge_based_side_pick: bool = Field(
+        default=False,
+        description=(
+            "When false, enter on the model forecast side when it matches the "
+            "Kalshi poll favorite instead of picking whichever side has best edge."
+        ),
+    )
     external_data_enabled: bool = False
     entry_signal_persistence_polls: int = Field(
         default=2,

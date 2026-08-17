@@ -28,6 +28,7 @@ hour:
 # Same strategy rules as the 15-minute bot, with a 40-minute entry window.
 strategy:
   contract_duration_seconds: 3600
+  use_edge_based_side_pick: false
   min_edge: 0.15
   target_edge: 0.15
   min_confidence: 0.0
@@ -89,6 +90,9 @@ longshot:
 
 poll:
   mode: legacy
+
+forecast_alignment:
+  enabled: false
   favorable_min: 0.85
   favorable_max: 0.90
   low_poll_threshold: 0.85

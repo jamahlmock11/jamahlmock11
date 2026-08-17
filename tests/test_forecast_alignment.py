@@ -123,7 +123,11 @@ def _engine(**overrides) -> DecisionEngine:
 
 
 def test_conflict_requires_stronger_edge_instead_of_hard_block():
-    engine = _engine(block_rally_contrarian_entries=False)
+    engine = _engine(
+        block_rally_contrarian_entries=False,
+        use_edge_based_side_pick=True,
+        forecast_alignment=ForecastAlignmentConfig(enabled=True),
+    )
     decision = engine.decide(
         _market(yes_ask=0.72),
         _forecast(p_up=0.62),
@@ -141,7 +145,11 @@ def test_conflict_requires_stronger_edge_instead_of_hard_block():
 
 
 def test_exceptional_edge_allows_stable_contrarian_entry():
-    engine = _engine(block_rally_contrarian_entries=False)
+    engine = _engine(
+        block_rally_contrarian_entries=False,
+        use_edge_based_side_pick=True,
+        forecast_alignment=ForecastAlignmentConfig(enabled=True),
+    )
     decision = engine.decide(
         _market(yes_ask=0.86),
         _forecast(p_up=0.62),
@@ -157,7 +165,11 @@ def test_exceptional_edge_allows_stable_contrarian_entry():
 
 
 def test_deteriorating_probability_passes_contrarian_setup():
-    engine = _engine(block_rally_contrarian_entries=False)
+    engine = _engine(
+        block_rally_contrarian_entries=False,
+        use_edge_based_side_pick=True,
+        forecast_alignment=ForecastAlignmentConfig(enabled=True),
+    )
     engine.decide(
         _market(yes_ask=0.86),
         _forecast(p_up=0.55),
@@ -181,7 +193,7 @@ def test_deteriorating_probability_passes_contrarian_setup():
 def test_aligned_entry_logs_alignment_metadata():
     engine = _engine(block_rally_contrarian_entries=True)
     decision = engine.decide(
-        _market(yes_ask=0.40),
+        _market(yes_ask=0.52),
         _forecast(p_up=0.62),
         _features(current_price=65_050, short_trend=0.0003),
         _benchmark(),
@@ -197,9 +209,10 @@ def test_rally_gate_blocks_no_when_spot_above_strike_and_rallying():
     engine = _engine(
         forecast_alignment=ForecastAlignmentConfig(enabled=False),
         block_rally_contrarian_entries=True,
+        use_edge_based_side_pick=False,
     )
     decision = engine.decide(
-        _market(yes_ask=0.55),
+        _market(yes_ask=0.40),
         _forecast(p_up=0.48),
         _features(current_price=65_100, strike=65_000, short_trend=0.0004),
         _benchmark(),

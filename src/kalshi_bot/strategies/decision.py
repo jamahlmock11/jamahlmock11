@@ -168,6 +168,7 @@ class DecisionConfig:
     chop_zone_min_sigma: float = 0.0
     require_orderbook_depth: bool = False
     block_rally_contrarian_entries: bool = True
+    use_edge_based_side_pick: bool = False
     forecast_alignment: ForecastAlignmentConfig = field(
         default_factory=ForecastAlignmentConfig
     )
@@ -245,6 +246,7 @@ def decision_config_from_app(
         chop_zone_min_sigma=strategy.chop_zone_min_sigma,
         require_orderbook_depth=strategy.require_orderbook_depth,
         block_rally_contrarian_entries=strategy.block_rally_contrarian_entries,
+        use_edge_based_side_pick=strategy.use_edge_based_side_pick,
         forecast_alignment=config.forecast_alignment,
     )
 
@@ -255,6 +257,14 @@ def _direction_for_side(side: ContractSide | None) -> Direction:
     if side is ContractSide.NO:
         return Direction.DOWN
     return Direction.FLAT
+
+
+def _forecast_dominant_side(forecast: ProbabilityEstimate) -> ContractSide:
+    return (
+        ContractSide.YES
+        if forecast.p_up + 1e-12 >= forecast.p_down
+        else ContractSide.NO
+    )
 
 
 def _failure(gate: str, reason: str, observed: object, required: object) -> GateFailure:
@@ -681,17 +691,53 @@ class DecisionEngine:
             side: side_probabilities[side] - execution.executable_cost
             for side, execution in executions.items()
         }
+        seconds_remaining = (market.expiration - observed_now).total_seconds()
+        poll_snapshot = market_poll_snapshot(market.orderbook)
         if entry_ctx is not None and entry_ctx.forced_side is not None:
             selected_side = entry_ctx.forced_side
-        else:
+        elif cfg.use_edge_based_side_pick:
             selected_side = max(edges, key=lambda side: (edges[side], side.value))
+        else:
+            selected_side = _forecast_dominant_side(forecast)
+            if (
+                poll_snapshot.dominant_side is not None
+                and poll_snapshot.dominant_side is not selected_side
+            ):
+                failures.append(
+                    _failure(
+                        "forecast_kalshi_alignment",
+                        "model and Kalshi poll disagree on direction",
+                        (
+                            f"model {selected_side.value} "
+                            f"kalshi {poll_snapshot.dominant_side.value}"
+                        ),
+                        "same side",
+                    )
+                )
+            if selected_side not in executions:
+                failures.append(
+                    _failure(
+                        f"{selected_side.value.lower()}_execution",
+                        "aligned forecast side has no executable depth",
+                        None,
+                        trade_quantity,
+                    )
+                )
+                return DecisionResult(
+                    action=DecisionAction.NO_TRADE,
+                    reason="aligned forecast side has no executable depth",
+                    gate_failures=tuple(failures),
+                    current_direction=current_direction,
+                    predicted_direction=predicted_direction,
+                    trade_direction=Direction.FLAT,
+                    target_edge=cfg.target_edge,
+                    selected_side=selected_side,
+                )
         selected_execution = executions[selected_side]
         selected_edge = edges[selected_side]
         edge_decimal = Decimal(str(side_probabilities[selected_side])) - Decimal(
             str(selected_execution.executable_cost)
         )
-        seconds_remaining = (market.expiration - observed_now).total_seconds()
-        poll_snapshot = market_poll_snapshot(market.orderbook)
         if cfg.minimum_dominant_poll is not None:
             min_poll = cfg.minimum_dominant_poll
             if (
