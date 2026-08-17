@@ -67,6 +67,59 @@ def filter_hourly_markets(
     return filtered
 
 
+def _market_close_time(raw: object) -> datetime | None:
+    close_time = getattr(raw, "close_time", None)
+    if close_time is None and isinstance(raw, dict):
+        close_time = raw.get("close_time")
+    return close_time
+
+
+def select_active_hour_expiration(
+    markets: list,
+    now: datetime,
+    *,
+    minimum_seconds_remaining: float,
+    maximum_seconds_remaining: float,
+) -> datetime | None:
+    """Soonest hourly expiration still inside the tradable discovery window."""
+    expirations: list[datetime] = []
+    for raw in markets:
+        close_time = _market_close_time(raw)
+        if close_time is None:
+            continue
+        seconds = (close_time - now).total_seconds()
+        if seconds < minimum_seconds_remaining or seconds > maximum_seconds_remaining:
+            continue
+        expirations.append(close_time)
+    if not expirations:
+        return None
+    return min(expirations)
+
+
+def markets_for_expiration(markets: list, expiration: datetime) -> list:
+    """All strike books sharing the same hourly expiration timestamp."""
+    return [raw for raw in markets if _market_close_time(raw) == expiration]
+
+
+def select_active_hour_strike_markets(
+    markets: list,
+    now: datetime,
+    *,
+    minimum_seconds_remaining: float,
+    maximum_seconds_remaining: float,
+) -> tuple[datetime | None, list]:
+    """Return every strike market for the active hourly expiration bucket."""
+    expiration = select_active_hour_expiration(
+        markets,
+        now,
+        minimum_seconds_remaining=minimum_seconds_remaining,
+        maximum_seconds_remaining=maximum_seconds_remaining,
+    )
+    if expiration is None:
+        return None, []
+    return expiration, markets_for_expiration(markets, expiration)
+
+
 def select_nearest_strike_markets(
     markets: list,
     reference_price: float,
@@ -103,6 +156,7 @@ def discover_all_hour_markets(
     config: HourDiscoveryConfig,
     reference_price: float | None = None,
     strike_count: int = 10,
+    all_strikes_for_active_hour: bool = False,
 ) -> HourDiscoveryBatch:
     """Return every valid strike for the nearest active hourly expiration."""
     hour_cfg = config.hour
@@ -114,7 +168,14 @@ def discover_all_hour_markets(
         maximum_spread=config.maximum_spread,
     )
     hourly = filter_hourly_markets(markets, config=config)
-    if reference_price is not None and hourly:
+    if all_strikes_for_active_hour and hourly:
+        _, hourly = select_active_hour_strike_markets(
+            hourly,
+            now,
+            minimum_seconds_remaining=hour_cfg.min_seconds_remaining,
+            maximum_seconds_remaining=hour_cfg.contract_duration_seconds,
+        )
+    elif reference_price is not None and hourly:
         hourly = select_nearest_strike_markets(hourly, reference_price, count=strike_count)
 
     accepted: list[MarketSnapshot] = []

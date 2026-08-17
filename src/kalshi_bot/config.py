@@ -252,6 +252,18 @@ class HourStrategyConfig(BaseModel):
     model_version: str = "hour-v1.0.0"
     require_forecast_alignment: bool = True
     forecast_alignment_min_probability: float = Field(default=0.65, ge=0.0, le=1.0)
+    evaluate_all_active_strikes: bool = Field(
+        default=True,
+        description="Evaluate every strike on the active hourly expiration (typically 3–4 books).",
+    )
+    strong_evidence_min_probability: float = Field(
+        default=0.78,
+        ge=0.0,
+        le=1.0,
+        description="Side probability threshold for ranking outer strikes with strong finish-above/below thesis.",
+    )
+    strong_evidence_min_confidence: float = Field(default=0.60, ge=0.0, le=1.0)
+    strong_evidence_min_agreement: float = Field(default=0.55, ge=0.0, le=1.0)
 
 
 class StrategyConfig(BaseModel):

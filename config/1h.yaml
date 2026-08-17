@@ -24,6 +24,10 @@ hour:
   model_version: terminal-v1
   require_forecast_alignment: true
   forecast_alignment_min_probability: 0.52
+  evaluate_all_active_strikes: true
+  strong_evidence_min_probability: 0.78
+  strong_evidence_min_confidence: 0.60
+  strong_evidence_min_agreement: 0.55
 
 # Blend top-of-book skew into hourly terminal forecast ensemble.
 orderbook_skew:

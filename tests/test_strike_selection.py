@@ -5,15 +5,18 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 from kalshi_bot.config import HourStrategyConfig
-from kalshi_bot.domain import DecisionAction, DecisionResult, Direction
+from kalshi_bot.domain import ContractSide, DecisionAction, DecisionResult, Direction, MarketSnapshot
 from kalshi_bot.hour.discovery import HourDiscoveryConfig, discover_all_hour_markets
 from kalshi_bot.hour.mispricing import MispricingAssessment
-from kalshi_bot.hour.strike_selection import rank_terminal_candidate, select_best_strike_candidate
-from kalshi_bot.hour.strike_selection import StrikeCandidateResult
+from kalshi_bot.hour.strike_selection import (
+    rank_terminal_candidate,
+    select_best_strike_candidate,
+    StrikeCandidateResult,
+    StrikeRankConfig,
+)
+from kalshi_bot.hour.terminal_probability import TerminalForecast
 from kalshi_bot.market.orderbook import parse_orderbook_fp
 from tests.test_hour_discovery import FakeMarket, NOW, _book
-
-from kalshi_bot.domain import GateFailure, MarketSnapshot
 
 
 def _market(strike: float, yes_ask: float) -> MarketSnapshot:
@@ -72,7 +75,99 @@ def test_discover_all_hour_markets_returns_same_expiration_strikes():
     assert {m.strike for m in batch.markets} == {64000.0, 64500.0}
 
 
-def test_select_best_strike_prefers_tradeable_50c_candidate():
+def test_select_best_strike_prefers_strong_evidence_outer_strike():
+    rank_cfg = StrikeRankConfig(strong_evidence_min_probability=0.78)
+    terminal_strong = TerminalForecast(
+        p_yes=0.12,
+        p_no=0.88,
+        raw_p_yes=0.12,
+        calibrated_p_yes=0.12,
+        calibrated_p_no=0.88,
+        expected_terminal_brti=64000,
+        terminal_volatility=0.01,
+        distance_from_strike=500,
+        normalized_strike_distance=1.0,
+        confidence=0.70,
+        signal_agreement=0.60,
+        component_probabilities={},
+        strike=65500,
+        current_brti=65000,
+        seconds_remaining=1800,
+        settlement_reference="BRTI",
+    )
+    terminal_weak = TerminalForecast(
+        p_yes=0.55,
+        p_no=0.45,
+        raw_p_yes=0.55,
+        calibrated_p_yes=0.55,
+        calibrated_p_no=0.45,
+        expected_terminal_brti=65020,
+        terminal_volatility=0.01,
+        distance_from_strike=20,
+        normalized_strike_distance=0.1,
+        confidence=0.55,
+        signal_agreement=0.50,
+        component_probabilities={},
+        strike=64299,
+        current_brti=65020,
+        seconds_remaining=1800,
+        settlement_reference="BRTI",
+    )
+    mispricing_strong = MispricingAssessment(
+        yes=None,
+        no=None,
+        best_side=ContractSide.NO,
+        best_net_edge=0.14,
+        required_edge=0.10,
+        yes_net_edge=-0.20,
+        no_net_edge=0.14,
+    )
+    mispricing_weak = MispricingAssessment(
+        yes=None,
+        no=None,
+        best_side=ContractSide.YES,
+        best_net_edge=0.05,
+        required_edge=0.10,
+        yes_net_edge=0.05,
+        no_net_edge=-0.08,
+    )
+    outer = StrikeCandidateResult(
+        market=_market(65500, 0.72),
+        terminal=terminal_strong,
+        decision=_decision(DecisionAction.NO_TRADE, 0.14),
+        mispricing=mispricing_strong,
+        stability_swing=0.0,
+        rank_key=rank_terminal_candidate(
+            market=_market(65500, 0.72),
+            decision=_decision(DecisionAction.NO_TRADE, 0.14),
+            mispricing=mispricing_strong,
+            terminal=terminal_strong,
+            has_position=False,
+            rank_cfg=rank_cfg,
+        ),
+        summary="outer",
+    )
+    inner = StrikeCandidateResult(
+        market=_market(64299, 0.55),
+        terminal=terminal_weak,
+        decision=_decision(DecisionAction.NO_TRADE, 0.05),
+        mispricing=mispricing_weak,
+        stability_swing=0.0,
+        rank_key=rank_terminal_candidate(
+            market=_market(64299, 0.55),
+            decision=_decision(DecisionAction.NO_TRADE, 0.05),
+            mispricing=mispricing_weak,
+            terminal=terminal_weak,
+            has_position=False,
+            rank_cfg=rank_cfg,
+        ),
+        summary="inner",
+    )
+    best = select_best_strike_candidate([inner, outer])
+    assert best is outer
+
+
+def test_select_best_strike_prefers_tradeable_favorite_candidate():
     mispricing_good = MispricingAssessment(
         yes=None,
         no=None,
@@ -106,13 +201,13 @@ def test_select_best_strike_prefers_tradeable_50c_candidate():
         summary="far",
     )
     close = StrikeCandidateResult(
-        market=_market(64299, 0.50),
+        market=_market(64299, 0.68),
         terminal=None,
         decision=_decision(DecisionAction.BUY_DOWN, 0.20),
         mispricing=mispricing_good,
         stability_swing=0.0,
         rank_key=rank_terminal_candidate(
-            market=_market(64299, 0.50),
+            market=_market(64299, 0.68),
             decision=_decision(DecisionAction.BUY_DOWN, 0.20),
             mispricing=mispricing_good,
             has_position=False,

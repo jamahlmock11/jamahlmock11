@@ -42,6 +42,8 @@ from kalshi_bot.hour.strike_selection import (
     rank_terminal_candidate,
     select_best_strike_candidate,
     StrikeCandidateResult,
+    StrikeRankConfig,
+    _strong_evidence,
 )
 from kalshi_bot.hour.feature_engine import HourFeatureBundle, HourFeatureEngine
 from kalshi_bot.hour.probability_model import HourProbabilityModel, model_stability
@@ -249,6 +251,16 @@ class HourForecastingScanner:
 
         evaluated: list[StrikeCandidateResult] = []
         candidate_rows: list[dict] = []
+        hour_cfg = self.config.hour
+        rank_cfg = StrikeRankConfig(
+            strong_evidence_min_probability=hour_cfg.strong_evidence_min_probability,
+            strong_evidence_min_confidence=hour_cfg.strong_evidence_min_confidence,
+            strong_evidence_min_agreement=hour_cfg.strong_evidence_min_agreement,
+            favorite_min_executable_cost=self.config.terminal_probability.min_entry_executable_cost,
+            favorite_max_executable_cost=(
+                self.config.terminal_probability.max_entry_executable_cost or 0.80
+            ),
+        )
 
         for market in markets:
             try:
@@ -323,9 +335,11 @@ class HourForecastingScanner:
                 market=market,
                 decision=decision,
                 mispricing=mispricing,
+                terminal=terminal,
                 has_position=has_position,
+                rank_cfg=rank_cfg,
             )
-            summary = candidate_summary(market, decision, mispricing)
+            summary = candidate_summary(market, decision, mispricing, terminal=terminal)
             evaluated.append(
                 StrikeCandidateResult(
                     market=market,
@@ -348,6 +362,9 @@ class HourForecastingScanner:
                     "no_net_edge": mispricing.no_net_edge if mispricing else None,
                     "yes_ask": market.yes_ask,
                     "no_ask": market.no_ask,
+                    "p_yes": terminal.calibrated_p_yes,
+                    "p_no": terminal.calibrated_p_no,
+                    "strong_evidence": _strong_evidence(terminal, mispricing, rank_cfg),
                     "summary": summary,
                     "rank_key": rank_key,
                     "gate_count": len(decision.gate_failures),
@@ -682,11 +699,23 @@ class HourForecastingScanner:
         except Exception:
             reference_price = None
 
-        from kalshi_bot.hour.discovery import filter_hourly_markets, select_nearest_strike_markets
+        from kalshi_bot.hour.discovery import (
+            filter_hourly_markets,
+            select_active_hour_strike_markets,
+            select_nearest_strike_markets,
+        )
 
         hourly_markets = filter_hourly_markets(markets, config=self.discovery_config)
+        hour_cfg = self.config.hour
         candidate_markets = hourly_markets
-        if reference_price is not None and hourly_markets:
+        if self.terminal_mode and hour_cfg.evaluate_all_active_strikes and hourly_markets:
+            _, candidate_markets = select_active_hour_strike_markets(
+                hourly_markets,
+                observed_at,
+                minimum_seconds_remaining=hour_cfg.min_seconds_remaining,
+                maximum_seconds_remaining=hour_cfg.contract_duration_seconds,
+            )
+        elif reference_price is not None and hourly_markets:
             candidate_markets = select_nearest_strike_markets(
                 hourly_markets,
                 reference_price,
@@ -718,6 +747,9 @@ class HourForecastingScanner:
             config=self.discovery_config,
             reference_price=reference_price,
             strike_count=10,
+            all_strikes_for_active_hour=(
+                self.terminal_mode and hour_cfg.evaluate_all_active_strikes
+            ),
         )
         candidate_markets_snapshots = list(discovery_batch.markets)
         market = discovered.market
