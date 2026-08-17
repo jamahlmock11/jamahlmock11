@@ -95,13 +95,13 @@ def rank_terminal_candidate(
     elif decision.action is DecisionAction.HOLD and has_position:
         tier = 3
     elif (
-        rank_cfg.mispricing_enabled
+        cfg.mispricing_enabled
         and mispricing is not None
         and mispricing.best_net_edge + 1e-12 >= mispricing.required_edge
     ):
         tier = 3 if strong else 2
-    elif not rank_cfg.mispricing_enabled and (
-        strong or side_prob + 1e-12 >= rank_cfg.forecast_alignment_min_probability
+    elif not cfg.mispricing_enabled and (
+        strong or side_prob + 1e-12 >= cfg.forecast_alignment_min_probability
     ):
         tier = 2
     elif strong:
