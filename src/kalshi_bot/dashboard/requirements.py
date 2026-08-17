@@ -779,4 +779,13 @@ def enrich_decision(row: dict[str, Any]) -> dict[str, Any]:
     payload = _parse_payload(row)
     enriched.update(build_trade_requirements(row))
     enriched["reversal_status"] = build_reversal_status(payload)
+    up = row.get("up_probability")
+    down = row.get("down_probability")
+    predicted = row.get("predicted_direction")
+    if up is not None and down is not None:
+        pick = str(predicted or ("UP" if float(up) >= float(down) else "DOWN")).upper()
+        if pick not in {"UP", "DOWN"}:
+            pick = "UP" if float(up) >= float(down) else "DOWN"
+        enriched["model_pick"] = pick
+        enriched["model_pick_probability"] = float(up if pick == "UP" else down)
     return enriched

@@ -40,6 +40,70 @@
     return n == null ? "—" : Number(n).toFixed(digits);
   }
 
+  function modelPickMeta(d) {
+    if (!d) {
+      return {
+        pick: "—",
+        cls: "flat",
+        label: "—",
+        sub: "Waiting for forecast…",
+      };
+    }
+    const asPercent = (n) => {
+      if (n == null) return null;
+      const value = Number(n);
+      return value <= 1 ? value * 100 : value;
+    };
+    const up = asPercent(d.up_probability);
+    const down = asPercent(d.down_probability);
+    const predicted = (d.predicted_direction || "").toUpperCase();
+    let pick = predicted;
+    if (!pick || pick === "FLAT") {
+      if (up == null || down == null) {
+        return {
+          pick: "—",
+          cls: "flat",
+          label: "—",
+          sub: "No forecast logged",
+        };
+      }
+      pick = up >= down ? "UP" : "DOWN";
+    }
+    const prob = pick === "UP" ? up : down;
+    const other = pick === "UP" ? down : up;
+    const cls = pick === "UP" ? "up" : pick === "DOWN" ? "down" : "flat";
+    const probText = prob == null ? pick : `${pick} ${prob.toFixed(1)}%`;
+    const sub =
+      up == null || down == null
+        ? "Strike-expiry probability unavailable"
+        : `Above strike ${up.toFixed(1)}% · Below ${down.toFixed(1)}%`;
+    return {
+      pick,
+      cls,
+      label: probText,
+      sub,
+      other,
+    };
+  }
+
+  function renderModelPick(d) {
+    const meta = modelPickMeta(d);
+    const bannerValue = $("modelPick");
+    const bannerSub = $("modelPickSub");
+    const decisionPick = $("decisionModelPick");
+    if (bannerValue) {
+      bannerValue.textContent = meta.label;
+      bannerValue.className = `model-pick-value ${meta.cls}`;
+    }
+    if (bannerSub) {
+      bannerSub.textContent = meta.sub;
+    }
+    if (decisionPick) {
+      decisionPick.textContent = meta.label;
+      decisionPick.className = meta.cls;
+    }
+  }
+
   function tierBadge(tier) {
     const t = (tier || "").toLowerCase();
     const cls =
@@ -305,6 +369,7 @@
 
   function renderCurrentDecision(d) {
     if (!d) return;
+    renderModelPick(d);
     const action = d.action || "NO_TRADE";
     $("decisionAction").textContent = action;
     $("decisionAction").className = `decision-action ${action.toLowerCase()}`;
@@ -414,6 +479,7 @@
 
     const decision = stats.last_decision;
     const scan = stats.last_scan;
+    renderModelPick(decision);
     if (decision || scan) {
       $("mode").textContent = decision ? (decision.dry_run ? "PAPER" : "LIVE") : (scan.mode || "—");
       $("statSpot").textContent = decision

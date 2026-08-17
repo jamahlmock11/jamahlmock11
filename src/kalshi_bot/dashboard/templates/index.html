@@ -14,6 +14,11 @@
         <p class="lede">BRTI-first BTC 15-minute forecasts, executable edge, and safety-gated decisions.</p>
       </div>
       <aside class="status-panel">
+        <div class="model-pick-banner" id="modelPickBanner">
+          <span class="model-pick-label">Model pick</span>
+          <strong class="model-pick-value" id="modelPick">—</strong>
+          <span class="model-pick-sub" id="modelPickSub">Waiting for forecast…</span>
+        </div>
         <div class="status-row">
           <span class="pulse" id="pulse"></span>
           <span>Feed</span>
@@ -24,8 +29,14 @@
     </header>
 
     <section class="panel decision-panel">
-      <div class="panel-head">
-        <h2>Current decision</h2>
+      <div class="panel-head decision-head">
+        <div class="decision-head-copy">
+          <h2>Current decision</h2>
+          <div class="decision-head-model">
+            <span>Model</span>
+            <strong id="decisionModelPick">—</strong>
+          </div>
+        </div>
         <div class="decision-action" id="decisionAction">NO DATA</div>
       </div>
       <div class="reversal-banner" id="reversalBanner" hidden>
