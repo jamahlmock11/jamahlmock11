@@ -253,9 +253,11 @@ class HourForecastingScanner:
         candidate_rows: list[dict] = []
         hour_cfg = self.config.hour
         rank_cfg = StrikeRankConfig(
+            mispricing_enabled=terminal_cfg.mispricing_enabled,
             strong_evidence_min_probability=hour_cfg.strong_evidence_min_probability,
             strong_evidence_min_confidence=hour_cfg.strong_evidence_min_confidence,
             strong_evidence_min_agreement=hour_cfg.strong_evidence_min_agreement,
+            forecast_alignment_min_probability=terminal_cfg.forecast_alignment_min_probability,
             favorite_min_executable_cost=self.config.terminal_probability.min_entry_executable_cost,
             favorite_max_executable_cost=(
                 self.config.terminal_probability.max_entry_executable_cost or 0.80

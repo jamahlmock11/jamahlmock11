@@ -11,9 +11,11 @@ from kalshi_bot.hour.terminal_probability import TerminalForecast
 
 @dataclass(frozen=True)
 class StrikeRankConfig:
+    mispricing_enabled: bool = True
     strong_evidence_min_probability: float = 0.78
     strong_evidence_min_confidence: float = 0.60
     strong_evidence_min_agreement: float = 0.55
+    forecast_alignment_min_probability: float = 0.52
     favorite_min_executable_cost: float = 0.60
     favorite_max_executable_cost: float = 0.80
 
@@ -92,8 +94,16 @@ def rank_terminal_candidate(
         tier = 3
     elif decision.action is DecisionAction.HOLD and has_position:
         tier = 3
-    elif mispricing is not None and mispricing.best_net_edge + 1e-12 >= mispricing.required_edge:
+    elif (
+        rank_cfg.mispricing_enabled
+        and mispricing is not None
+        and mispricing.best_net_edge + 1e-12 >= mispricing.required_edge
+    ):
         tier = 3 if strong else 2
+    elif not rank_cfg.mispricing_enabled and (
+        strong or side_prob + 1e-12 >= rank_cfg.forecast_alignment_min_probability
+    ):
+        tier = 2
     elif strong:
         tier = 2
     elif _price_band_score(

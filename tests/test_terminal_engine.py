@@ -217,6 +217,44 @@ def test_no_trade_when_edge_too_small():
     assert decision.action is DecisionAction.NO_TRADE
 
 
+def test_forecast_only_entry_when_mispricing_disabled():
+    features = hour_features()
+    trend = classify_trend(dict(features.changes))
+    vol = _vol(features)
+    terminal = replace(
+        TerminalProbabilityEngine().estimate(
+            features,
+            Regime.TREND_UP,
+            trend,
+            vol,
+            market_strike=65_000,
+        ),
+        calibrated_p_yes=0.68,
+        calibrated_p_no=0.32,
+        confidence=0.75,
+        signal_agreement=0.70,
+    )
+    market = hour_market(yes_ask=0.68, minutes_remaining=35)
+    app_cfg = load_yaml_config("config/1h.yaml")
+    assert app_cfg.terminal_probability.mispricing_enabled is False
+    decision_engine = HourTerminalDecisionEngine(
+        terminal_decision_config_from_app(app_cfg)
+    )
+    decision, mispricing, _ = decision_engine.decide(
+        market,
+        terminal,
+        features,
+        benchmark(),
+        now=NOW,
+        calibration_pass=True,
+    )
+    assert mispricing is not None
+    assert mispricing.yes is not None
+    assert mispricing.yes.net_edge < mispricing.required_edge
+    assert decision.action is DecisionAction.BUY_UP
+    assert "mispricing gate off" in decision.reason
+
+
 def test_terminal_decision_picks_best_side_not_direction_only():
     features = hour_features()
     trend = classify_trend(dict(features.changes))
@@ -290,6 +328,7 @@ def test_1h_yaml_terminal_config_loaded():
     assert cfg.terminal_probability.enabled is True
     assert cfg.terminal_probability.intelligence_overlay is False
     assert cfg.terminal_probability.minimum_confidence == pytest.approx(0.52)
+    assert cfg.terminal_probability.mispricing_enabled is False
     assert cfg.terminal_probability.exclude_coin_flip_band is True
     assert cfg.terminal_probability.exclude_longshot_band is True
     assert cfg.orderbook_skew.ensemble_enabled is True

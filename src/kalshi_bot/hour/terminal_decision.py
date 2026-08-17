@@ -578,7 +578,11 @@ class HourTerminalDecisionEngine:
                 )
             )
 
-        selected_side = mispricing.best_side
+        if tcfg.mispricing_enabled:
+            selected_side = mispricing.best_side
+        else:
+            selected_side = predicted_side
+
         selected_mispricing = (
             mispricing.yes if selected_side is ContractSide.YES else mispricing.no
         )
@@ -586,14 +590,18 @@ class HourTerminalDecisionEngine:
             failures.append(
                 _failure(
                     "execution",
-                    "neither side has executable depth for mispricing evaluation",
+                    "neither side has executable depth for entry evaluation",
                     None,
                     "executable book",
                 )
             )
             decision = DecisionResult(
                 action=DecisionAction.NO_TRADE,
-                reason="no executable mispricing on either side",
+                reason=(
+                    "no executable book on forecast side"
+                    if not tcfg.mispricing_enabled
+                    else "no executable mispricing on either side"
+                ),
                 gate_failures=tuple(failures),
                 current_direction=current_direction,
                 predicted_direction=predicted_direction,
@@ -603,7 +611,9 @@ class HourTerminalDecisionEngine:
             )
             return decision, mispricing, stability_swing
 
-        if selected_mispricing.net_edge + 1e-12 < mispricing.required_edge:
+        if tcfg.mispricing_enabled and (
+            selected_mispricing.net_edge + 1e-12 < mispricing.required_edge
+        ):
             failures.append(
                 _failure(
                     "minimum_edge",
@@ -719,7 +729,7 @@ class HourTerminalDecisionEngine:
                             if selected_side is ContractSide.YES
                             else mispricing.no
                         )
-                        if (
+                        if tcfg.mispricing_enabled and (
                             selected_mispricing is None
                             or selected_mispricing.net_edge + 1e-12 < mispricing.required_edge
                         ):
@@ -753,9 +763,14 @@ class HourTerminalDecisionEngine:
             )
 
         if failures:
+            blocked_reason = (
+                "terminal forecast blocked by safety gates"
+                if not tcfg.mispricing_enabled
+                else "terminal mispricing blocked by safety gates or insufficient net edge"
+            )
             decision = DecisionResult(
                 action=DecisionAction.NO_TRADE,
-                reason="terminal mispricing blocked by safety gates or insufficient net edge",
+                reason=blocked_reason,
                 gate_failures=tuple(failures),
                 current_direction=current_direction,
                 predicted_direction=predicted_direction,
@@ -771,17 +786,35 @@ class HourTerminalDecisionEngine:
             )
             return decision, mispricing, stability_swing
 
+        persistence_edge = (
+            selected_mispricing.net_edge
+            if tcfg.mispricing_enabled
+            else selected_mispricing.model_probability
+        )
+        persistence_required = (
+            mispricing.required_edge
+            if tcfg.mispricing_enabled
+            else tcfg.forecast_alignment_min_probability
+        )
+
         action = (
             DecisionAction.BUY_UP
             if selected_side is ContractSide.YES
             else DecisionAction.BUY_DOWN
         )
+        entry_reason = (
+            f"terminal mispricing: {selected_side.value} net edge "
+            f"{selected_mispricing.net_edge:.1%} >= required {mispricing.required_edge:.1%}"
+            if tcfg.mispricing_enabled
+            else (
+                f"terminal forecast: {selected_side.value} "
+                f"P={selected_mispricing.model_probability:.1%} "
+                f"(mispricing gate off)"
+            )
+        )
         decision = DecisionResult(
             action=action,
-            reason=(
-                f"terminal mispricing: {selected_side.value} net edge "
-                f"{selected_mispricing.net_edge:.1%} >= required {mispricing.required_edge:.1%}"
-            ),
+            reason=entry_reason,
             gate_failures=(),
             current_direction=current_direction,
             predicted_direction=predicted_direction,
@@ -789,9 +822,9 @@ class HourTerminalDecisionEngine:
             selected_side=selected_side,
             predicted_probability=selected_mispricing.model_probability,
             executable_cost=selected_mispricing.executable_cost,
-            edge=selected_mispricing.net_edge,
+            edge=persistence_edge,
             target_edge=tcfg.fallback_min_edge,
-            required_edge=mispricing.required_edge,
+            required_edge=persistence_required,
             quantity=trade_quantity,
             execution=selected_execution,
         )

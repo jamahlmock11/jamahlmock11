@@ -468,6 +468,10 @@ class TerminalProbabilityConfig(BaseModel):
     """Live 1-hour terminal mispricing engine settings."""
 
     enabled: bool = False
+    mispricing_enabled: bool = Field(
+        default=True,
+        description="When false, trade on terminal forecast alignment only (no net-edge vs book gate).",
+    )
     intelligence_overlay: bool = False
     late_window_shortcut: bool = False
     late_favorite_shortcut: bool = False
