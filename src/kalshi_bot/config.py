@@ -323,6 +323,23 @@ class StrategyConfig(BaseModel):
         default=True,
         description="Block entries when enough similar historical setups lost money.",
     )
+    require_forecast_alignment: bool = Field(
+        default=True,
+        description="Block entries on the side opposite the dominant ensemble forecast.",
+    )
+    forecast_alignment_min_probability: float = Field(
+        default=0.52,
+        ge=0.0,
+        le=1.0,
+        description="Minimum dominant forecast probability before alignment is enforced.",
+    )
+    block_rally_contrarian_entries: bool = Field(
+        default=True,
+        description=(
+            "Block NO when spot is above strike with upward momentum, "
+            "and YES when spot is below strike with downward momentum."
+        ),
+    )
     external_data_enabled: bool = False
     entry_signal_persistence_polls: int = Field(
         default=2,

@@ -420,6 +420,50 @@ def test_recovery_hold_allows_exit_when_forecast_weak():
     assert signal.trigger == "thesis_reversal"
 
 
+def test_opposite_edge_exit_exits_no_position_when_btc_rallies():
+    """NO positions should exit on ensemble flip before the 55% premium stop loss."""
+    market = MarketSnapshot(
+        ticker="KXBTC15M-TEST",
+        status="active",
+        rules="BRTI",
+        strike=65000,
+        expiration=NOW + timedelta(minutes=8),
+        open_time=NOW - timedelta(minutes=7),
+        reference="BRTI",
+        orderbook=book(yes_bid=0.72),
+        current_position=MarketPosition(
+            side=ContractSide.NO,
+            quantity=1,
+            average_price=0.34,
+            opened_at=NOW - timedelta(seconds=180),
+        ),
+    )
+    forecast = ProbabilityEstimate(
+        p_up=0.62,
+        p_down=0.38,
+        confidence=0.75,
+        signal_agreement=0.75,
+        component_probabilities={"terminal": 0.62},
+        regime=Regime.TREND_UP,
+        raw_p_up=0.62,
+    )
+    signal = evaluate_position_exit(
+        market=market,
+        position=market.current_position,
+        forecast=forecast,
+        failures=(),
+        predicted_side=ContractSide.YES,
+        quantity=1,
+        stop_loss_fraction=0.55,
+        opposite_edge_shift=0.20,
+        opposite_edge_exit_enabled=True,
+        min_hold_seconds=120,
+        now=NOW,
+    )
+    assert signal is not None
+    assert signal.trigger == "opposite_edge"
+
+
 def test_opposite_edge_exit_disabled_by_default():
     market = MarketSnapshot(
         ticker="KXBTC15M-TEST",

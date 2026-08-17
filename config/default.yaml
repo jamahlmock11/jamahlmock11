@@ -148,6 +148,9 @@ strategy:
   require_trade_quality: false
   min_pattern_matches: 10
   block_opposing_patterns: true
+  require_forecast_alignment: true
+  forecast_alignment_min_probability: 0.52
+  block_rally_contrarian_entries: true
   external_data_enabled: false
   entry_signal_persistence_polls: 2
   chop_zone_min_sigma: 0.0
@@ -178,9 +181,9 @@ risk:
   kelly_max_fraction: 0.25
   kelly_bankroll_usd: 16.22
   stop_loss_fraction: 0.55
-  opposite_edge_shift: 0.25
+  opposite_edge_shift: 0.20
   thesis_reversal_enabled: false
-  opposite_edge_exit_enabled: false
+  opposite_edge_exit_enabled: true
   recovery_hold_enabled: false
   recovery_hold_min_probability: 0.58
   recovery_hold_min_confidence: 0.58

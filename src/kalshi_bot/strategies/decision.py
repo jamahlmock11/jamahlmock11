@@ -163,6 +163,9 @@ class DecisionConfig:
     longshot: LongshotConfig = field(default_factory=LongshotConfig)
     chop_zone_min_sigma: float = 0.0
     require_orderbook_depth: bool = False
+    require_forecast_alignment: bool = True
+    forecast_alignment_min_probability: float = 0.52
+    block_rally_contrarian_entries: bool = True
 
     @property
     def effective_minimum_edge(self) -> Decimal:
@@ -236,6 +239,9 @@ def decision_config_from_app(
         longshot=config.longshot,
         chop_zone_min_sigma=strategy.chop_zone_min_sigma,
         require_orderbook_depth=strategy.require_orderbook_depth,
+        require_forecast_alignment=strategy.require_forecast_alignment,
+        forecast_alignment_min_probability=strategy.forecast_alignment_min_probability,
+        block_rally_contrarian_entries=strategy.block_rally_contrarian_entries,
     )
 
 
@@ -752,6 +758,60 @@ class DecisionEngine:
                         float(required_edge),
                     )
                 )
+
+        dominant_side = (
+            ContractSide.YES if forecast.p_up >= forecast.p_down else ContractSide.NO
+        )
+        dominant_prob = max(forecast.p_up, forecast.p_down)
+        alignment_required = (
+            cfg.longshot.require_forecast_alignment
+            if cfg.longshot.enabled
+            else cfg.require_forecast_alignment
+        )
+        if (
+            alignment_required
+            and dominant_prob + 1e-12 >= cfg.forecast_alignment_min_probability
+            and selected_side is not dominant_side
+        ):
+            failures.append(
+                _failure(
+                    "forecast_alignment",
+                    "best edge side conflicts with dominant forecast direction",
+                    selected_side.value,
+                    dominant_side.value,
+                )
+            )
+
+        if cfg.block_rally_contrarian_entries:
+            strike = (
+                features.settlement_effective_strike
+                if features.settlement_effective_strike is not None
+                else features.strike
+            )
+            distance = features.current_price - strike
+            momentum_tol = 0.00005
+            if selected_side is ContractSide.NO:
+                rallying = distance > 0 and features.short_trend > momentum_tol
+                if rallying:
+                    failures.append(
+                        _failure(
+                            "spot_momentum_alignment",
+                            "NO entry blocked while spot is above strike with upward momentum",
+                            features.short_trend,
+                            momentum_tol,
+                        )
+                    )
+            elif selected_side is ContractSide.YES:
+                selling = distance < 0 and features.short_trend < -momentum_tol
+                if selling:
+                    failures.append(
+                        _failure(
+                            "spot_momentum_alignment",
+                            "YES entry blocked while spot is below strike with downward momentum",
+                            features.short_trend,
+                            -momentum_tol,
+                        )
+                    )
 
         size_multiplier = (
             cfg.longshot.position_size_mult if cfg.longshot.enabled else 1.0

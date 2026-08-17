@@ -390,7 +390,13 @@ def test_buy_down_uses_executable_no_price():
     result = DecisionEngine().decide(
         market(0.50),
         forecast(0.22),
-        replace(features(), trajectory=TrajectoryState.ACCELERATING_DOWN),
+        replace(
+            features(),
+            trajectory=TrajectoryState.ACCELERATING_DOWN,
+            current_price=64_980.0,
+            z_distance_to_strike=-0.25,
+            short_trend=-0.0003,
+        ),
         benchmark(),
         now=NOW,
     )
