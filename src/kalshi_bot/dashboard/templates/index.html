@@ -14,6 +14,12 @@
         <p class="lede">BRTI-first BTC 15-minute forecasts, executable edge, and safety-gated decisions.</p>
       </div>
       <aside class="status-panel">
+        <div class="model-pick-banner" id="modelPickBanner">
+          <span class="model-pick-label">Model pick</span>
+          <strong class="model-pick-value" id="modelPick">—</strong>
+          <span class="model-kalshi-pick" id="modelKalshiPick">Kalshi —</span>
+          <span class="model-pick-sub" id="modelPickSub">Waiting for forecast…</span>
+        </div>
         <div class="status-row">
           <span class="pulse" id="pulse"></span>
           <span>Feed</span>
@@ -24,8 +30,17 @@
     </header>
 
     <section class="panel decision-panel">
-      <div class="panel-head">
-        <h2>Current decision</h2>
+      <div class="panel-head decision-head">
+        <div class="decision-head-copy">
+          <h2>Current decision</h2>
+          <div class="decision-head-model">
+            <span>Model</span>
+            <div class="decision-head-picks">
+              <strong id="decisionModelPick">—</strong>
+              <span id="decisionKalshiPick">Kalshi —</span>
+            </div>
+          </div>
+        </div>
         <div class="decision-action" id="decisionAction">NO DATA</div>
       </div>
       <div class="reversal-banner" id="reversalBanner" hidden>
@@ -239,6 +254,6 @@
   <div class="offline-banner" id="offlineBanner" hidden>
     Dashboard API unreachable. Open port <strong>8787</strong> from the Cursor <strong>Ports</strong> tab, then reload.
   </div>
-  <script src="/static/app.js"></script>
+  <script src="/static/app.js?v=20260817"></script>
 </body>
 </html>

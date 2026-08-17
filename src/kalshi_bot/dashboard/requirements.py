@@ -11,7 +11,7 @@ DEFAULT_THRESHOLDS: dict[str, Any] = {
     "min_signal_agreement": 0.48,
     "min_data_completeness": 0.65,
     "min_seconds_remaining": 60.0,
-    "max_entry_seconds_remaining": 900.0,
+    "max_entry_seconds_remaining": 780.0,
     "max_spread": 0.12,
     "min_entry_executable_cost": 0.08,
     "late_favorite_seconds": 420.0,
@@ -192,7 +192,10 @@ def _cents(value: float | None) -> str:
 def _pct(value: float | None, digits: int = 0) -> str:
     if value is None:
         return "—"
-    return f"{value * 100:.{digits}f}%"
+    scaled = float(value) * 100 if abs(float(value)) <= 1 else float(value)
+    if digits <= 0:
+        return f"{round(scaled)}%"
+    return f"{scaled:.{digits}f}%"
 
 
 def _thresholds(row: dict[str, Any]) -> dict[str, Any]:
@@ -779,4 +782,30 @@ def enrich_decision(row: dict[str, Any]) -> dict[str, Any]:
     payload = _parse_payload(row)
     enriched.update(build_trade_requirements(row))
     enriched["reversal_status"] = build_reversal_status(payload)
+    up = row.get("up_probability")
+    down = row.get("down_probability")
+    predicted = row.get("predicted_direction")
+    if up is not None and down is not None:
+        pick = str(predicted or ("UP" if float(up) >= float(down) else "DOWN")).upper()
+        if pick not in {"UP", "DOWN"}:
+            pick = "UP" if float(up) >= float(down) else "DOWN"
+        enriched["model_pick"] = pick
+        enriched["model_pick_probability"] = float(up if pick == "UP" else down)
+    yes_ask = row.get("yes_ask")
+    yes_bid = row.get("yes_bid")
+    if yes_ask is not None or yes_bid is not None:
+        yes_mid = (
+            (float(yes_ask) + float(yes_bid)) / 2
+            if yes_ask is not None and yes_bid is not None
+            else float(yes_ask if yes_ask is not None else yes_bid)
+        )
+        kalshi_up = round(yes_mid * 100)
+        kalshi_down = max(0, 100 - kalshi_up)
+        kalshi_pick = "UP" if kalshi_up >= kalshi_down else "DOWN"
+        enriched["kalshi_up_probability"] = yes_mid
+        enriched["kalshi_down_probability"] = 1.0 - yes_mid
+        enriched["kalshi_pick"] = kalshi_pick
+        enriched["kalshi_pick_probability"] = float(
+            kalshi_up if kalshi_pick == "UP" else kalshi_down
+        )
     return enriched

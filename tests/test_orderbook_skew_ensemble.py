@@ -121,3 +121,19 @@ def test_orderbook_skew_blocked_near_strike():
         orderbook_skew=cfg,
     )
     assert "orderbook_skew" not in estimate.component_probabilities
+
+
+def test_orderbook_skew_down_skew_disabled_ignores_ask_heavy_book():
+    cfg = OrderbookSkewConfig(
+        ensemble_enabled=True,
+        down_skew_enabled=False,
+        ensemble_max_seconds_remaining=540.0,
+        min_skew=0.25,
+        min_z_distance=1.5,
+    )
+    estimate = EnsembleProbabilityModel().estimate(
+        _features(seconds_remaining=300.0, yes_top_skew=-0.40),
+        Regime.TREND_UP,
+        orderbook_skew=cfg,
+    )
+    assert "orderbook_skew" not in estimate.component_probabilities

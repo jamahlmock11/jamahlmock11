@@ -152,7 +152,10 @@ def evaluate_position_reversal(
         and seconds + 1e-12 <= cfg.wrong_side_seconds
         and hold_probability + 1e-12 < required_hold + 0.08
     )
-    should_reverse = cfg.enabled and (
+    inside_reversal_window = (
+        cfg.window_seconds > 0 and seconds + 1e-9 <= cfg.window_seconds
+    )
+    should_reverse = cfg.enabled and inside_reversal_window and (
         critical_wrong_side or weak_path or faded_forecast or early_wrong_side
     )
 

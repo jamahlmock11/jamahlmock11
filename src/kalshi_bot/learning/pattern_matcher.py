@@ -57,6 +57,14 @@ def _feature_vector(
     ]
 
 
+def feature_vector_dict(
+    features: FeatureSnapshot,
+    enriched: EnrichedFeatures,
+    regime: Regime,
+) -> dict[str, float]:
+    return dict(zip(FEATURE_KEYS, _feature_vector(features, enriched, regime)))
+
+
 def _as_float(value: object) -> float:
     try:
         return float(value)  # type: ignore[arg-type]
@@ -118,7 +126,7 @@ class PatternMatcher:
                 payload = json.loads(payload_raw or "{}")
             except json.JSONDecodeError:
                 continue
-            features = payload.get("entry_features")
+            features = payload.get("pattern_vector") or payload.get("entry_features")
             if not features:
                 continue
             patterns.append(
@@ -187,13 +195,15 @@ class PatternMatcher:
         enriched: EnrichedFeatures,
         regime: Regime,
         *,
+        ticker: str,
         prediction: float,
         confidence: float,
         edge: float,
         action: str,
-    ) -> None:
+    ) -> int:
         """Persist entry features for future pattern matching."""
         entry = {
+            "ticker": ticker,
             "vector": dict(
                 zip(
                     FEATURE_KEYS,
@@ -210,6 +220,31 @@ class PatternMatcher:
         # Keep last 5000 entries
         stored = stored[-5000:]
         self.patterns_path.write_text(json.dumps(stored, indent=2))
+        return len(stored) - 1
+
+    def record_outcome_for_ticker(
+        self,
+        ticker: str,
+        *,
+        outcome: float,
+        pnl: float,
+    ) -> bool:
+        """Label the most recent open pattern entry for ``ticker``."""
+        stored = self._load_stored_patterns()
+        for index in range(len(stored) - 1, -1, -1):
+            entry = stored[index]
+            if entry.get("ticker") != ticker:
+                continue
+            if entry.get("outcome") is not None:
+                continue
+            stored[index] = {
+                **entry,
+                "outcome": outcome,
+                "pnl": pnl,
+            }
+            self.patterns_path.write_text(json.dumps(stored, indent=2))
+            return True
+        return False
 
     def record_outcome(
         self,

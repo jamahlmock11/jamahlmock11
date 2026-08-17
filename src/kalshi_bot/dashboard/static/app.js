@@ -32,12 +32,118 @@
     return `${prefix}${money(value)}`;
   }
 
-  function pct(n, digits = 1) {
-    return n == null ? "—" : `${Number(n).toFixed(digits)}%`;
+  function asPercent(n) {
+    if (n == null) return null;
+    const value = Number(n);
+    const scaled = value <= 1 ? value * 100 : value;
+    return Math.round(scaled);
+  }
+
+  function pct(n) {
+    const value = asPercent(n);
+    return value == null ? "—" : `${value}%`;
   }
 
   function fixed(n, digits = 2) {
     return n == null ? "—" : Number(n).toFixed(digits);
+  }
+
+  function kalshiPredictionMeta(d) {
+    if (!d || (d.yes_ask == null && d.yes_bid == null)) {
+      return {
+        pick: "—",
+        cls: "flat",
+        label: "Kalshi —",
+        up: null,
+        down: null,
+      };
+    }
+    const yesMid =
+      d.yes_ask != null && d.yes_bid != null
+        ? (Number(d.yes_ask) + Number(d.yes_bid)) / 2
+        : Number(d.yes_ask ?? d.yes_bid);
+    const up = asPercent(yesMid);
+    const down = up == null ? null : Math.max(0, 100 - up);
+    const pick = up != null && down != null && up >= down ? "UP" : "DOWN";
+    const prob = pick === "UP" ? up : down;
+    return {
+      pick,
+      cls: pick === "UP" ? "up" : "down",
+      label: prob == null ? "Kalshi —" : `Kalshi ${pick} ${prob}%`,
+      up,
+      down,
+    };
+  }
+
+  function modelPickMeta(d) {
+    if (!d) {
+      return {
+        pick: "—",
+        cls: "flat",
+        label: "—",
+        sub: "Waiting for forecast…",
+      };
+    }
+    const asPercentValue = (n) => asPercent(n);
+    const up = asPercentValue(d.up_probability);
+    const down = asPercentValue(d.down_probability);
+    const predicted = (d.predicted_direction || "").toUpperCase();
+    let pick = predicted;
+    if (!pick || pick === "FLAT") {
+      if (up == null || down == null) {
+        return {
+          pick: "—",
+          cls: "flat",
+          label: "—",
+          sub: "No forecast logged",
+        };
+      }
+      pick = up >= down ? "UP" : "DOWN";
+    }
+    const prob = pick === "UP" ? up : down;
+    const other = pick === "UP" ? down : up;
+    const cls = pick === "UP" ? "up" : pick === "DOWN" ? "down" : "flat";
+    const probText = prob == null ? pick : `${pick} ${prob}%`;
+    const sub =
+      up == null || down == null
+        ? "Strike-expiry probability unavailable"
+        : `Above strike ${up}% · Below ${down}%`;
+    return {
+      pick,
+      cls,
+      label: probText,
+      sub,
+      other,
+    };
+  }
+
+  function renderModelPick(d) {
+    const meta = modelPickMeta(d);
+    const kalshi = kalshiPredictionMeta(d);
+    const bannerValue = $("modelPick");
+    const bannerKalshi = $("modelKalshiPick");
+    const bannerSub = $("modelPickSub");
+    const decisionPick = $("decisionModelPick");
+    const decisionKalshi = $("decisionKalshiPick");
+    if (bannerValue) {
+      bannerValue.textContent = meta.label;
+      bannerValue.className = `model-pick-value ${meta.cls}`;
+    }
+    if (bannerKalshi) {
+      bannerKalshi.textContent = kalshi.label;
+      bannerKalshi.className = `model-kalshi-pick ${kalshi.cls}`;
+    }
+    if (bannerSub) {
+      bannerSub.textContent = meta.sub;
+    }
+    if (decisionPick) {
+      decisionPick.textContent = meta.label;
+      decisionPick.className = meta.cls;
+    }
+    if (decisionKalshi) {
+      decisionKalshi.textContent = kalshi.label;
+      decisionKalshi.className = kalshi.cls;
+    }
   }
 
   function tierBadge(tier) {
@@ -106,6 +212,7 @@
 
   function renderReversalStatus(status) {
     const banner = $("reversalBanner");
+    if (!banner) return;
     if (!status) {
       banner.hidden = true;
       return;
@@ -256,7 +363,7 @@
         <td class="mono">${Number(t.count || 0).toFixed(0)}</td>
         <td class="mono">${t.price_cents != null ? `${t.price_cents}¢` : fixed(t.price)}</td>
         <td class="${pnlClass(t.pnl_usd)}">${signedMoney(t.pnl_usd)}</td>
-        <td class="mono">${t.action_type === "EXIT" || t.strategy === "forecast_exit" ? "—" : t.edge_pct != null ? `${Number(t.edge_pct).toFixed(1)}%` : fixed(t.edge, 1)}</td>
+        <td class="mono">${t.action_type === "EXIT" || t.strategy === "forecast_exit" ? "—" : t.edge_pct != null ? pct(t.edge_pct / 100) : pct(t.edge)}</td>
         <td>${modeBadge(t)}</td>
       </tr>`
       )
@@ -275,9 +382,9 @@
         <td>${tierBadge(s.confidence)}</td>
         <td class="mono">${s.ticker}</td>
         <td>${sideBadge(s.side)}</td>
-        <td class="mono">${(s.kalshi_prob * 100).toFixed(1)}%</td>
-        <td class="mono">${(s.options_prob * 100).toFixed(1)}%</td>
-        <td class="edge-pos mono">${Number(s.edge_pp).toFixed(1)}</td>
+        <td class="mono">${pct(s.kalshi_prob)}</td>
+        <td class="mono">${pct(s.options_prob)}</td>
+        <td class="edge-pos mono">${Math.round(Number(s.edge_pp))}</td>
         <td>${s.traded ? '<span class="badge live">yes</span>' : '<span class="badge dry">no</span>'}</td>
       </tr>`
       )
@@ -295,7 +402,7 @@
         <td class="mono">${fmtTime(s.ts)}</td>
         <td class="mono">${s.mode || "—"}</td>
         <td class="mono">${money(s.spot)}</td>
-        <td class="mono">${s.iv_atm != null ? (s.iv_atm * 100).toFixed(1) + "%" : "—"}</td>
+        <td class="mono">${s.iv_atm != null ? pct(s.iv_atm) : "—"}</td>
         <td class="mono">${s.markets_scanned ?? "—"}</td>
         <td class="mono">${s.signal_count ?? "—"}</td>
       </tr>`
@@ -305,6 +412,7 @@
 
   function renderCurrentDecision(d) {
     if (!d) return;
+    renderModelPick(d);
     const action = d.action || "NO_TRADE";
     $("decisionAction").textContent = action;
     $("decisionAction").className = `decision-action ${action.toLowerCase()}`;
@@ -318,7 +426,7 @@
     $("decisionProbability").textContent = `${pct(d.up_probability)} / ${pct(d.down_probability)}`;
     $("decisionBook").textContent =
       d.yes_ask != null && d.no_ask != null
-        ? `${pct(d.yes_ask, 0)} / ${pct(d.no_ask, 0)}`
+        ? `${pct(d.yes_ask)} / ${pct(d.no_ask)}`
         : "—";
     $("decisionEdge").textContent = pct(d.edge);
     $("decisionEdgeGap").textContent = edgeGapText(d);
@@ -356,7 +464,7 @@
       }
       const ma = payload?.model_agreement;
       if (ma) {
-        modelAgreement = `${pct(ma.agreement * 100)} ${ma.consensus} · ${ma.models_agree ? "agree" : "disagree"}`;
+        modelAgreement = `${pct(ma.agreement)} ${ma.consensus} · ${ma.models_agree ? "agree" : "disagree"}`;
       }
     } catch (_) {}
     $("decisionTradeQuality").textContent = tradeQuality;
@@ -389,7 +497,7 @@
         <td>${tierBadge(d.action)}</td>
         <td class="mono">${d.ticker || "—"}</td>
         <td class="mono">${pct(d.up_probability)}</td>
-        <td class="mono">${pct(d.executable_price)}</td>
+        <td class="mono">${d.executable_price != null ? `${Math.round(Number(d.executable_price) * 100)}¢` : "—"}</td>
         <td class="edge-pos mono">${pct(d.edge)}</td>
         <td class="mono">${pct(d.confidence)}</td>
         <td>${d.regime || "—"}</td>
@@ -406,7 +514,10 @@
     $("statTrades").textContent = String(live);
     $("statTradeSplit").textContent = `dry ${dry} · live ${live} · ${stats.exits || 0} exits`;
     $("statNotional").textContent = money(stats.notional_usd);
-    $("statEdge").textContent = `${Number(stats.avg_edge_pct || stats.avg_edge || 0).toFixed(1)}%`;
+    $("statEdge").textContent =
+      stats.avg_edge_pct != null
+        ? `${Math.round(Number(stats.avg_edge_pct))}%`
+        : pct(stats.avg_edge);
     const pnl = stats.closed_pnl_usd || 0;
     $("statPnl").textContent = signedMoney(pnl);
     $("statPnl").className = `value ${pnl > 0 ? "edge-pos" : pnl < 0 ? "edge-neg" : ""}`;
@@ -414,6 +525,7 @@
 
     const decision = stats.last_decision;
     const scan = stats.last_scan;
+    renderModelPick(decision);
     if (decision || scan) {
       $("mode").textContent = decision ? (decision.dry_run ? "PAPER" : "LIVE") : (scan.mode || "—");
       $("statSpot").textContent = decision
@@ -433,7 +545,7 @@
     if (!analytics) return;
     const fmt = (obj) =>
       Object.entries(obj || {})
-        .map(([k, v]) => `${k}: ${typeof v === "number" ? (v * 100).toFixed(1) + "%" : v}`)
+        .map(([k, v]) => `${k}: ${typeof v === "number" ? `${Math.round(v * 100)}%` : v}`)
         .join("\n") || "—";
     $("analyticsTimeRemaining").textContent = fmt(analytics.win_rate_by_time_remaining);
     $("analyticsSession").textContent = fmt(analytics.win_rate_by_session);
@@ -445,31 +557,61 @@
       .join("\n") || "—";
   }
 
-  async function refresh() {
+  async function fetchJson(url, { required = false, fallback = null } = {}) {
     try {
-      const [stats, trades, decisions, signals, scans, analytics] = await Promise.all([
-        fetch("/api/stats").then((r) => {
-          if (!r.ok) throw new Error(`stats HTTP ${r.status}`);
-          return r.json();
-        }),
-        fetch("/api/trades?limit=300").then((r) => {
-          if (!r.ok) throw new Error(`trades HTTP ${r.status}`);
-          return r.json();
-        }),
-        fetch("/api/decisions?limit=100").then((r) => {
-          if (!r.ok) throw new Error(`decisions HTTP ${r.status}`);
-          return r.json();
-        }),
-        fetch("/api/signals?limit=100").then((r) => r.ok ? r.json() : { signals: [] }),
-        fetch("/api/scans?limit=40").then((r) => r.ok ? r.json() : { scans: [] }),
-        fetch("/api/analytics").then((r) => r.ok ? r.json() : null),
-      ]);
+      const response = await fetch(url);
+      if (!response.ok) {
+        throw new Error(`${url} HTTP ${response.status}`);
+      }
+      return await response.json();
+    } catch (err) {
+      console.warn("Dashboard fetch failed:", err);
+      if (required) throw err;
+      return fallback;
+    }
+  }
+
+  async function refresh() {
+    let hadCoreData = false;
+    try {
+      const [statsResult, tradesResult, decisionsResult, signalsResult, scansResult, analyticsResult] =
+        await Promise.allSettled([
+          fetchJson("/api/stats", { required: true }),
+          fetchJson("/api/trades?limit=300", { required: true }),
+          fetchJson("/api/decisions?limit=100", { required: true }),
+          fetchJson("/api/signals?limit=100", { fallback: { signals: [] } }),
+          fetchJson("/api/scans?limit=40", { fallback: { scans: [] } }),
+          fetchJson("/api/analytics", { fallback: null }),
+        ]);
+
+      const stats =
+        statsResult.status === "fulfilled" ? statsResult.value : null;
+      const trades =
+        tradesResult.status === "fulfilled" ? tradesResult.value : null;
+      const decisions =
+        decisionsResult.status === "fulfilled" ? decisionsResult.value : null;
+
+      hadCoreData = Boolean(stats && trades && decisions);
+      if (!hadCoreData) {
+        throw new Error("Core dashboard API unavailable");
+      }
+
       $("offlineBanner").hidden = true;
       state.trades = trades.trades || [];
       renderStats(stats);
       renderTrades();
       renderDecisions(decisions.decisions || []);
       renderCurrentDecision((decisions.decisions || [])[0]);
+
+      const signals =
+        signalsResult.status === "fulfilled"
+          ? signalsResult.value
+          : { signals: [] };
+      const scans =
+        scansResult.status === "fulfilled" ? scansResult.value : { scans: [] };
+      const analytics =
+        analyticsResult.status === "fulfilled" ? analyticsResult.value : null;
+
       renderSignals(signals.signals || []);
       renderScans(scans.scans || []);
       renderAnalytics(analytics);
@@ -477,8 +619,10 @@
       $("pulse").classList.add("off");
       $("mode").textContent = "OFFLINE";
       $("offlineBanner").hidden = false;
-      $("decisionReason").textContent =
-        "Cannot reach the dashboard API. Open port 8787 from the Cursor Ports tab.";
+      if (!hadCoreData) {
+        $("decisionReason").textContent =
+          "Cannot reach the dashboard API. Open port 8787 from the Cursor Ports tab, then reload.";
+      }
       console.error(err);
     }
   }

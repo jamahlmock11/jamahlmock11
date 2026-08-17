@@ -86,6 +86,99 @@ def test_reversal_holds_when_path_still_supports_position():
     assert not assessment.should_reverse
 
 
+def test_reversal_skips_early_contract_when_outside_late_window():
+    """Weak path signals must not exit with 8+ minutes left (outside reversal window)."""
+    assessment = evaluate_position_reversal(
+        position_side=ContractSide.YES,
+        features=features(
+            seconds_remaining=498.0,
+            current_price=62_917.68,
+            strike=62_920.65,
+            z_distance=-0.18,
+            short_trend=0.0,
+        ),
+        forecast=forecast(0.485),
+        cfg=PositionReversalConfig(
+            window_seconds=300.0,
+            min_hold_probability=0.50,
+            late_hold_probability=0.62,
+            min_z_support=-0.30,
+        ),
+    )
+    assert not assessment.should_reverse
+    assert "held path intact" in assessment.reason
+
+
+def test_reversal_skips_no_position_outside_late_window():
+    """NO weak-path signals must not exit early when BTC is rallying above strike."""
+    assessment = evaluate_position_reversal(
+        position_side=ContractSide.NO,
+        features=features(
+            seconds_remaining=498.0,
+            current_price=65_150.0,
+            strike=65_000.0,
+            z_distance=1.5,
+            short_trend=0.0004,
+        ),
+        forecast=forecast(0.38),
+        cfg=PositionReversalConfig(
+            window_seconds=300.0,
+            min_hold_probability=0.50,
+            late_hold_probability=0.62,
+            min_z_support=-0.30,
+        ),
+    )
+    assert not assessment.should_reverse
+
+
+def test_position_exit_skips_reversal_outside_late_window():
+    book = parse_orderbook_fp(
+        {
+            "orderbook_fp": {
+                "yes_dollars": [["0.5500", "10"]],
+                "no_dollars": [["0.4300", "10"]],
+            }
+        },
+        timestamp=NOW,
+    )
+    market = MarketSnapshot(
+        ticker="KXBTC15M-TEST",
+        status="active",
+        rules="BRTI",
+        strike=65_000,
+        expiration=NOW + timedelta(seconds=498),
+        open_time=NOW - timedelta(minutes=10),
+        reference="BRTI",
+        orderbook=book,
+        current_position=MarketPosition(
+            side=ContractSide.YES,
+            quantity=1,
+            average_price=0.55,
+            opened_at=NOW - timedelta(seconds=180),
+        ),
+    )
+    signal = evaluate_position_exit(
+        market=market,
+        position=market.current_position,
+        forecast=forecast(0.485),
+        features=features(
+            seconds_remaining=498.0,
+            current_price=62_917.68,
+            strike=62_920.65,
+            z_distance=-0.18,
+            short_trend=0.0,
+        ),
+        failures=(),
+        predicted_side=ContractSide.NO,
+        quantity=1,
+        stop_loss_fraction=0.55,
+        min_hold_seconds=60,
+        position_reversal=PositionReversalConfig(window_seconds=300.0),
+        now=NOW,
+    )
+    assert signal is None
+
+
 def test_position_exit_uses_reversal_signal():
     book = parse_orderbook_fp(
         {

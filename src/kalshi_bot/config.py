@@ -40,6 +40,10 @@ class OrderbookSkewConfig(BaseModel):
         default=False,
         description="Blend top-of-book YES skew into the forecast ensemble probability.",
     )
+    down_skew_enabled: bool = Field(
+        default=True,
+        description="When false, ignore ask-heavy (negative) YES book skew in the ensemble.",
+    )
     ensemble_max_seconds_remaining: float = Field(
         default=540.0,
         ge=0.0,
@@ -60,6 +64,69 @@ class MeanReversionConfig(BaseModel):
     revert_exit_cents: float = Field(default=0.15, gt=0.0, le=1.0)
     max_resting_orders: int = Field(default=2, ge=0)
     time_in_force: str = "good_til_canceled"
+
+
+class ForecastAlignmentConfig(BaseModel):
+    """Dynamic confidence/risk filter for contrarian mispricing entries (not a hard block)."""
+
+    enabled: bool = Field(
+        default=True,
+        description="Apply forecast-alignment risk filtering on contrarian entries.",
+    )
+    dominant_min_probability: float = Field(
+        default=0.50,
+        ge=0.0,
+        le=1.0,
+        description="Minimum dominant forecast probability before a side conflict applies.",
+    )
+    contrarian_edge_premium: float = Field(
+        default=0.05,
+        ge=0.0,
+        le=0.50,
+        description="Extra edge required when best-value side conflicts with forecast.",
+    )
+    exceptional_edge_threshold: float = Field(
+        default=0.22,
+        ge=0.0,
+        le=0.50,
+        description="Allow stable contrarian entries when mispricing exceeds this edge.",
+    )
+    min_conflict_confidence: float = Field(
+        default=0.60,
+        ge=0.0,
+        le=1.0,
+        description="Minimum ensemble confidence for contrarian confirmation.",
+    )
+    min_conflict_agreement: float = Field(
+        default=0.62,
+        ge=0.0,
+        le=1.0,
+        description="Minimum signal agreement for contrarian confirmation.",
+    )
+    min_selected_probability: float = Field(
+        default=0.40,
+        ge=0.0,
+        le=1.0,
+        description="Selected side must retain at least this strike-expiry probability.",
+    )
+    min_stability_confidence: float = Field(
+        default=0.55,
+        ge=0.0,
+        le=1.0,
+        description="Minimum confidence to treat probability as stable.",
+    )
+    min_stability_agreement: float = Field(
+        default=0.55,
+        ge=0.0,
+        le=1.0,
+        description="Minimum agreement to treat probability as stable.",
+    )
+    max_probability_deterioration: float = Field(
+        default=0.08,
+        ge=0.0,
+        le=0.50,
+        description="Max allowed drop in selected-side probability per poll before PASS.",
+    )
 
 
 class LagReversalConfig(BaseModel):
@@ -315,9 +382,40 @@ class StrategyConfig(BaseModel):
     max_do_not_trade_score: float = Field(default=40.0, ge=0.0, le=100.0)
     require_trade_quality: bool = True
     min_pattern_matches: int = Field(default=10, ge=0)
+    block_opposing_patterns: bool = Field(
+        default=True,
+        description="Block entries when enough similar historical setups lost money.",
+    )
+    block_rally_contrarian_entries: bool = Field(
+        default=True,
+        description=(
+            "Block NO when spot is above strike with upward momentum, "
+            "and YES when spot is below strike with downward momentum."
+        ),
+    )
+    use_edge_based_side_pick: bool = Field(
+        default=False,
+        description=(
+            "When false, prefer model+Kalshi aligned entries; optional contrarian "
+            "fallback when contrarian_fallback_enabled is true."
+        ),
+    )
+    contrarian_fallback_enabled: bool = Field(
+        default=True,
+        description=(
+            "After aligned entry fails, allow a contrarian mispricing entry only when "
+            "forecast_alignment confirms a perfect setup against model and Kalshi."
+        ),
+    )
+    aligned_edge_premium: float = Field(
+        default=0.02,
+        ge=0.0,
+        le=0.50,
+        description="Extra edge required on model+Kalshi aligned entries.",
+    )
     external_data_enabled: bool = False
     entry_signal_persistence_polls: int = Field(
-        default=3,
+        default=2,
         ge=1,
         description="Consecutive polls where side+edge must hold before entry.",
     )
@@ -371,7 +469,7 @@ class RiskConfig(BaseModel):
     max_contract_exposure: float = Field(default=25.0, gt=0.0)
     max_position_size: float = Field(default=50.0, gt=0.0)
     max_consecutive_losses: int = Field(default=4, gt=0)
-    max_trades_per_contract: int = Field(default=2, gt=0)
+    max_trades_per_contract: int = Field(default=1, gt=0)
     max_flips_per_contract: int = Field(default=1, ge=0)
     cooldown_seconds: float = Field(default=30.0, ge=0.0)
     stop_loss_fraction: float = Field(default=0.45, ge=0.0, le=1.0)
@@ -385,7 +483,7 @@ class RiskConfig(BaseModel):
     recovery_hold_min_agreement: float = Field(default=0.58, ge=0.0, le=1.0)
     min_hold_seconds: float = Field(default=0.0, ge=0.0)
     position_reversal_enabled: bool = True
-    position_reversal_window_seconds: float = Field(default=420.0, ge=0.0)
+    position_reversal_window_seconds: float = Field(default=300.0, ge=0.0)
     position_reversal_min_hold_probability: float = Field(default=0.50, ge=0.0, le=1.0)
     position_reversal_late_hold_probability: float = Field(default=0.62, ge=0.0, le=1.0)
     position_reversal_min_z_support: float = Field(default=-0.30)
@@ -447,6 +545,9 @@ class AppConfig(BaseModel):
     spot_lag: SpotLagArbConfig = Field(default_factory=SpotLagArbConfig)
     orderbook_skew: OrderbookSkewConfig = Field(default_factory=OrderbookSkewConfig)
     mean_reversion: MeanReversionConfig = Field(default_factory=MeanReversionConfig)
+    forecast_alignment: ForecastAlignmentConfig = Field(
+        default_factory=ForecastAlignmentConfig
+    )
     lag_reversal: LagReversalConfig = Field(default_factory=LagReversalConfig)
     agents: AgentsConfig = Field(default_factory=AgentsConfig)
     intelligence: IntelligenceConfig = Field(default_factory=IntelligenceConfig)

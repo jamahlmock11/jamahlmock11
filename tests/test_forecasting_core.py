@@ -375,7 +375,9 @@ def test_final_minute_uses_locked_brti_average():
     ],
 )
 def test_hard_edge_boundary_up(probability, yes_ask, expected):
-    result = DecisionEngine(DecisionConfig()).decide(
+    result = DecisionEngine(
+        DecisionConfig(aligned_edge_premium=0.0, contrarian_fallback_enabled=False)
+    ).decide(
         market(yes_ask),
         forecast(probability),
         features(),
@@ -390,7 +392,13 @@ def test_buy_down_uses_executable_no_price():
     result = DecisionEngine().decide(
         market(0.50),
         forecast(0.22),
-        replace(features(), trajectory=TrajectoryState.ACCELERATING_DOWN),
+        replace(
+            features(),
+            trajectory=TrajectoryState.ACCELERATING_DOWN,
+            current_price=64_980.0,
+            z_distance_to_strike=-0.25,
+            short_trend=-0.0003,
+        ),
         benchmark(),
         now=NOW,
     )

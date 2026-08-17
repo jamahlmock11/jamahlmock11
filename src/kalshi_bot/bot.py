@@ -29,7 +29,8 @@ from kalshi_bot.intelligence.orchestrator import IntelligenceOrchestrator
 from kalshi_bot.journal import TradeJournal
 from kalshi_bot.learning.signal_weights import SignalWeightTracker
 from kalshi_bot.learning.trade_recorder import TradeRecorder
-from kalshi_bot.learning.pattern_matcher import PatternMatcher
+from kalshi_bot.learning.pattern_matcher import PatternMatcher, feature_vector_dict
+from kalshi_bot.learning.outcomes import record_round_trip_learning
 from kalshi_bot.models.strike_gravity import assess_strike_gravity
 from kalshi_bot.strategies.alt_runner import AltStrategyRunner
 from kalshi_bot.strategies.forecasting import ForecastCycle, ForecastingScanner
@@ -64,6 +65,7 @@ class TradingBot:
         self.settings = settings
         self.journal = journal or TradeJournal()
         signal_weights_path = Path("data/signal_weights.json")
+        self.signal_weights_path = signal_weights_path
         self.signal_weights = (
             SignalWeightTracker.load(signal_weights_path)
             if signal_weights_path.exists()
@@ -131,6 +133,7 @@ class TradingBot:
             position_lookup=self._position_lookup,
             orders_lookup=self._orders_lookup,
             intelligence=self.intelligence,
+            pattern_matcher=self.pattern_matcher,
         )
         self.spot_hub = SpotPriceHub(
             poll_interval_sec=config.spot_lag.poll_interval_sec,
@@ -342,12 +345,37 @@ class TradingBot:
             and cycle.decision is not None
             and not skip_forecast_entry
         ):
+            exit_side = None
+            if cycle.decision.action is DecisionAction.EXIT and cycle.market.current_position:
+                exit_side = cycle.market.current_position.side
             report = self.engine.execute_decision(
                 cycle.market,
                 cycle.decision,
                 timestamp=cycle.timestamp,
                 benchmark=cycle.benchmark,
             )
+            if (
+                report
+                and report.ok
+                and report.realized_pnl is not None
+                and exit_side is not None
+                and cycle.market is not None
+            ):
+                record_round_trip_learning(
+                    ticker=cycle.market.ticker,
+                    held_side=exit_side,
+                    pnl=report.realized_pnl,
+                    trade_recorder=self.trade_recorder,
+                    pattern_matcher=self.pattern_matcher,
+                    journal=self.journal,
+                    signal_weights=self.signal_weights,
+                    signal_weights_path=self.signal_weights_path,
+                    features=cycle.features,
+                    market=cycle.market,
+                    component_probabilities=(
+                        cycle.forecast.component_probabilities if cycle.forecast else None
+                    ),
+                )
         traded = bool(report and report.ok) or any(r.ok for r in alt_reports)
         payload: dict = {
             "execution": report.payload if report else None,
@@ -402,7 +430,14 @@ class TradingBot:
             }
         if cycle.enriched is not None:
             payload["enriched_features"] = cycle.enriched.as_dict()
-            payload["entry_features"] = cycle.enriched.as_dict().get("price_action", {})
+            if cycle.features is not None and cycle.regime is not None:
+                payload["entry_features"] = feature_vector_dict(
+                    cycle.features,
+                    cycle.enriched,
+                    cycle.regime,
+                )
+            else:
+                payload["entry_features"] = cycle.enriched.as_dict().get("price_action", {})
         if cycle.features is not None:
             payload["strike_context"] = {
                 "seconds_remaining": cycle.features.seconds_remaining,
@@ -427,6 +462,8 @@ class TradingBot:
             "min_entry_score": self.config.lag_reversal.min_entry_score,
             "rationale": lag_eval.rationale if lag_eval is not None else None,
         }
+        if cycle.decision is not None and cycle.decision.forecast_alignment is not None:
+            payload["forecast_alignment"] = cycle.decision.forecast_alignment
         if cycle.reversal_assessment is not None:
             ra = cycle.reversal_assessment
             if isinstance(ra, ReversalScoreAssessment):
@@ -457,6 +494,9 @@ class TradingBot:
             and cycle.decision is not None
             and cycle.enriched is not None
             and cycle.forecast is not None
+            and cycle.features is not None
+            and cycle.regime is not None
+            and cycle.decision.action in {DecisionAction.BUY_UP, DecisionAction.BUY_DOWN}
         ):
             self.trade_recorder.record_entry(
                 ticker=cycle.market.ticker,
@@ -470,7 +510,8 @@ class TradingBot:
             self.pattern_matcher.save_entry(
                 cycle.features,
                 cycle.enriched,
-                cycle.regime or Regime.UNCERTAIN,
+                cycle.regime,
+                ticker=cycle.market.ticker,
                 prediction=cycle.forecast.p_up,
                 confidence=cycle.forecast.confidence,
                 edge=cycle.decision.edge or 0.0,

@@ -356,3 +356,4 @@ class DecisionResult:
     size_multiplier: float = 1.0
     quantity: float = 0.0
     execution: ExecutionEstimate | None = None
+    forecast_alignment: dict[str, object] | None = None

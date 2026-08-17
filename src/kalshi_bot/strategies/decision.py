@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
-from kalshi_bot.config import AppConfig, LongshotConfig, PollConfig
+from kalshi_bot.config import AppConfig, ForecastAlignmentConfig, LongshotConfig, PollConfig
 from kalshi_bot.domain import (
     BenchmarkQuote,
     ContractSide,
@@ -38,6 +38,10 @@ from kalshi_bot.strategies.longshot import (
     resolve_longshot_entries,
 )
 from kalshi_bot.strategies.entry_filters import is_in_chop_zone
+from kalshi_bot.strategies.forecast_alignment import (
+    ForecastAlignmentTracker,
+    evaluate_forecast_alignment,
+)
 from kalshi_bot.market.poll_alignment import (
     PollConfig as PollAlignmentConfig,
     PollSnapshot,
@@ -163,6 +167,13 @@ class DecisionConfig:
     longshot: LongshotConfig = field(default_factory=LongshotConfig)
     chop_zone_min_sigma: float = 0.0
     require_orderbook_depth: bool = False
+    block_rally_contrarian_entries: bool = True
+    use_edge_based_side_pick: bool = False
+    contrarian_fallback_enabled: bool = True
+    aligned_edge_premium: float = 0.02
+    forecast_alignment: ForecastAlignmentConfig = field(
+        default_factory=ForecastAlignmentConfig
+    )
 
     @property
     def effective_minimum_edge(self) -> Decimal:
@@ -236,6 +247,11 @@ def decision_config_from_app(
         longshot=config.longshot,
         chop_zone_min_sigma=strategy.chop_zone_min_sigma,
         require_orderbook_depth=strategy.require_orderbook_depth,
+        block_rally_contrarian_entries=strategy.block_rally_contrarian_entries,
+        use_edge_based_side_pick=strategy.use_edge_based_side_pick,
+        contrarian_fallback_enabled=strategy.contrarian_fallback_enabled,
+        aligned_edge_premium=strategy.aligned_edge_premium,
+        forecast_alignment=config.forecast_alignment,
     )
 
 
@@ -245,6 +261,46 @@ def _direction_for_side(side: ContractSide | None) -> Direction:
     if side is ContractSide.NO:
         return Direction.DOWN
     return Direction.FLAT
+
+
+def _forecast_dominant_side(forecast: ProbabilityEstimate) -> ContractSide:
+    return (
+        ContractSide.YES
+        if forecast.p_up + 1e-12 >= forecast.p_down
+        else ContractSide.NO
+    )
+
+
+def _entry_side_candidates(
+    *,
+    cfg: DecisionConfig,
+    forecast: ProbabilityEstimate,
+    poll: PollSnapshot,
+    edges: dict[ContractSide, float],
+    executions: dict[ContractSide, object],
+    entry_ctx: object | None,
+) -> list[tuple[str, ContractSide]]:
+    if entry_ctx is not None and getattr(entry_ctx, "forced_side", None) is not None:
+        return [("forced", entry_ctx.forced_side)]
+    if cfg.use_edge_based_side_pick:
+        return [("edge", max(edges, key=lambda side: (edges[side], side.value)))]
+    forecast_side = _forecast_dominant_side(forecast)
+    edge_side = max(edges, key=lambda side: (edges[side], side.value))
+    candidates: list[tuple[str, ContractSide]] = []
+    if (
+        poll.dominant_side is not None
+        and poll.dominant_side is forecast_side
+        and forecast_side in executions
+    ):
+        candidates.append(("aligned", forecast_side))
+    if cfg.contrarian_fallback_enabled and edge_side in executions:
+        against_forecast = edge_side is not forecast_side
+        against_kalshi = poll.dominant_side is None or edge_side is not poll.dominant_side
+        if against_forecast and against_kalshi:
+            candidates.append(("contrarian", edge_side))
+    if not candidates and forecast_side in executions:
+        candidates.append(("aligned", forecast_side))
+    return candidates
 
 
 def _failure(gate: str, reason: str, observed: object, required: object) -> GateFailure:
@@ -283,6 +339,7 @@ def _late_favorite_edge_floor(
 class DecisionEngine:
     def __init__(self, config: DecisionConfig | None = None) -> None:
         self.config = config or DecisionConfig()
+        self.alignment_tracker = ForecastAlignmentTracker()
 
     def _common_gates(
         self,
@@ -670,230 +727,378 @@ class DecisionEngine:
             side: side_probabilities[side] - execution.executable_cost
             for side, execution in executions.items()
         }
-        if entry_ctx is not None and entry_ctx.forced_side is not None:
-            selected_side = entry_ctx.forced_side
-        else:
-            selected_side = max(edges, key=lambda side: (edges[side], side.value))
-        selected_execution = executions[selected_side]
-        selected_edge = edges[selected_side]
-        edge_decimal = Decimal(str(side_probabilities[selected_side])) - Decimal(
-            str(selected_execution.executable_cost)
-        )
         seconds_remaining = (market.expiration - observed_now).total_seconds()
         poll_snapshot = market_poll_snapshot(market.orderbook)
-        if cfg.minimum_dominant_poll is not None:
-            min_poll = cfg.minimum_dominant_poll
-            if (
-                poll_snapshot.dominant_poll is None
-                or poll_snapshot.dominant_poll + 1e-12 < min_poll
-            ):
-                failures.append(
-                    _failure(
-                        "poll_favorite",
-                        "market has no high-probability favorite at required poll level",
-                        poll_snapshot.dominant_poll,
-                        min_poll,
-                    )
-                )
-            elif (
-                cfg.require_dominant_poll_side
-                and poll_snapshot.dominant_side is not None
-                and selected_side is not poll_snapshot.dominant_side
-            ):
-                failures.append(
-                    _failure(
-                        "poll_favorite",
-                        "entry must be on the market poll favorite side",
-                        selected_side.value,
-                        poll_snapshot.dominant_side.value,
-                    )
-                )
-        required_edge = cfg.effective_minimum_edge
-        if entry_ctx is not None and entry_ctx.min_edge_override is not None:
-            required_edge = Decimal(str(entry_ctx.min_edge_override))
-        if benchmark.is_proxy and not cfg.longshot.enabled:
-            required_edge = max(required_edge, Decimal(str(cfg.proxy_minimum_edge)))
-        late_favorite_edge = _late_favorite_edge_floor(
-            seconds_remaining=seconds_remaining,
-            poll=poll_snapshot,
-            selected_side=selected_side,
+        base_failures = list(failures)
+        side_candidates = _entry_side_candidates(
             cfg=cfg,
+            forecast=forecast,
+            poll=poll_snapshot,
+            edges=edges,
+            executions=executions,
+            entry_ctx=entry_ctx,
         )
-        if late_favorite_edge is not None:
-            required_edge = Decimal(str(late_favorite_edge))
-        elif not cfg.longshot.enabled:
-            if seconds_remaining <= cfg.late_seconds:
-                required_edge = max(required_edge, Decimal(str(cfg.late_minimum_edge)))
-            if seconds_remaining <= cfg.final_seconds:
-                required_edge = max(required_edge, Decimal(str(cfg.final_minimum_edge)))
-        if entry_ctx is not None and entry_ctx.min_edge_override is not None:
-            if entry_ctx.min_edge_override >= 0:
-                required_edge = Decimal(str(entry_ctx.min_edge_override))
-        if selected_execution.executable_cost + 1e-12 < cfg.min_entry_executable_cost:
-            failures.append(
-                _failure(
-                    "min_entry_price",
-                    "executable entry price is below the minimum for live entries",
-                    selected_execution.executable_cost,
-                    cfg.min_entry_executable_cost,
-                )
-            )
-        if (
-            entry_ctx is None
-            or entry_ctx.min_edge_override is None
-            or entry_ctx.min_edge_override >= 0
-        ):
-            if edge_decimal + EDGE_TOLERANCE < required_edge:
-                failures.append(
-                    _failure(
-                        "minimum_edge",
-                        "best all-in edge is below the applicable hard minimum",
-                        selected_edge,
-                        float(required_edge),
-                    )
-                )
-
-        size_multiplier = (
-            cfg.longshot.position_size_mult if cfg.longshot.enabled else 1.0
-        )
-        if risk_manager is not None and risk_manager.config.risk.kelly_enabled:
-            kelly_qty = risk_manager.kelly_contracts_for_entry(
-                edge=selected_edge,
-                executable_cost=selected_execution.executable_cost,
-                size_multiplier=size_multiplier,
-                ticker=market.ticker,
-                min_edge=float(required_edge),
-            )
-            if kelly_qty <= 0:
-                failures.append(
-                    _failure(
-                        "kelly_sizing",
-                        "Kelly sizing produced zero affordable contracts",
-                        selected_edge,
-                        float(required_edge),
-                    )
-                )
-            elif kelly_qty != trade_quantity:
-                try:
-                    selected_execution = estimate_buy_execution(
-                        market.orderbook,
-                        selected_side,
-                        kelly_qty,
-                        fee_rate=cfg.fee_rate,
-                        fee_per_contract=cfg.fee_per_contract,
-                        slippage_bps=cfg.slippage_bps,
-                        slippage_per_contract=cfg.slippage_per_contract,
-                    )
-                    trade_quantity = float(kelly_qty)
-                    selected_edge = (
-                        side_probabilities[selected_side]
-                        - selected_execution.executable_cost
-                    )
-                    edge_decimal = Decimal(str(side_probabilities[selected_side])) - Decimal(
-                        str(selected_execution.executable_cost)
-                    )
-                    if edge_decimal + EDGE_TOLERANCE < required_edge:
-                        failures.append(
-                            _failure(
-                                "minimum_edge",
-                                "Kelly-sized entry no longer meets edge floor after book walk",
-                                selected_edge,
-                                float(required_edge),
-                            )
-                        )
-                except InsufficientDepthError as exc:
-                    failures.append(
-                        _failure(
-                            f"{selected_side.value.lower()}_kelly_execution",
-                            str(exc),
-                            depth(market.orderbook, selected_side, asks=True),
-                            kelly_qty,
-                        )
-                    )
-
-        exit_bid_depth = depth(market.orderbook, selected_side, asks=False)
-        if exit_bid_depth + 1e-12 < trade_quantity:
-            failures.append(
-                _failure(
-                    "exit_liquidity",
-                    "order book lacks bid depth to exit the proposed position",
-                    exit_bid_depth,
-                    trade_quantity,
-                )
-            )
-
-        poll_active = (not cfg.longshot.enabled) or cfg.longshot.poll_enabled
-        bypass_poll = (
-            entry_ctx is not None and entry_ctx.extreme_poll_active
-        )
-        if poll_active and not bypass_poll:
-            poll_cfg = poll_gate_config_from_model(cfg.poll)
-            if cfg.longshot.enabled and poll_cfg.mode == "legacy":
-                poll_cfg = PollAlignmentConfig(
-                    mode="confirm_aligned",
-                    confirm_threshold=poll_cfg.confirm_threshold,
-                    favorable_min=poll_cfg.favorable_min,
-                    favorable_max=poll_cfg.favorable_max,
-                    low_poll_threshold=poll_cfg.low_poll_threshold,
-                    counter_evidence_min_probability=poll_cfg.counter_evidence_min_probability,
-                    counter_evidence_min_confidence=poll_cfg.counter_evidence_min_confidence,
-                    counter_evidence_min_agreement=poll_cfg.counter_evidence_min_agreement,
-                    low_poll_min_probability=poll_cfg.low_poll_min_probability,
-                    low_poll_min_confidence=poll_cfg.low_poll_min_confidence,
-                    low_poll_min_agreement=poll_cfg.low_poll_min_agreement,
-                )
-            poll_failure = evaluate_poll_gate(
-                selected_side=selected_side,
-                forecast=forecast,
-                poll=poll_snapshot,
-                cfg=poll_cfg,
-            )
-            if poll_failure is not None:
-                failures.append(poll_failure)
-
-        if failures:
+        if not side_candidates:
             return DecisionResult(
                 action=DecisionAction.NO_TRADE,
-                reason=f"entry blocked by safety gates{_crowd_context_suffix(entry_ctx)}",
-                gate_failures=tuple(failures),
+                reason="no eligible entry side",
+                gate_failures=tuple(base_failures),
                 current_direction=current_direction,
                 predicted_direction=predicted_direction,
                 trade_direction=Direction.FLAT,
+                target_edge=cfg.target_edge,
+            )
+
+        last_blocked: DecisionResult | None = None
+        for entry_mode, selected_side in side_candidates:
+            entry_failures = list(base_failures)
+            if selected_side not in executions:
+                entry_failures.append(
+                    _failure(
+                        f"{selected_side.value.lower()}_execution",
+                        f"{entry_mode} entry side has no executable depth",
+                        None,
+                        trade_quantity,
+                    )
+                )
+                last_blocked = DecisionResult(
+                    action=DecisionAction.NO_TRADE,
+                    reason=f"{entry_mode} entry side has no executable depth",
+                    gate_failures=tuple(entry_failures),
+                    current_direction=current_direction,
+                    predicted_direction=predicted_direction,
+                    trade_direction=Direction.FLAT,
+                    target_edge=cfg.target_edge,
+                    selected_side=selected_side,
+                )
+                continue
+
+            candidate_quantity = trade_quantity
+            selected_execution = executions[selected_side]
+            selected_edge = edges[selected_side]
+            edge_decimal = Decimal(str(side_probabilities[selected_side])) - Decimal(
+                str(selected_execution.executable_cost)
+            )
+            if entry_mode == "aligned":
+                if (
+                    poll_snapshot.dominant_side is not None
+                    and poll_snapshot.dominant_side is not selected_side
+                ):
+                    entry_failures.append(
+                        _failure(
+                            "forecast_kalshi_alignment",
+                            "model and Kalshi poll disagree on direction",
+                            (
+                                f"model {selected_side.value} "
+                                f"kalshi {poll_snapshot.dominant_side.value}"
+                            ),
+                            "same side",
+                        )
+                    )
+
+            if cfg.minimum_dominant_poll is not None:
+                min_poll = cfg.minimum_dominant_poll
+                if (
+                    poll_snapshot.dominant_poll is None
+                    or poll_snapshot.dominant_poll + 1e-12 < min_poll
+                ):
+                    entry_failures.append(
+                        _failure(
+                            "poll_favorite",
+                            "market has no high-probability favorite at required poll level",
+                            poll_snapshot.dominant_poll,
+                            min_poll,
+                        )
+                    )
+                elif (
+                    cfg.require_dominant_poll_side
+                    and poll_snapshot.dominant_side is not None
+                    and selected_side is not poll_snapshot.dominant_side
+                ):
+                    entry_failures.append(
+                        _failure(
+                            "poll_favorite",
+                            "entry must be on the market poll favorite side",
+                            selected_side.value,
+                            poll_snapshot.dominant_side.value,
+                        )
+                    )
+            required_edge = cfg.effective_minimum_edge
+            if entry_mode == "aligned" and cfg.aligned_edge_premium > 0:
+                required_edge = required_edge + Decimal(str(cfg.aligned_edge_premium))
+            if entry_ctx is not None and entry_ctx.min_edge_override is not None:
+                required_edge = Decimal(str(entry_ctx.min_edge_override))
+            if benchmark.is_proxy and not cfg.longshot.enabled:
+                required_edge = max(required_edge, Decimal(str(cfg.proxy_minimum_edge)))
+            late_favorite_edge = _late_favorite_edge_floor(
+                seconds_remaining=seconds_remaining,
+                poll=poll_snapshot,
+                selected_side=selected_side,
+                cfg=cfg,
+            )
+            if late_favorite_edge is not None:
+                required_edge = Decimal(str(late_favorite_edge))
+            elif not cfg.longshot.enabled:
+                if seconds_remaining <= cfg.late_seconds:
+                    required_edge = max(required_edge, Decimal(str(cfg.late_minimum_edge)))
+                if seconds_remaining <= cfg.final_seconds:
+                    required_edge = max(required_edge, Decimal(str(cfg.final_minimum_edge)))
+            if entry_ctx is not None and entry_ctx.min_edge_override is not None:
+                if entry_ctx.min_edge_override >= 0:
+                    required_edge = Decimal(str(entry_ctx.min_edge_override))
+            if selected_execution.executable_cost + 1e-12 < cfg.min_entry_executable_cost:
+                entry_failures.append(
+                    _failure(
+                        "min_entry_price",
+                        "executable entry price is below the minimum for live entries",
+                        selected_execution.executable_cost,
+                        cfg.min_entry_executable_cost,
+                    )
+                )
+
+            alignment_assessment = None
+            if (
+                entry_mode in {"contrarian", "edge"}
+                and cfg.forecast_alignment.enabled
+                and (not cfg.longshot.enabled or not cfg.longshot.require_forecast_alignment)
+            ):
+                alignment_assessment, alignment_failure = evaluate_forecast_alignment(
+                    ticker=market.ticker,
+                    selected_side=selected_side,
+                    side_probabilities=side_probabilities,
+                    forecast=forecast,
+                    executable_cost=selected_execution.executable_cost,
+                    edge=selected_edge,
+                    required_edge=float(required_edge),
+                    cfg=cfg.forecast_alignment,
+                    tracker=self.alignment_tracker,
+                )
+                if alignment_failure is not None:
+                    entry_failures.append(alignment_failure)
+                elif alignment_assessment.final_decision != "allow":
+                    entry_failures.append(
+                        _failure(
+                            "forecast_alignment",
+                            alignment_assessment.reason,
+                            selected_edge,
+                            float(required_edge),
+                        )
+                    )
+                required_edge = max(
+                    required_edge,
+                    Decimal(str(alignment_assessment.effective_required_edge)),
+                )
+
+            if (
+                entry_ctx is None
+                or entry_ctx.min_edge_override is None
+                or entry_ctx.min_edge_override >= 0
+            ):
+                if edge_decimal + EDGE_TOLERANCE < required_edge:
+                    entry_failures.append(
+                        _failure(
+                            "minimum_edge",
+                            "best all-in edge is below the applicable hard minimum",
+                            selected_edge,
+                            float(required_edge),
+                        )
+                    )
+
+            if cfg.block_rally_contrarian_entries:
+                strike = (
+                    features.settlement_effective_strike
+                    if features.settlement_effective_strike is not None
+                    else features.strike
+                )
+                distance = features.current_price - strike
+                momentum_tol = 0.00005
+                if selected_side is ContractSide.NO:
+                    rallying = distance > 0 and features.short_trend > momentum_tol
+                    if rallying:
+                        entry_failures.append(
+                            _failure(
+                                "spot_momentum_alignment",
+                                "NO entry blocked while spot is above strike with upward momentum",
+                                features.short_trend,
+                                momentum_tol,
+                            )
+                        )
+                elif selected_side is ContractSide.YES:
+                    selling = distance < 0 and features.short_trend < -momentum_tol
+                    if selling:
+                        entry_failures.append(
+                            _failure(
+                                "spot_momentum_alignment",
+                                "YES entry blocked while spot is below strike with downward momentum",
+                                features.short_trend,
+                                -momentum_tol,
+                            )
+                        )
+
+            size_multiplier = (
+                cfg.longshot.position_size_mult if cfg.longshot.enabled else 1.0
+            )
+            if risk_manager is not None and risk_manager.config.risk.kelly_enabled:
+                kelly_qty = risk_manager.kelly_contracts_for_entry(
+                    edge=selected_edge,
+                    executable_cost=selected_execution.executable_cost,
+                    size_multiplier=size_multiplier,
+                    ticker=market.ticker,
+                    min_edge=float(required_edge),
+                )
+                if kelly_qty <= 0:
+                    entry_failures.append(
+                        _failure(
+                            "kelly_sizing",
+                            "Kelly sizing produced zero affordable contracts",
+                            selected_edge,
+                            float(required_edge),
+                        )
+                    )
+                elif kelly_qty != candidate_quantity:
+                    try:
+                        selected_execution = estimate_buy_execution(
+                            market.orderbook,
+                            selected_side,
+                            kelly_qty,
+                            fee_rate=cfg.fee_rate,
+                            fee_per_contract=cfg.fee_per_contract,
+                            slippage_bps=cfg.slippage_bps,
+                            slippage_per_contract=cfg.slippage_per_contract,
+                        )
+                        candidate_quantity = float(kelly_qty)
+                        selected_edge = (
+                            side_probabilities[selected_side]
+                            - selected_execution.executable_cost
+                        )
+                        edge_decimal = Decimal(str(side_probabilities[selected_side])) - Decimal(
+                            str(selected_execution.executable_cost)
+                        )
+                        if edge_decimal + EDGE_TOLERANCE < required_edge:
+                            entry_failures.append(
+                                _failure(
+                                    "minimum_edge",
+                                    "Kelly-sized entry no longer meets edge floor after book walk",
+                                    selected_edge,
+                                    float(required_edge),
+                                )
+                            )
+                    except InsufficientDepthError as exc:
+                        entry_failures.append(
+                            _failure(
+                                f"{selected_side.value.lower()}_kelly_execution",
+                                str(exc),
+                                depth(market.orderbook, selected_side, asks=True),
+                                kelly_qty,
+                            )
+                        )
+
+            exit_bid_depth = depth(market.orderbook, selected_side, asks=False)
+            if exit_bid_depth + 1e-12 < candidate_quantity:
+                entry_failures.append(
+                    _failure(
+                        "exit_liquidity",
+                        "order book lacks bid depth to exit the proposed position",
+                        exit_bid_depth,
+                        candidate_quantity,
+                    )
+                )
+
+            poll_active = (not cfg.longshot.enabled) or cfg.longshot.poll_enabled
+            bypass_poll = entry_ctx is not None and entry_ctx.extreme_poll_active
+            if poll_active and not bypass_poll:
+                poll_cfg = poll_gate_config_from_model(cfg.poll)
+                if cfg.longshot.enabled and poll_cfg.mode == "legacy":
+                    poll_cfg = PollAlignmentConfig(
+                        mode="confirm_aligned",
+                        confirm_threshold=poll_cfg.confirm_threshold,
+                        favorable_min=poll_cfg.favorable_min,
+                        favorable_max=poll_cfg.favorable_max,
+                        low_poll_threshold=poll_cfg.low_poll_threshold,
+                        counter_evidence_min_probability=poll_cfg.counter_evidence_min_probability,
+                        counter_evidence_min_confidence=poll_cfg.counter_evidence_min_confidence,
+                        counter_evidence_min_agreement=poll_cfg.counter_evidence_min_agreement,
+                        low_poll_min_probability=poll_cfg.low_poll_min_probability,
+                        low_poll_min_confidence=poll_cfg.low_poll_min_confidence,
+                        low_poll_min_agreement=poll_cfg.low_poll_min_agreement,
+                    )
+                poll_failure = evaluate_poll_gate(
+                    selected_side=selected_side,
+                    forecast=forecast,
+                    poll=poll_snapshot,
+                    cfg=poll_cfg,
+                )
+                if poll_failure is not None:
+                    entry_failures.append(poll_failure)
+
+            alignment_log = None
+            if alignment_assessment is not None:
+                alignment_log = alignment_assessment.as_log_dict()
+                alignment_log["entry_path"] = entry_mode
+            if entry_failures:
+                reason = f"{entry_mode} entry blocked by safety gates{_crowd_context_suffix(entry_ctx)}"
+                last_blocked = DecisionResult(
+                    action=DecisionAction.NO_TRADE,
+                    reason=reason,
+                    gate_failures=tuple(entry_failures),
+                    current_direction=current_direction,
+                    predicted_direction=predicted_direction,
+                    trade_direction=Direction.FLAT,
+                    selected_side=selected_side,
+                    predicted_probability=side_probabilities[selected_side],
+                    executable_cost=selected_execution.executable_cost,
+                    edge=selected_edge,
+                    target_edge=cfg.target_edge,
+                    required_edge=float(required_edge),
+                    quantity=candidate_quantity,
+                    execution=selected_execution,
+                    forecast_alignment=alignment_log,
+                )
+                continue
+
+            action = (
+                DecisionAction.BUY_UP
+                if selected_side is ContractSide.YES
+                else DecisionAction.BUY_DOWN
+            )
+            target_text = (
+                "meets target edge"
+                if selected_edge + float(EDGE_TOLERANCE) >= cfg.target_edge
+                else "meets hard minimum edge but is below target"
+            )
+            path_label = "aligned" if entry_mode == "aligned" else "contrarian mispricing"
+            return DecisionResult(
+                action=action,
+                reason=(
+                    f"{selected_side.value} {path_label} {target_text}"
+                    f"{_crowd_context_suffix(entry_ctx)}"
+                ),
+                gate_failures=(),
+                current_direction=current_direction,
+                predicted_direction=predicted_direction,
+                trade_direction=_direction_for_side(selected_side),
                 selected_side=selected_side,
                 predicted_probability=side_probabilities[selected_side],
                 executable_cost=selected_execution.executable_cost,
                 edge=selected_edge,
                 target_edge=cfg.target_edge,
                 required_edge=float(required_edge),
-                quantity=trade_quantity,
+                quantity=candidate_quantity,
                 execution=selected_execution,
+                size_multiplier=size_multiplier,
+                forecast_alignment=alignment_log,
             )
-        action = (
-            DecisionAction.BUY_UP
-            if selected_side is ContractSide.YES
-            else DecisionAction.BUY_DOWN
-        )
-        target_text = (
-            "meets target edge"
-            if selected_edge + float(EDGE_TOLERANCE) >= cfg.target_edge
-            else "meets hard minimum edge but is below target"
-        )
+
+        if last_blocked is not None:
+            return last_blocked
         return DecisionResult(
-            action=action,
-            reason=f"{selected_side.value} {target_text}{_crowd_context_suffix(entry_ctx)}",
-            gate_failures=(),
+            action=DecisionAction.NO_TRADE,
+            reason="no entry path cleared safety gates",
+            gate_failures=tuple(base_failures),
             current_direction=current_direction,
             predicted_direction=predicted_direction,
-            trade_direction=_direction_for_side(selected_side),
-            selected_side=selected_side,
-            predicted_probability=side_probabilities[selected_side],
-            executable_cost=selected_execution.executable_cost,
-            edge=selected_edge,
+            trade_direction=Direction.FLAT,
             target_edge=cfg.target_edge,
-            required_edge=float(required_edge),
-            quantity=trade_quantity,
-            execution=selected_execution,
-            size_multiplier=size_multiplier,
         )
 
 

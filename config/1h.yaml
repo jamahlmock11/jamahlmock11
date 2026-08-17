@@ -28,6 +28,9 @@ hour:
 # Same strategy rules as the 15-minute bot, with a 40-minute entry window.
 strategy:
   contract_duration_seconds: 3600
+  use_edge_based_side_pick: false
+  contrarian_fallback_enabled: true
+  aligned_edge_premium: 0.02
   min_edge: 0.15
   target_edge: 0.15
   min_confidence: 0.0
@@ -89,6 +92,13 @@ longshot:
 
 poll:
   mode: legacy
+
+forecast_alignment:
+  enabled: true
+  contrarian_edge_premium: 0.10
+  exceptional_edge_threshold: 0.25
+  min_conflict_confidence: 0.68
+  min_conflict_agreement: 0.70
   favorable_min: 0.85
   favorable_max: 0.90
   low_poll_threshold: 0.85
@@ -130,7 +140,7 @@ risk:
   cooldown_seconds: 300
   min_hold_seconds: 120
   position_reversal_enabled: true
-  position_reversal_window_seconds: 420
+  position_reversal_window_seconds: 300
   position_reversal_min_hold_probability: 0.50
   position_reversal_late_hold_probability: 0.62
   position_reversal_min_z_support: -0.30

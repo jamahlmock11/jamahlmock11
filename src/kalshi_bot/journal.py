@@ -89,12 +89,14 @@ class TradeJournal:
         self._init_db()
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.path, check_same_thread=False)
+        conn = sqlite3.connect(self.path, check_same_thread=False, timeout=30.0)
         conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA busy_timeout = 30000")
         return conn
 
     def _init_db(self) -> None:
         with self._lock, self._connect() as conn:
+            conn.execute("PRAGMA journal_mode=WAL")
             conn.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS scans (
@@ -393,6 +395,33 @@ class TradeJournal:
                 values,
             )
         return decision_id
+
+    def label_latest_entry(
+        self,
+        ticker: str,
+        *,
+        outcome: float,
+        pnl: float,
+    ) -> int:
+        """Label the most recent traded entry decision for a contract."""
+        with self._lock, self._connect() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE decisions
+                SET outcome = ?, pnl = ?
+                WHERE id = (
+                    SELECT id FROM decisions
+                    WHERE ticker = ?
+                      AND traded = 1
+                      AND action IN ('BUY_UP', 'BUY_DOWN')
+                      AND outcome IS NULL
+                    ORDER BY ts DESC
+                    LIMIT 1
+                )
+                """,
+                (outcome, pnl, ticker),
+            )
+            return cursor.rowcount
 
     def label_decisions(
         self,
