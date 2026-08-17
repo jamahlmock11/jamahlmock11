@@ -21,83 +21,89 @@ hour:
   max_spread: 0.07
   order_quantity: 1
   poll_interval_sec: 10
-  model_version: hour-v1.0.0
-  require_forecast_alignment: false
-  forecast_alignment_min_probability: 0.65
+  model_version: terminal-v1
+  require_forecast_alignment: true
+  forecast_alignment_min_probability: 0.55
 
-# Same strategy rules as the 15-minute bot, with a 40-minute entry window.
+# Terminal expiration-probability + mispricing engine (live 1h path).
+terminal_probability:
+  enabled: true
+  intelligence_overlay: false
+  late_window_shortcut: false
+  late_favorite_shortcut: false
+  forecast_alignment: true
+  forecast_alignment_min_probability: 0.55
+  minimum_confidence: 0.60
+  minimum_ensemble: 0.55
+  signal_persistence_polls: 2
+  probability_stability_enabled: true
+  probability_stability_max_swing: 0.08
+  require_orderbook_depth: true
+  max_spread: 0.05
+  min_entry_executable_cost: 0.0
+  thesis_invalid_min_probability: 0.45
+  thesis_invalid_margin: 0.12
+  fallback_min_edge: 0.10
+  dynamic_edge_enabled: true
+  dynamic_edge_bands:
+    - min_minutes: 50
+      max_minutes: 60
+      min_edge: 0.10
+    - min_minutes: 30
+      max_minutes: 50
+      min_edge: 0.12
+    - min_minutes: 15
+      max_minutes: 30
+      min_edge: 0.14
+    - min_minutes: 5
+      max_minutes: 15
+      min_edge: 0.16
+    - min_minutes: 0
+      max_minutes: 5
+      min_edge: 0.18
+  calibration:
+    enabled: true
+    store_path: data/calibration_1h.json
+    min_samples_per_bucket: 25
+    max_calibration_gap: 0.12
+  predictions_db_path: data/predictions_1h.db
+
+intelligence:
+  enabled: false
+
+# Legacy strategy block (used for data completeness / order quantity only in terminal mode).
 strategy:
   contract_duration_seconds: 3600
-  min_edge: 0.15
-  target_edge: 0.15
-  min_confidence: 0.0
-  min_signal_agreement: 0.60
+  min_edge: 0.10
+  target_edge: 0.10
+  min_confidence: 0.60
+  min_signal_agreement: 0.55
   min_data_completeness: 0.65
-  max_spread: 0.07
+  max_spread: 0.05
   min_seconds_remaining: 60
   max_entry_seconds_remaining: 2400
   late_seconds: 600
   final_seconds: 600
-  final_min_edge: 0.15
-  late_confidence_increment: 0.10
-  late_favorite_seconds: 420
+  final_min_edge: 0.10
+  late_confidence_increment: 0.0
+  late_favorite_seconds: 0
   late_favorite_poll_threshold: 0.80
   late_favorite_min_edge: 0.04
-  min_entry_executable_cost: 0.75
+  min_entry_executable_cost: 0.0
   minimum_dominant_poll: null
   require_dominant_poll_side: false
   order_quantity: 1
   entry_signal_persistence_polls: 2
   chop_zone_min_sigma: 0.0
-  require_orderbook_depth: false
+  require_orderbook_depth: true
   window_regime_enabled: true
 
 longshot:
   enabled: false
-  max_entry_price: 0.45
-  min_edge: 0.06
-  min_confidence: 0.0
-  min_signal_agreement: 0.48
   poll_enabled: false
-  require_forecast_alignment: false
-  position_size_mult: 0.5
-  take_profit_cents: 0.06
-  take_profit_pct: 0.10
-  take_profit_price: 0.55
-  stop_loss_cents: 0.07
-  stop_loss_pct: 0.10
-  time_stop_seconds: 900
-  reversal_cents: 0.05
-  reversal_window_seconds: 120
-  entry_window_seconds: 2400
-  follow_extreme_poll: true
-  extreme_poll_threshold: 0.80
-  extreme_poll_late_seconds: 0
-  extreme_favorite_max_price: 0.85
-  crowd_follow_price_band_cents: 0.03
-  extreme_poll_min_model_prob: 0.48
-  favorite_only: false
-  perfect_entry_only: false
-  late_crowd_follow_seconds: 0
-  late_crowd_poll_threshold: 0.84
-  late_crowd_min_model_prob: 0.50
-  late_crowd_confirm_threshold: 0.50
-  late_crowd_favorite_max_price: 0.86
-  late_crowd_require_strike_hold: false
-  late_crowd_min_hold_probability: 0.50
-  late_crowd_max_z_against: 1.0
 
 poll:
-  mode: legacy
-  favorable_min: 0.85
-  favorable_max: 0.90
-  low_poll_threshold: 0.85
-  counter_evidence_min_probability: 0.70
-  counter_evidence_min_confidence: 0.65
-  counter_evidence_min_agreement: 0.65
-  low_poll_min_probability: 0.72
-  low_poll_min_confidence: 0.68
-  low_poll_min_agreement: 0.68
+  mode: disabled
 
 hour_edge:
   minimum_edge: 0.15

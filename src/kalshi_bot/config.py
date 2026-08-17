@@ -439,6 +439,53 @@ class SettlementConfig(BaseModel):
     proxy_symbol: str = "BTC-USD"
 
 
+class DynamicEdgeBand(BaseModel):
+    min_minutes: float = Field(ge=0.0)
+    max_minutes: float = Field(gt=0.0)
+    min_edge: float = Field(ge=0.0, le=1.0)
+
+
+class CalibrationStoreConfig(BaseModel):
+    enabled: bool = True
+    store_path: str = "data/calibration_1h.json"
+    min_samples_per_bucket: int = Field(default=25, ge=1)
+    max_calibration_gap: float = Field(default=0.12, ge=0.0, le=1.0)
+
+
+class TerminalProbabilityConfig(BaseModel):
+    """Live 1-hour terminal mispricing engine settings."""
+
+    enabled: bool = False
+    intelligence_overlay: bool = False
+    late_window_shortcut: bool = False
+    late_favorite_shortcut: bool = False
+    forecast_alignment: bool = True
+    forecast_alignment_min_probability: float = Field(default=0.55, ge=0.0, le=1.0)
+    minimum_confidence: float = Field(default=0.60, ge=0.0, le=1.0)
+    minimum_ensemble: float = Field(default=0.55, ge=0.0, le=1.0)
+    signal_persistence_polls: int = Field(default=2, ge=1)
+    probability_stability_enabled: bool = True
+    probability_stability_max_swing: float = Field(default=0.08, ge=0.0, le=1.0)
+    require_orderbook_depth: bool = True
+    max_spread: float = Field(default=0.05, ge=0.0, le=1.0)
+    min_entry_executable_cost: float = Field(default=0.0, ge=0.0, le=1.0)
+    thesis_invalid_min_probability: float = Field(default=0.45, ge=0.0, le=1.0)
+    thesis_invalid_margin: float = Field(default=0.12, ge=0.0, le=1.0)
+    fallback_min_edge: float = Field(default=0.10, ge=0.0, le=1.0)
+    dynamic_edge_enabled: bool = True
+    dynamic_edge_bands: list[DynamicEdgeBand] = Field(
+        default_factory=lambda: [
+            DynamicEdgeBand(min_minutes=50.0, max_minutes=60.0, min_edge=0.10),
+            DynamicEdgeBand(min_minutes=30.0, max_minutes=50.0, min_edge=0.12),
+            DynamicEdgeBand(min_minutes=15.0, max_minutes=30.0, min_edge=0.14),
+            DynamicEdgeBand(min_minutes=5.0, max_minutes=15.0, min_edge=0.16),
+            DynamicEdgeBand(min_minutes=0.0, max_minutes=5.0, min_edge=0.18),
+        ]
+    )
+    calibration: CalibrationStoreConfig = Field(default_factory=CalibrationStoreConfig)
+    predictions_db_path: str = "data/predictions_1h.db"
+
+
 class AppConfig(BaseModel):
     series: list[str] = Field(default_factory=lambda: ["KXBTC15M"])
     horizon: Literal["15m", "1h"] = "15m"
@@ -460,6 +507,9 @@ class AppConfig(BaseModel):
     data: DataConfig = Field(default_factory=DataConfig)
     pricing: PricingConfig = Field(default_factory=PricingConfig)
     settlement: SettlementConfig = Field(default_factory=SettlementConfig)
+    terminal_probability: TerminalProbabilityConfig = Field(
+        default_factory=TerminalProbabilityConfig
+    )
 
 
 class Settings(BaseSettings):
