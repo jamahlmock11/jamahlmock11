@@ -295,7 +295,7 @@
       $("headerMode").textContent = "OFFLINE";
       $("headerMode").className = "edge-mode offline";
       $("feedPulse").className = "feed-pulse";
-      $("scanStatus").textContent = "Cannot reach dashboard API on port 8787.";
+      $("scanStatus").textContent = "Cannot reach dashboard API on port 8790.";
       console.error(err);
     } finally {
       btn.disabled = false;

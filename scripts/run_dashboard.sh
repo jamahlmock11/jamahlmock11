@@ -13,7 +13,7 @@ if [[ -f .venv/bin/activate ]]; then
 fi
 
 HOST="${DASHBOARD_HOST:-0.0.0.0}"
-PORT="${DASHBOARD_PORT:-8787}"
+PORT="${DASHBOARD_PORT:-8790}"
 mkdir -p logs
 
 while true; do

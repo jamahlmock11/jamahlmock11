@@ -49,4 +49,4 @@ restart_bot kalshi_1h_bot scripts/run_1h.sh
 
 echo "Done. Tail logs:"
 echo "  tail -f logs/15m.log logs/1h.log"
-echo "Dashboard: http://127.0.0.1:8787"
+echo "Dashboard: http://127.0.0.1:8790"
