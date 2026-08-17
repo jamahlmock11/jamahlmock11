@@ -406,7 +406,11 @@ class ForecastingScanner:
             regime,
             min_agreement=self.config.strategy.min_signal_agreement,
         )
-        pattern_match = self.pattern_matcher.match(features, enriched, regime)
+        pattern_match = (
+            self.pattern_matcher.match(features, enriched, regime)
+            if self.config.strategy.pattern_matching_enabled
+            else None
+        )
 
         decision = self.decision_engine.decide(
             market,
@@ -549,10 +553,11 @@ class ForecastingScanner:
             reason = f"{reason}; {intel_report.skip_reason}"
         if external.uncertainty_score > 0.7:
             reason = f"{reason}; elevated external uncertainty"
-        if pattern_match and not pattern_match.similar_setup_found:
-            reason = f"{reason}; {pattern_match.recommendation}"
-        elif pattern_match and pattern_match.match_count < self.config.strategy.min_pattern_matches:
-            reason = f"{reason}; {pattern_match.recommendation}"
+        if self.config.strategy.pattern_matching_enabled:
+            if pattern_match and not pattern_match.similar_setup_found:
+                reason = f"{reason}; {pattern_match.recommendation}"
+            elif pattern_match and pattern_match.match_count < self.config.strategy.min_pattern_matches:
+                reason = f"{reason}; {pattern_match.recommendation}"
         return ForecastCycle(
             timestamp=observed_at,
             data_health=health,

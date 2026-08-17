@@ -3,242 +3,118 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Edge Desk — Kalshi BTC bot</title>
+  <title>edge — Edge Desk</title>
   <link rel="stylesheet" href="/static/styles.css" />
 </head>
 <body>
-  <main class="shell">
-    <header class="top">
-      <div>
-        <h1 class="brand">Edge <span>Desk</span></h1>
-        <p class="lede">BRTI-first BTC 15-minute forecasts, executable edge, and safety-gated decisions.</p>
+  <main class="edge-shell">
+    <header class="edge-header">
+      <div class="header-brand">
+        <h1 class="edge-title">edge</h1>
+        <span class="feed-pulse" id="feedPulse" aria-hidden="true"></span>
+        <span class="edge-mode" id="headerMode">connecting</span>
       </div>
-      <aside class="status-panel">
-        <div class="status-row">
-          <span class="pulse" id="pulse"></span>
-          <span>Feed</span>
-          <span class="mode" id="mode">—</span>
-        </div>
-        <div class="meta" id="lastScan">Waiting for first scan…</div>
-      </aside>
+      <div class="header-controls">
+        <button type="button" class="btn-scan" id="scanBtn">Refresh</button>
+        <label class="auto-refresh">
+          <input type="checkbox" id="autoRefresh" checked />
+          Auto 5s
+        </label>
+      </div>
     </header>
 
-    <section class="panel decision-panel">
-      <div class="panel-head">
-        <h2>Current decision</h2>
-        <div class="decision-action" id="decisionAction">NO DATA</div>
+    <p class="scan-status" id="scanStatus">Connecting to dashboard…</p>
+
+    <section class="legend-strip" aria-label="Signal legend">
+      <span class="legend-item legend-trade">● In trade</span>
+      <span class="legend-item legend-near">● Close to trade</span>
+      <span class="legend-item legend-notrade">● No trade</span>
+    </section>
+
+    <section class="section decisions-section">
+      <div class="section-head">
+        <h2 class="section-title">Live decisions</h2>
+        <span class="section-hint">green = in trade · yellow = close · red = blocked</span>
       </div>
-      <div class="reversal-banner" id="reversalBanner" hidden>
-        <div class="reversal-banner-head">
-          <span class="reversal-banner-title">Lag reversal</span>
-          <span class="reversal-mode-badge" id="reversalModeBadge">—</span>
-          <span class="reversal-active-badge" id="reversalActiveBadge">—</span>
-        </div>
-        <div class="reversal-banner-body">
-          <strong id="reversalScore">—</strong>
-          <span id="reversalSetup">—</span>
-        </div>
-        <p class="reversal-summary" id="reversalSummary">—</p>
-      </div>
-      <div class="decision-grid">
-        <article><span>Contract</span><strong id="decisionTicker">—</strong></article>
-        <article><span>Reference / Strike</span><strong id="decisionPrices">—</strong></article>
-        <article><span>Time remaining</span><strong id="decisionTime">—</strong></article>
-        <article><span>UP / DOWN</span><strong id="decisionProbability">—</strong></article>
-        <article><span>YES / NO ask</span><strong id="decisionBook">—</strong></article>
-        <article><span>Executable edge</span><strong id="decisionEdge">—</strong></article>
-        <article><span>Edge gap</span><strong id="decisionEdgeGap">—</strong></article>
-        <article><span>Direction now → expiry</span><strong id="decisionDirection">—</strong></article>
-        <article><span>Regime / Trajectory</span><strong id="decisionRegime">—</strong></article>
-        <article><span>Confidence / Agreement</span><strong id="decisionConfidence">—</strong></article>
-        <article><span>Momentum / Acceleration</span><strong id="decisionMotion">—</strong></article>
-        <article><span>Volatility / Data</span><strong id="decisionHealth">—</strong></article>
-        <article><span>Position / Risk</span><strong id="decisionPosition">—</strong></article>
-        <article><span>Trade quality</span><strong id="decisionTradeQuality">—</strong></article>
-        <article><span>Model agreement</span><strong id="decisionModelAgreement">—</strong></article>
-        <article><span>Liquidity / Pattern</span><strong id="decisionLiquidity">—</strong></article>
-      </div>
-      <div class="decision-why">
-        <span id="whyLabel">WHY NO TRADE</span>
-        <p id="decisionReason">Waiting for the first decision.</p>
-      </div>
-      <div class="requirements-panel" id="requirementsPanel" hidden>
-        <div class="requirements-head">
-          <h3>Trade requirements</h3>
-          <span class="requirements-score" id="requirementsScore">—</span>
-        </div>
-        <div class="requirements-grid" id="requirementsGrid"></div>
+      <div class="decision-heroes" id="decisionHeroes">
+        <div class="hero-placeholder">Loading decisions…</div>
       </div>
     </section>
 
-    <section class="stats" id="stats">
-      <article class="stat">
-        <div class="label">Live fills</div>
-        <div class="value" id="statTrades">0</div>
-        <div class="hint" id="statTradeSplit">dry 0 · live 0</div>
+    <section class="stats-strip" id="statsStrip" aria-label="Session stats">
+      <article class="stat-chip">
+        <span class="stat-label">Live fills</span>
+        <strong class="stat-value" id="statFills">0</strong>
       </article>
-      <article class="stat">
-        <div class="label">Closed P/L</div>
-        <div class="value" id="statPnl">$0.00</div>
-        <div class="hint" id="statWinLoss">0 wins · 0 losses</div>
+      <article class="stat-chip">
+        <span class="stat-label">Closed P/L</span>
+        <strong class="stat-value" id="statPnl">$0.00</strong>
       </article>
-      <article class="stat">
-        <div class="label">Notional</div>
-        <div class="value" id="statNotional">$0</div>
-        <div class="hint">filled exposure</div>
+      <article class="stat-chip">
+        <span class="stat-label">Notional</span>
+        <strong class="stat-value" id="statNotional">$0</strong>
       </article>
-      <article class="stat">
-        <div class="label">Avg entry edge</div>
-        <div class="value" id="statEdge">0%</div>
-        <div class="hint" id="statSpot">15m + 1h bots</div>
+      <article class="stat-chip">
+        <span class="stat-label">Avg edge</span>
+        <strong class="stat-value" id="statEdge">0%</strong>
       </article>
     </section>
 
-    <section class="panel">
-      <div class="panel-head">
-        <h2>Post-trade analytics</h2>
-        <div class="sub">win rates, confidence calibration, loss causes</div>
+    <section class="section">
+      <div class="section-head">
+        <h2 class="section-title">Active edge rules</h2>
       </div>
-      <div class="analytics-grid" id="analyticsGrid">
-        <article class="analytics-card">
-          <h3>Win rate by time remaining</h3>
-          <pre id="analyticsTimeRemaining" class="analytics-pre">—</pre>
-        </article>
-        <article class="analytics-card">
-          <h3>Win rate by session</h3>
-          <pre id="analyticsSession" class="analytics-pre">—</pre>
-        </article>
-        <article class="analytics-card">
-          <h3>Profit by strategy</h3>
-          <pre id="analyticsStrategy" class="analytics-pre">—</pre>
-        </article>
-        <article class="analytics-card">
-          <h3>Largest loss causes</h3>
-          <pre id="analyticsLossCauses" class="analytics-pre">—</pre>
-        </article>
+      <p class="rules-summary" id="rulesSummary">—</p>
+      <div class="rules-grid" id="rulesGrid">
+        <div class="rules-loading">Loading rules…</div>
       </div>
     </section>
 
-    <section class="panel">
-      <div class="panel-head">
-        <h2>All trades</h2>
-        <div class="sub" id="tradeCount">0 fills · live summary</div>
-      </div>
-      <div class="filters" id="tradeFilters">
-        <button class="chip active" data-filter="all">All</button>
-        <button class="chip" data-filter="live">Live</button>
-        <button class="chip" data-filter="dry">Paper</button>
-        <button class="chip" data-filter="15m">15m</button>
-        <button class="chip" data-filter="1h">1h</button>
-        <button class="chip" data-filter="forecast">Entries</button>
-        <button class="chip" data-filter="forecast_exit">Exits</button>
-      </div>
-      <div class="table-wrap">
+    <details class="card more-card">
+      <summary>Recent fills</summary>
+      <div class="table-wrap compact">
         <table>
           <thead>
             <tr>
               <th>Time</th>
               <th>Bot</th>
               <th>Summary</th>
-              <th>Ticker</th>
-              <th>Side</th>
-              <th>Size</th>
-              <th>Price</th>
               <th>P/L</th>
-              <th>Edge</th>
-              <th>Mode</th>
             </tr>
           </thead>
           <tbody id="tradesBody"></tbody>
         </table>
-        <div class="empty" id="tradesEmpty" hidden>No trades yet. Live fills appear here automatically.</div>
       </div>
-    </section>
+    </details>
 
-    <section class="panel">
-      <div class="panel-head">
-        <h2>Decision journal</h2>
-        <div class="sub">every decision · including no trade</div>
-      </div>
-      <div class="table-wrap">
+    <details class="card more-card">
+      <summary>Decision journal</summary>
+      <div class="table-wrap compact">
         <table>
           <thead>
             <tr>
               <th>Time</th>
               <th>Action</th>
-              <th>Ticker</th>
-              <th>UP</th>
-              <th>Price</th>
+              <th>Time left</th>
               <th>Edge</th>
-              <th>Confidence</th>
-              <th>Regime</th>
-              <th>Health</th>
-              <th>Reversal</th>
-              <th>Requirements</th>
-              <th>Reason</th>
+              <th>Blocker</th>
             </tr>
           </thead>
           <tbody id="decisionsBody"></tbody>
         </table>
-        <div class="empty" id="decisionsEmpty" hidden>No decisions logged yet.</div>
       </div>
-    </section>
+    </details>
 
-    <section class="grid-2">
-      <section class="panel">
-        <div class="panel-head">
-          <h2>Signal tape</h2>
-          <div class="sub">options vs Kalshi</div>
-        </div>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Time</th>
-                <th>Tier</th>
-                <th>Ticker</th>
-                <th>Side</th>
-                <th>Kalshi</th>
-                <th>Options</th>
-                <th>Edge</th>
-                <th>Hit</th>
-              </tr>
-            </thead>
-            <tbody id="signalsBody"></tbody>
-          </table>
-          <div class="empty" id="signalsEmpty" hidden>No signals logged yet.</div>
-        </div>
-      </section>
-
-      <section class="panel">
-        <div class="panel-head">
-          <h2>Scan history</h2>
-          <div class="sub">spot · IV · markets</div>
-        </div>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Time</th>
-                <th>Mode</th>
-                <th>BTC</th>
-                <th>IV</th>
-                <th>Mkts</th>
-                <th>Signals</th>
-              </tr>
-            </thead>
-            <tbody id="scansBody"></tbody>
-          </table>
-          <div class="empty" id="scansEmpty" hidden>No scans yet.</div>
-        </div>
-      </section>
-    </section>
-
-    <footer>Auto-refreshes every 3s · 15m + 1h journals · port 8787 · open via Cursor Ports tab</footer>
+    <footer class="edge-footer">
+      Edge Desk · port 8790 ·
+      <span id="footerPulse">connecting</span>
+    </footer>
   </main>
+
   <div class="offline-banner" id="offlineBanner" hidden>
-    Dashboard API unreachable. Open port <strong>8787</strong> from the Cursor <strong>Ports</strong> tab, then reload.
+    Dashboard API unreachable. Open port <strong>8790</strong> from the Cursor <strong>Ports</strong> tab (not 8787 — that conflicts with Cursor OAuth), then click Refresh.
   </div>
+
   <script src="/static/app.js"></script>
 </body>
 </html>

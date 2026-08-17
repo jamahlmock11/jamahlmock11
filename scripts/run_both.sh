@@ -22,9 +22,7 @@ fi
 LIVE_FLAG=()
 if [[ "${1:-}" == "--live" ]]; then
   LIVE_FLAG=(--live)
-fi
-# Auto-live when credentials are present (e.g. from environment secrets).
-if [[ -z "${LIVE_FLAG[*]:-}" && -n "${KALSHI_API_KEY_ID:-}" && -f secrets/kalshi_private.key ]]; then
+elif [[ "${DRY_RUN:-true}" == "false" && -n "${KALSHI_API_KEY_ID:-}" && -f secrets/kalshi_private.key ]]; then
   LIVE_FLAG=(--live)
 fi
 
@@ -58,7 +56,7 @@ PID_DASH=$!
 
 echo "15-minute bot pid=${PID_15M} config=${CONFIG_15M} log=logs/15m.log"
 echo "1-hour bot pid=${PID_1H} config=${CONFIG_1H} log=logs/1h.log"
-echo "Edge Desk dashboard pid=${PID_DASH} url=http://127.0.0.1:8787"
+echo "Edge Desk dashboard pid=${PID_DASH} url=http://127.0.0.1:8790"
 echo "Tail logs: tail -f logs/15m.log logs/1h.log logs/dashboard.log"
 echo "Press Ctrl+C to stop bots (dashboard keeps running in background)."
 

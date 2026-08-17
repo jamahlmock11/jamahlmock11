@@ -314,6 +314,10 @@ class StrategyConfig(BaseModel):
     min_trade_quality_score: float = Field(default=65.0, ge=0.0, le=100.0)
     max_do_not_trade_score: float = Field(default=40.0, ge=0.0, le=100.0)
     require_trade_quality: bool = True
+    pattern_matching_enabled: bool = Field(
+        default=False,
+        description="When false, skip historical pattern matching and evidence gates.",
+    )
     min_pattern_matches: int = Field(default=10, ge=0)
     external_data_enabled: bool = False
     entry_signal_persistence_polls: int = Field(

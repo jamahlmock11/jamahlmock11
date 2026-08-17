@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Switch both bots to LIVE mode and restart them.
+# Switch both bots to PAPER mode and restart them.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 export PATH="${HOME}/.local/bin:${PATH}"
 
-export DRY_RUN=false
+export DRY_RUN=true
 bash scripts/bootstrap_env.sh
 
 set -a
@@ -13,19 +13,12 @@ set -a
 source .env
 set +a
 
-if [[ -z "${KALSHI_API_KEY_ID:-}" || ! -f secrets/kalshi_private.key ]]; then
-  echo "ERROR: Kalshi credentials missing."
-  echo "Set environment secrets KALSHI_API_KEY_ID and KALSHI_PRIVATE_KEY, then rerun:"
-  echo "  bash scripts/go_live.sh"
+if [[ "${DRY_RUN:-true}" != "true" ]]; then
+  echo "ERROR: DRY_RUN is not true after bootstrap."
   exit 1
 fi
 
-if [[ "${DRY_RUN:-true}" != "false" ]]; then
-  echo "ERROR: DRY_RUN is not false after bootstrap."
-  exit 1
-fi
-
-echo "Live config:"
+echo "Paper config:"
 echo "  KALSHI_API_KEY_ID=${KALSHI_API_KEY_ID:0:6}..."
 echo "  BENCHMARK_MODE=${BENCHMARK_MODE:-unset}"
 echo "  DRY_RUN=${DRY_RUN}"
