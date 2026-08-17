@@ -152,6 +152,18 @@ body::before {
 .model-pick-value.down { color: var(--no); }
 .model-pick-value.flat { color: var(--muted); }
 
+.model-kalshi-pick {
+  color: var(--paper);
+  font-family: var(--font-display);
+  font-size: 1.05rem;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+}
+
+.model-kalshi-pick.up { color: var(--yes); }
+.model-kalshi-pick.down { color: var(--no); }
+.model-kalshi-pick.flat { color: var(--muted); }
+
 .model-pick-sub {
   color: var(--muted);
   font-family: var(--font-mono);
@@ -401,13 +413,29 @@ tbody tr:hover {
 
 .decision-head-model {
   display: flex;
-  align-items: baseline;
+  align-items: flex-start;
   gap: 0.55rem;
   font-family: var(--font-mono);
   font-size: 0.72rem;
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
+
+.decision-head-picks {
+  display: grid;
+  gap: 0.15rem;
+}
+
+.decision-head-picks span {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.06em;
+  text-transform: none;
+  color: var(--muted);
+}
+
+.decision-head-picks span.up { color: var(--yes); }
+.decision-head-picks span.down { color: var(--no); }
 
 .decision-head-model span {
   color: var(--muted);

@@ -192,7 +192,10 @@ def _cents(value: float | None) -> str:
 def _pct(value: float | None, digits: int = 0) -> str:
     if value is None:
         return "—"
-    return f"{value * 100:.{digits}f}%"
+    scaled = float(value) * 100 if abs(float(value)) <= 1 else float(value)
+    if digits <= 0:
+        return f"{round(scaled)}%"
+    return f"{scaled:.{digits}f}%"
 
 
 def _thresholds(row: dict[str, Any]) -> dict[str, Any]:
@@ -788,4 +791,21 @@ def enrich_decision(row: dict[str, Any]) -> dict[str, Any]:
             pick = "UP" if float(up) >= float(down) else "DOWN"
         enriched["model_pick"] = pick
         enriched["model_pick_probability"] = float(up if pick == "UP" else down)
+    yes_ask = row.get("yes_ask")
+    yes_bid = row.get("yes_bid")
+    if yes_ask is not None or yes_bid is not None:
+        yes_mid = (
+            (float(yes_ask) + float(yes_bid)) / 2
+            if yes_ask is not None and yes_bid is not None
+            else float(yes_ask if yes_ask is not None else yes_bid)
+        )
+        kalshi_up = round(yes_mid * 100)
+        kalshi_down = max(0, 100 - kalshi_up)
+        kalshi_pick = "UP" if kalshi_up >= kalshi_down else "DOWN"
+        enriched["kalshi_up_probability"] = yes_mid
+        enriched["kalshi_down_probability"] = 1.0 - yes_mid
+        enriched["kalshi_pick"] = kalshi_pick
+        enriched["kalshi_pick_probability"] = float(
+            kalshi_up if kalshi_pick == "UP" else kalshi_down
+        )
     return enriched
