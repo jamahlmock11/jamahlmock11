@@ -11,23 +11,30 @@
     <header class="edge-header">
       <div class="header-brand">
         <h1 class="edge-title">edge</h1>
-        <span class="edge-mode" id="headerMode">—</span>
+        <span class="feed-pulse" id="feedPulse" aria-hidden="true"></span>
+        <span class="edge-mode" id="headerMode">connecting</span>
       </div>
       <div class="header-controls">
         <button type="button" class="btn-scan" id="scanBtn">Refresh</button>
         <label class="auto-refresh">
           <input type="checkbox" id="autoRefresh" checked />
-          Auto 10s
+          Auto 5s
         </label>
       </div>
     </header>
 
-    <p class="scan-status" id="scanStatus">Waiting for first scan…</p>
+    <p class="scan-status" id="scanStatus">Connecting to dashboard…</p>
+
+    <section class="legend-strip" aria-label="Signal legend">
+      <span class="legend-item legend-trade">● In trade</span>
+      <span class="legend-item legend-near">● Close to trade</span>
+      <span class="legend-item legend-notrade">● No trade</span>
+    </section>
 
     <section class="section decisions-section">
       <div class="section-head">
         <h2 class="section-title">Live decisions</h2>
-        <span class="section-hint">15m + 1h · latest per bot</span>
+        <span class="section-hint">green = in trade · yellow = close · red = blocked</span>
       </div>
       <div class="decision-heroes" id="decisionHeroes">
         <div class="hero-placeholder">Loading decisions…</div>
@@ -55,35 +62,13 @@
 
     <section class="section">
       <div class="section-head">
-        <h2 class="section-title">Market detail</h2>
-        <span class="section-hint">full scan rows</span>
+        <h2 class="section-title">Active edge rules</h2>
       </div>
-      <div class="table-wrap">
-        <table class="assessments-table">
-          <thead>
-            <tr>
-              <th>Bot</th>
-              <th>Time left</th>
-              <th>Kalshi pick</th>
-              <th>Decision</th>
-              <th>Edge</th>
-              <th>Ensemble</th>
-              <th>Blocker</th>
-            </tr>
-          </thead>
-          <tbody id="assessmentsBody"></tbody>
-        </table>
-        <div class="empty" id="assessmentsEmpty" hidden>No live assessments yet.</div>
-      </div>
-    </section>
-
-    <details class="card more-card">
-      <summary>Active edge rules</summary>
       <p class="rules-summary" id="rulesSummary">—</p>
       <div class="rules-grid" id="rulesGrid">
         <div class="rules-loading">Loading rules…</div>
       </div>
-    </details>
+    </section>
 
     <details class="card more-card">
       <summary>Recent fills</summary>
@@ -120,11 +105,14 @@
       </div>
     </details>
 
-    <footer class="edge-footer">Edge Desk · port 8787 · <span id="footerPulse">offline</span></footer>
+    <footer class="edge-footer">
+      Edge Desk · port 8787 ·
+      <span id="footerPulse">connecting</span>
+    </footer>
   </main>
 
   <div class="offline-banner" id="offlineBanner" hidden>
-    Dashboard API unreachable. Open port <strong>8787</strong> from the Cursor <strong>Ports</strong> tab.
+    Dashboard API unreachable. Open port <strong>8787</strong> from the Cursor <strong>Ports</strong> tab, then click Refresh.
   </div>
 
   <script src="/static/app.js"></script>

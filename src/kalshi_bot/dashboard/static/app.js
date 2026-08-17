@@ -2,7 +2,7 @@
   const state = {
     autoRefresh: true,
     refreshTimer: null,
-    intervalMs: 10000,
+    intervalMs: 5000,
   };
 
   const $ = (id) => document.getElementById(id);
@@ -41,32 +41,44 @@
   }
 
   function formatAction(action) {
-    const a = (action || "NO_TRADE").toUpperCase().replace(/_/g, " ");
-    return a;
+    return (action || "NO_TRADE").toUpperCase().replace(/_/g, " ");
   }
 
-  function actionCssClass(action) {
-    const a = (action || "NO_TRADE").toLowerCase();
-    if (a === "buy_up" || a === "buy_down") return "act-buy_up";
-    if (a === "hold") return "act-hold";
-    if (a === "exit") return "act-exit";
-    return "act-no_trade";
+  function signalLabel(signal) {
+    if (signal === "trade") return "IN TRADE";
+    if (signal === "near") return "CLOSE TO TRADE";
+    return "NO TRADE";
   }
 
-  function heroSkin(rec) {
-    if (rec === "buy") return "hero-buy";
-    if (rec === "hold") return "hero-hold";
-    if (rec === "exit") return "hero-exit";
-    return "hero-skip";
+  function signalClass(signal) {
+    return `signal-${signal || "notrade"}`;
   }
 
-  function whyLabel(rec, action) {
-    const a = (action || "").toUpperCase();
-    if (rec === "skip" || a === "NO_TRADE") return "Why no trade";
-    if (a === "HOLD") return "Why hold";
-    if (a === "EXIT") return "Why exit";
-    if (rec === "buy") return "Why buy";
-    return "Reason";
+  function requirementRowClass(status, blocking) {
+    if (blocking) return "req-blocked";
+    if (status === "pass") return "req-pass";
+    if (status === "fail") return "req-fail";
+    return "req-na";
+  }
+
+  function renderRequirementsList(requirements) {
+    if (!requirements || !requirements.length) {
+      return '<p class="req-empty">No requirement data yet.</p>';
+    }
+    return requirements
+      .map((r) => {
+        const icon =
+          r.blocking ? "✕" : r.status === "pass" ? "✓" : r.status === "fail" ? "!" : "·";
+        return `
+        <div class="req-row ${requirementRowClass(r.status, r.blocking)}">
+          <span class="req-icon">${icon}</span>
+          <div class="req-copy">
+            <strong>${r.label}</strong>
+            <span>${r.detail || ""}</span>
+          </div>
+        </div>`;
+      })
+      .join("");
   }
 
   function renderRules(rules) {
@@ -90,26 +102,47 @@
     const container = $("decisionHeroes");
     if (!rows || !rows.length) {
       container.innerHTML =
-        '<div class="hero-placeholder">No live decisions yet. Bots will populate this after the next scan.</div>';
+        '<div class="hero-placeholder">Waiting for bot scans… Decisions appear after the next 15m/1h poll.</div>';
       return;
     }
 
     container.innerHTML = rows
       .map((row) => {
         const action = row.decision_action || "NO_TRADE";
-        const rec = row.rec || "skip";
+        const signal = row.signal || "notrade";
         const tau = row.tau_left_min != null ? `${row.tau_left_min}m left` : "—";
         const netEdge =
           row.net_edge_cents != null ? `${row.net_edge_cents}¢` : "—";
         const ensemble =
           row.ensemble_pct != null ? `${Number(row.ensemble_pct).toFixed(0)}%` : "—";
+        const confidence =
+          row.confidence_pct != null ? `${Number(row.confidence_pct).toFixed(0)}%` : "—";
         const quality = row.quality != null ? `${row.quality}%` : "—";
-        const whyText = row.blocker || row.reason || "No blockers — requirements met.";
-        const whyBlocked = rec === "skip" && row.blocker;
+        const passFail = `${row.pass_count || 0}/${(row.pass_count || 0) + (row.fail_count || 0)}`;
+        const edgeGap = row.edge_gap_text || "—";
+        const whyText =
+          row.blocker || row.reason || "All blocking gates cleared.";
         const horizonLabel = row.horizon === "1h" ? "1 hour" : "15 minute";
+        const botMode = row.dry_run ? "PAPER" : "LIVE";
+        const brti =
+          row.brti_price != null && row.strike != null
+            ? `${money(row.brti_price)} / ${money(row.strike)}`
+            : "—";
+        const bookAsk =
+          row.yes_ask != null && row.no_ask != null
+            ? `Y ${(row.yes_ask * 100).toFixed(0)}¢ · N ${(row.no_ask * 100).toFixed(0)}¢`
+            : "—";
+        const positionText = row.has_position && row.position
+          ? `${row.position.side} × ${row.position.quantity}`
+          : "FLAT";
+        const reqs = renderRequirementsList(row.requirements);
 
         return `
-      <article class="decision-hero ${heroSkin(rec)}">
+      <article class="decision-hero ${signalClass(signal)}">
+        <div class="hero-signal-bar">
+          <span class="hero-signal-label">${signalLabel(signal)}</span>
+          <span class="hero-bot-mode">${botMode}</span>
+        </div>
         <div class="hero-top">
           <div class="hero-meta">
             <span class="hero-horizon">BTC · ${horizonLabel}</span>
@@ -117,7 +150,7 @@
           </div>
           <span class="hero-tau">${tau}</span>
         </div>
-        <div class="hero-action ${actionCssClass(action)}">${formatAction(action)}</div>
+        <div class="hero-action">${formatAction(action)}</div>
         <div class="hero-pick">
           <span class="hero-pick-label">Kalshi pick</span>
           <span class="hero-pick-value">${row.book || "—"}</span>
@@ -128,17 +161,43 @@
             <strong>${netEdge}</strong>
           </div>
           <div class="hero-metric">
+            <span>Need / gap</span>
+            <strong class="edge-gap">${edgeGap}</strong>
+          </div>
+          <div class="hero-metric">
             <span>Ensemble</span>
             <strong>${ensemble}</strong>
+          </div>
+          <div class="hero-metric">
+            <span>Confidence</span>
+            <strong>${confidence}</strong>
+          </div>
+          <div class="hero-metric">
+            <span>Reqs pass</span>
+            <strong>${passFail}</strong>
           </div>
           <div class="hero-metric">
             <span>Quality</span>
             <strong>${quality}</strong>
           </div>
         </div>
+        <div class="hero-context">
+          <span>BRTI / strike <strong>${brti}</strong></span>
+          <span>Book <strong>${bookAsk}</strong></span>
+          <span>Position <strong>${positionText}</strong></span>
+          <span>Health <strong>${row.data_health || "—"}</strong></span>
+          <span>Regime <strong>${row.regime || "—"}</strong></span>
+        </div>
         <div class="hero-why">
-          <span class="hero-why-label">${whyLabel(rec, action)}</span>
-          <span class="hero-why-text ${whyBlocked ? "blocked" : ""}">${whyText}</span>
+          <span class="hero-why-label">${signal === "notrade" ? "Why no trade" : "Status"}</span>
+          <span class="hero-why-text">${whyText}</span>
+        </div>
+        <div class="requirements-panel">
+          <div class="requirements-head">
+            <h3>Trade requirements</h3>
+            <span class="requirements-score">${passFail} pass · ${edgeGap}</span>
+          </div>
+          <div class="requirements-grid">${reqs}</div>
         </div>
       </article>`;
       })
@@ -153,40 +212,6 @@
     pnlEl.className = `stat-value ${pnl > 0 ? "pos" : pnl < 0 ? "neg" : ""}`;
     $("statNotional").textContent = money(stats.notional_usd);
     $("statEdge").textContent = `${Number(stats.avg_edge_pct || stats.avg_edge || 0).toFixed(1)}%`;
-  }
-
-  function decisionBadgeClass(rec) {
-    if (rec === "buy") return "buy";
-    if (rec === "hold") return "hold";
-    if (rec === "exit") return "exit";
-    return "skip";
-  }
-
-  function renderAssessments(rows) {
-    const body = $("assessmentsBody");
-    $("assessmentsEmpty").hidden = rows.length > 0;
-    body.innerHTML = rows
-      .map((row) => {
-        const label = row.horizon ? `${row.horizon}` : "—";
-        const tau =
-          row.tau_left_min != null ? `${row.tau_left_min}m` : "—";
-        const netEdge =
-          row.net_edge_cents != null ? `${row.net_edge_cents}¢` : "—";
-        const ensemble =
-          row.ensemble_pct != null ? `${Number(row.ensemble_pct).toFixed(0)}%` : "—";
-        const actionLabel = formatAction(row.decision_action);
-        return `
-      <tr>
-        <td><span class="asset-label">${label}</span></td>
-        <td class="mono">${tau}</td>
-        <td class="mono">${row.book || "—"}</td>
-        <td><span class="decision-badge ${decisionBadgeClass(row.rec)}">${actionLabel}</span></td>
-        <td class="mono">${netEdge}</td>
-        <td class="mono">${ensemble}</td>
-        <td class="blocker-cell">${row.blocker || "—"}</td>
-      </tr>`;
-      })
-      .join("");
   }
 
   function renderTrades(trades) {
@@ -233,12 +258,13 @@
     const mkts = payload.market_count ?? 0;
     const entries = payload.entries ?? 0;
     const exits = payload.exits ?? 0;
+    const mode = payload.mode || "—";
     $("scanStatus").textContent =
-      `Last scan ${fmtClock(ts)} · ${mkts} market${mkts === 1 ? "" : "s"} · entries ${entries} · exits ${exits}`;
-    $("headerMode").textContent = payload.mode || "—";
-    $("headerMode").className = `edge-mode ${(payload.mode || "").toLowerCase()}`;
-    $("footerPulse").textContent =
-      payload.mode === "LIVE" ? "live" : payload.mode === "PAPER" ? "paper" : "connected";
+      `Dashboard live · last bot scan ${fmtClock(ts)} · ${mkts} market${mkts === 1 ? "" : "s"} · entries ${entries} · exits ${exits}`;
+    $("headerMode").textContent = mode;
+    $("headerMode").className = `edge-mode ${mode.toLowerCase()}`;
+    $("footerPulse").textContent = `dashboard live · bots ${mode.toLowerCase()}`;
+    $("feedPulse").className = `feed-pulse on ${mode.toLowerCase()}`;
   }
 
   async function refresh() {
@@ -258,7 +284,6 @@
       const assessments = desk.assessments || [];
       renderDecisionHeroes(assessments);
       renderStatsStrip(desk.stats || {});
-      renderAssessments(assessments);
       renderRules(desk.rules);
       $("rulesSummary").textContent = desk.rules_summary || "—";
       renderTrades(trades.trades || []);
@@ -266,7 +291,10 @@
       updateScanStatus(desk);
     } catch (err) {
       $("offlineBanner").hidden = false;
-      $("footerPulse").textContent = "offline";
+      $("footerPulse").textContent = "dashboard offline";
+      $("headerMode").textContent = "OFFLINE";
+      $("headerMode").className = "edge-mode offline";
+      $("feedPulse").className = "feed-pulse";
       $("scanStatus").textContent = "Cannot reach dashboard API on port 8787.";
       console.error(err);
     } finally {
