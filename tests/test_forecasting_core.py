@@ -487,6 +487,40 @@ def _late_favorite_config() -> DecisionConfig:
     )
 
 
+def test_dynamic_edge_enforced_when_mispricing_disabled():
+    cfg = DecisionConfig(
+        mispricing_enabled=False,
+        dynamic_edge_enabled=True,
+        dynamic_edge_bands=[
+            DynamicEdgeBand(min_minutes=3.0, max_minutes=5.0, min_edge=0.08),
+        ],
+        minimum_agreement=0.55,
+        minimum_confidence=0.0,
+        min_entry_executable_cost=0.08,
+    )
+    late_market = replace(market(yes_ask=0.79), expiration=NOW + timedelta(seconds=240))
+    blocked = DecisionEngine(cfg).decide(
+        late_market,
+        forecast(0.84),
+        features(),
+        benchmark(),
+        now=NOW,
+    )
+    assert blocked.action is DecisionAction.NO_TRADE
+    assert any(failure.gate == "minimum_edge" for failure in blocked.gate_failures)
+
+    passed_market = replace(market(yes_ask=0.74), expiration=NOW + timedelta(seconds=240))
+    passed = DecisionEngine(cfg).decide(
+        passed_market,
+        forecast(0.84),
+        features(),
+        benchmark(),
+        now=NOW,
+    )
+    assert passed.action is DecisionAction.BUY_UP
+    assert "tiered edge" in passed.reason
+
+
 def test_last_minute_entry_blocked():
     from kalshi_bot.strategies.decision import DecisionConfig, DecisionEngine
 

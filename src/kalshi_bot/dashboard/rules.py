@@ -38,13 +38,21 @@ def _rules_15m(cfg: AppConfig | None, mode: str, account: str) -> list[dict[str,
     depth = strategy.order_quantity if strategy else 1
     edge_tiers = (
         "15–10m:10¢ · 10–7m:10¢ · 7–5m:8¢ · 5–3m:8¢ · <3m:6¢"
-        if strategy and strategy.dynamic_edge_enabled and strategy.mispricing_enabled
+        if strategy and strategy.dynamic_edge_enabled
         else "OFF (forecast only)"
     )
 
     return [
         {"key": "Mode", "value": mode},
-        {"key": "Primary gate", "value": "model prob − executable price" if strategy and strategy.mispricing_enabled else "forecast direction"},
+        {"key": "Primary gate", "value": (
+            "model prob − executable (tiers)"
+            if strategy and strategy.dynamic_edge_enabled and not strategy.mispricing_enabled
+            else (
+                "model prob − executable price"
+                if strategy and strategy.mispricing_enabled
+                else "forecast direction"
+            )
+        )},
         {"key": "Window", "value": f"{min_secs:.0f}–{max_secs:.0f}s left"},
         {"key": "Edge tiers", "value": edge_tiers},
         {

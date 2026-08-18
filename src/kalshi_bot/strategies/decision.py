@@ -826,7 +826,7 @@ class DecisionEngine:
             benchmark_is_proxy=benchmark.is_proxy,
             entry_ctx=entry_ctx,
         )
-        if not cfg.mispricing_enabled:
+        if not cfg.mispricing_enabled and not cfg.dynamic_edge_enabled:
             required_edge = Decimal("0")
         if selected_execution.executable_cost + 1e-12 < cfg.min_entry_executable_cost:
             failures.append(
@@ -837,7 +837,8 @@ class DecisionEngine:
                     cfg.min_entry_executable_cost,
                 )
             )
-        if cfg.mispricing_enabled and (
+        edge_gate_active = cfg.mispricing_enabled or cfg.dynamic_edge_enabled
+        if edge_gate_active and (
             entry_ctx is None
             or entry_ctx.min_edge_override is None
             or entry_ctx.min_edge_override >= 0
@@ -891,7 +892,7 @@ class DecisionEngine:
                     edge_decimal = Decimal(str(side_probabilities[selected_side])) - Decimal(
                         str(selected_execution.executable_cost)
                     )
-                    if cfg.mispricing_enabled and edge_decimal + EDGE_TOLERANCE < required_edge:
+                    if edge_gate_active and edge_decimal + EDGE_TOLERANCE < required_edge:
                         failures.append(
                             _failure(
                                 "minimum_edge",
@@ -979,6 +980,14 @@ class DecisionEngine:
                 else "meets hard minimum edge but is below target"
             )
             entry_reason = f"{selected_side.value} {target_text}{_crowd_context_suffix(entry_ctx)}"
+            report_edge = selected_edge
+            report_required = float(required_edge)
+        elif cfg.dynamic_edge_enabled:
+            entry_reason = (
+                f"{selected_side.value} tiered edge "
+                f"{selected_edge:.1%} >= {float(required_edge):.1%}"
+                f"{_crowd_context_suffix(entry_ctx)}"
+            )
             report_edge = selected_edge
             report_required = float(required_edge)
         else:

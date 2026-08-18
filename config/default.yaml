@@ -197,9 +197,8 @@ risk:
   max_flips_per_contract: 0
   cooldown_seconds: 300
   min_hold_seconds: 60
-  take_profit_bid_price: 0.85
-  take_profit_late_seconds: 120
-  take_profit_late_min_gain: 0.04
+  take_profit_bid_price: 0.90
+  take_profit_late_seconds: 0
   position_reversal_enabled: true
   position_reversal_window_seconds: 420
   position_reversal_min_hold_probability: 0.50
@@ -211,7 +210,7 @@ risk:
   kelly_fraction: 0.25
   kelly_max_fraction: 0.25
   kelly_bankroll_usd: 16.22
-  stop_loss_fraction: 0.55
+  stop_loss_fraction: 0.45
   opposite_edge_shift: 0.25
   thesis_reversal_enabled: false
   opposite_edge_exit_enabled: false

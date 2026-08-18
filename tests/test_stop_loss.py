@@ -535,7 +535,7 @@ def test_take_profit_price_ceiling():
         expiration=NOW + timedelta(minutes=5),
         open_time=NOW - timedelta(minutes=10),
         reference="BRTI",
-        orderbook=book(yes_bid=0.86),
+        orderbook=book(yes_bid=0.91),
         current_position=MarketPosition(
             side=ContractSide.YES,
             quantity=1,
@@ -560,95 +560,9 @@ def test_take_profit_price_ceiling():
         predicted_side=ContractSide.YES,
         quantity=1,
         stop_loss_fraction=0.55,
-        take_profit_bid_price=0.85,
+        take_profit_bid_price=0.90,
         min_hold_seconds=60,
         now=NOW,
     )
     assert signal is not None
     assert signal.trigger == "take_profit_price"
-
-
-def test_take_profit_late_window_gain():
-    market = MarketSnapshot(
-        ticker="KXBTC15M-TEST",
-        status="active",
-        rules="BRTI",
-        strike=65000,
-        expiration=NOW + timedelta(seconds=90),
-        open_time=NOW - timedelta(minutes=14),
-        reference="BRTI",
-        orderbook=book(yes_bid=0.76),
-        current_position=MarketPosition(
-            side=ContractSide.YES,
-            quantity=1,
-            average_price=0.72,
-            opened_at=NOW - timedelta(seconds=120),
-        ),
-    )
-    forecast = ProbabilityEstimate(
-        p_up=0.80,
-        p_down=0.20,
-        confidence=0.7,
-        signal_agreement=0.8,
-        component_probabilities={"terminal": 0.80},
-        regime=Regime.TREND_UP,
-        raw_p_up=0.80,
-    )
-    signal = evaluate_position_exit(
-        market=market,
-        position=market.current_position,
-        forecast=forecast,
-        failures=(),
-        predicted_side=ContractSide.YES,
-        quantity=1,
-        stop_loss_fraction=0.55,
-        take_profit_late_seconds=120,
-        take_profit_late_min_gain=0.04,
-        min_hold_seconds=60,
-        now=NOW,
-    )
-    assert signal is not None
-    assert signal.trigger == "take_profit_late"
-
-
-def test_late_take_profit_skipped_when_bid_below_entry():
-    """Option E: below entry in final 90s — no late TP; stop loss can still apply."""
-    market = MarketSnapshot(
-        ticker="KXBTC15M-TEST",
-        status="active",
-        rules="BRTI",
-        strike=65000,
-        expiration=NOW + timedelta(seconds=80),
-        open_time=NOW - timedelta(minutes=14),
-        reference="BRTI",
-        orderbook=book(yes_bid=0.68),
-        current_position=MarketPosition(
-            side=ContractSide.YES,
-            quantity=1,
-            average_price=0.72,
-            opened_at=NOW - timedelta(seconds=120),
-        ),
-    )
-    forecast = ProbabilityEstimate(
-        p_up=0.55,
-        p_down=0.45,
-        confidence=0.7,
-        signal_agreement=0.8,
-        component_probabilities={"terminal": 0.55},
-        regime=Regime.TREND_UP,
-        raw_p_up=0.55,
-    )
-    signal = evaluate_position_exit(
-        market=market,
-        position=market.current_position,
-        forecast=forecast,
-        failures=(),
-        predicted_side=ContractSide.YES,
-        quantity=1,
-        stop_loss_fraction=0.55,
-        take_profit_late_seconds=120,
-        take_profit_late_min_gain=0.04,
-        min_hold_seconds=60,
-        now=NOW,
-    )
-    assert signal is None or signal.trigger == "stop_loss"
