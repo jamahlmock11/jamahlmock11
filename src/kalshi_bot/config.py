@@ -422,6 +422,23 @@ class RiskConfig(BaseModel):
     recovery_hold_min_confidence: float = Field(default=0.58, ge=0.0, le=1.0)
     recovery_hold_min_agreement: float = Field(default=0.58, ge=0.0, le=1.0)
     min_hold_seconds: float = Field(default=0.0, ge=0.0)
+    take_profit_bid_price: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description="Exit when executable bid reaches this price (forecast path).",
+    )
+    take_profit_late_seconds: float = Field(
+        default=0.0,
+        ge=0.0,
+        description="With ≤N seconds left, take profit at entry + late_min_gain.",
+    )
+    take_profit_late_min_gain: float = Field(
+        default=0.04,
+        ge=0.0,
+        le=1.0,
+        description="Minimum bid gain over entry for late-window take profit.",
+    )
     position_reversal_enabled: bool = True
     position_reversal_window_seconds: float = Field(default=420.0, ge=0.0)
     position_reversal_min_hold_probability: float = Field(default=0.50, ge=0.0, le=1.0)

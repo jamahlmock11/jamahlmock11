@@ -166,6 +166,9 @@ class DecisionConfig:
     recovery_hold_min_confidence: float = 0.58
     recovery_hold_min_agreement: float = 0.58
     min_hold_seconds: float = 0.0
+    take_profit_bid_price: float | None = None
+    take_profit_late_seconds: float = 0.0
+    take_profit_late_min_gain: float = 0.04
     position_reversal: PositionReversalConfig = field(default_factory=PositionReversalConfig)
     poll: PollConfig = field(default_factory=PollConfig)
     longshot: LongshotConfig = field(default_factory=LongshotConfig)
@@ -246,6 +249,9 @@ def decision_config_from_app(
         recovery_hold_min_confidence=config.risk.recovery_hold_min_confidence,
         recovery_hold_min_agreement=config.risk.recovery_hold_min_agreement,
         min_hold_seconds=config.risk.min_hold_seconds,
+        take_profit_bid_price=config.risk.take_profit_bid_price,
+        take_profit_late_seconds=config.risk.take_profit_late_seconds,
+        take_profit_late_min_gain=config.risk.take_profit_late_min_gain,
         position_reversal=reversal_config_from_risk(config.risk),
         poll=config.poll,
         longshot=config.longshot,
@@ -648,6 +654,9 @@ class DecisionEngine:
                 recovery_hold_min_confidence=cfg.recovery_hold_min_confidence,
                 recovery_hold_min_agreement=cfg.recovery_hold_min_agreement,
                 min_hold_seconds=cfg.min_hold_seconds,
+                take_profit_bid_price=cfg.take_profit_bid_price,
+                take_profit_late_seconds=cfg.take_profit_late_seconds,
+                take_profit_late_min_gain=cfg.take_profit_late_min_gain,
                 position_reversal=cfg.position_reversal,
                 now=observed_now,
             )

@@ -163,7 +163,7 @@ strategy:
   require_setup_score: false
   min_data_completeness: 0.65
   max_spread: 0.07
-  min_seconds_remaining: 60
+  min_seconds_remaining: 30
   max_entry_seconds_remaining: 900
   late_seconds: 360
   final_seconds: 360
@@ -196,7 +196,10 @@ risk:
   max_trades_per_contract: 1
   max_flips_per_contract: 0
   cooldown_seconds: 300
-  min_hold_seconds: 120
+  min_hold_seconds: 60
+  take_profit_bid_price: 0.85
+  take_profit_late_seconds: 120
+  take_profit_late_min_gain: 0.04
   position_reversal_enabled: true
   position_reversal_window_seconds: 420
   position_reversal_min_hold_probability: 0.50
