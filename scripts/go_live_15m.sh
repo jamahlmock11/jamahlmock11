@@ -46,8 +46,10 @@ restart_bot() {
   if tmux -f /exec-daemon/tmux.portal.conf has-session -t "$session" 2>/dev/null; then
     tmux -f /exec-daemon/tmux.portal.conf send-keys -t "$session" C-c
     sleep 1
+    tmux -f /exec-daemon/tmux.portal.conf send-keys -t "$session" C-c
+    sleep 1
     tmux -f /exec-daemon/tmux.portal.conf send-keys -t "$session" \
-      "export PATH=\"\${HOME}/.local/bin:\${PATH}\" && bash $script" C-m
+      "export PATH=\"\${HOME}/.local/bin:\${PATH}\" && exec bash $script" C-m
     echo "Restarted $session"
   else
     echo "Session $session not found; start via environment terminals"
