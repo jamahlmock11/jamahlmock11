@@ -6,6 +6,8 @@ cd "$(dirname "$0")/.."
 export PATH="${HOME}/.local/bin:${PATH}"
 
 export DRY_RUN=false
+export DRY_RUN_15M=false
+export DRY_RUN_1H=false
 bash scripts/bootstrap_env.sh
 
 set -a
