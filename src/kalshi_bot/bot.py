@@ -35,7 +35,11 @@ from kalshi_bot.strategies.alt_runner import AltStrategyRunner
 from kalshi_bot.strategies.forecasting import ForecastCycle, ForecastingScanner
 from kalshi_bot.strategies.decision import format_edge_gap
 from kalshi_bot.strategies.edge_floor import strategy_minimum_edge_floor
-from kalshi_bot.strategies.lag_reversal import ReversalContextTracker, evaluate_lag_reversal
+from kalshi_bot.strategies.lag_reversal import (
+    ReversalContextTracker,
+    evaluate_lag_reversal,
+    reversal_setup_material,
+)
 from kalshi_bot.strategies.reversal_score import ReversalScoreAssessment, ReversalTier
 from kalshi_bot.strategies.forecast_setup import ForecastSetupAssessment
 from kalshi_bot.agents.pipeline import RomaPipeline, format_roma_report
@@ -431,19 +435,29 @@ class TradingBot:
                 and not self.config.lag_reversal.entry_enabled
             ),
             "min_entry_score": self.config.lag_reversal.min_entry_score,
+            "min_kalshi_lag": self.config.lag_reversal.min_kalshi_lag,
+            "min_probability_change": self.config.lag_reversal.min_probability_change,
             "rationale": lag_eval.rationale if lag_eval is not None else None,
         }
         if cycle.reversal_assessment is not None:
             ra = cycle.reversal_assessment
             if isinstance(ra, ReversalScoreAssessment):
+                material = reversal_setup_material(
+                    ra,
+                    min_kalshi_lag=self.config.lag_reversal.min_kalshi_lag,
+                    min_probability_change=self.config.lag_reversal.min_probability_change,
+                )
+                cross_confirm = ra.components.cross_exchange_confirmation
                 payload["reversal_signal"] = {
                     "score": ra.score,
                     "tier": ra.tier.value,
-                    "active": ra.tier is not ReversalTier.NONE,
+                    "active": ra.tier is not ReversalTier.NONE and material,
+                    "material_setup": material,
                     "initial_direction": ra.initial_direction,
                     "reversal_side": ra.reversal_side.value,
                     "kalshi_lag": ra.kalshi_lag_on_reversal_side,
                     "probability_change": ra.probability_change,
+                    "cross_exchange_confirmation": cross_confirm,
                     "summary": ra.summary,
                     "setup": (
                         f"{ra.initial_direction} stall → {ra.reversal_side.value} · "

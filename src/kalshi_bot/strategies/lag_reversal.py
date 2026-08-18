@@ -38,6 +38,19 @@ class LagReversalEvaluation:
     rationale: str
 
 
+def reversal_setup_material(
+    assessment: ReversalScoreAssessment,
+    *,
+    min_kalshi_lag: float,
+    min_probability_change: float,
+) -> bool:
+    """True when Kalshi lag and model probability shift both exceed configured floors."""
+    return (
+        abs(assessment.kalshi_lag_on_reversal_side) + 1e-12 >= min_kalshi_lag
+        and abs(assessment.probability_change) + 1e-12 >= min_probability_change
+    )
+
+
 def evaluate_lag_reversal(
     market: MarketSnapshot,
     *,

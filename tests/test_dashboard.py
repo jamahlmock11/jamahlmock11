@@ -208,6 +208,61 @@ def test_dashboard_edge_desk_split_horizons(tmp_path: Path):
     assert len(desk["assessment_1h"]["strike_candidates"]) == 1
 
 
+def test_reversal_setup_material_requires_lag_and_probability_shift():
+    from kalshi_bot.strategies.lag_reversal import reversal_setup_material
+    from kalshi_bot.strategies.reversal_score import (
+        ReversalScoreAssessment,
+        ReversalScoreComponents,
+        ReversalTier,
+    )
+    from kalshi_bot.domain import ContractSide
+
+    components = ReversalScoreComponents(
+        momentum_exhaustion=0.5,
+        structure_break=0.5,
+        volume_confirmation=0.5,
+        order_flow_reversal=0.5,
+        cross_exchange_confirmation=0.5,
+        volatility_shift=0.5,
+        distance_from_strike=0.5,
+        time_remaining=0.5,
+        kalshi_repricing_lag=0.5,
+        model_probability_change=0.5,
+    )
+    assessment = ReversalScoreAssessment(
+        score=72.0,
+        tier=ReversalTier.CANDIDATE,
+        components=components,
+        initial_direction="UP",
+        reversal_side=ContractSide.NO,
+        kalshi_yes_poll=0.74,
+        model_p_up=0.57,
+        model_p_down=0.43,
+        probability_change=-0.11,
+        kalshi_lag_on_reversal_side=0.215,
+        summary="test",
+    )
+    assert reversal_setup_material(
+        assessment, min_kalshi_lag=0.08, min_probability_change=0.10
+    )
+    high_lag_only = ReversalScoreAssessment(
+        score=assessment.score,
+        tier=assessment.tier,
+        components=assessment.components,
+        initial_direction=assessment.initial_direction,
+        reversal_side=assessment.reversal_side,
+        kalshi_yes_poll=assessment.kalshi_yes_poll,
+        model_p_up=assessment.model_p_up,
+        model_p_down=assessment.model_p_down,
+        probability_change=-0.02,
+        kalshi_lag_on_reversal_side=0.215,
+        summary=assessment.summary,
+    )
+    assert not reversal_setup_material(
+        high_lag_only, min_kalshi_lag=0.08, min_probability_change=0.10
+    )
+
+
 def test_build_reversal_status_signal_only():
     status = build_reversal_status(
         {
@@ -215,21 +270,62 @@ def test_build_reversal_status_signal_only():
                 "enabled": True,
                 "entry_enabled": False,
                 "signal_only": True,
+                "min_kalshi_lag": 0.08,
+                "min_probability_change": 0.10,
             },
             "reversal_signal": {
-                "score": 56.0,
-                "tier": "watch",
+                "score": 72.0,
+                "tier": "reversal_candidate",
                 "active": True,
-                "setup": "DOWN stall → yes · lag +21.6% · Δprob -2.5%",
-                "summary": "watch reversal setup",
+                "material_setup": True,
+                "initial_direction": "UP",
+                "reversal_side": "NO",
+                "kalshi_lag": 0.215,
+                "probability_change": -0.087,
+                "cross_exchange_confirmation": 0.72,
+                "setup": "UP stall → NO · lag +21.5% · Δprob -8.7%",
+                "summary": "candidate reversal setup",
             },
         }
     )
     assert status["enabled"]
     assert status["signal_only"]
     assert status["active"]
+    assert status["headline"] == "REVERSAL CANDIDATE · 72/100"
+    assert status["direction_change"] == "UP → NO"
+    assert status["lag_text"] == "+21.5%"
+    assert status["probability_shift_text"] == "-8.7%"
+    assert status["confirmation"] == "HIGH"
+    assert status["confirmation_class"] == "reversal-confirmation-high"
     assert status["mode_label"] == "Signal only"
-    assert status["score"] == 56.0
+    assert status["score"] == 72.0
+
+
+def test_build_reversal_status_not_active_without_material_shift():
+    status = build_reversal_status(
+        {
+            "lag_reversal": {
+                "enabled": True,
+                "entry_enabled": False,
+                "signal_only": True,
+                "min_kalshi_lag": 0.08,
+                "min_probability_change": 0.10,
+            },
+            "reversal_signal": {
+                "score": 72.0,
+                "tier": "reversal_candidate",
+                "active": True,
+                "material_setup": False,
+                "initial_direction": "UP",
+                "reversal_side": "NO",
+                "kalshi_lag": 0.215,
+                "probability_change": -0.02,
+                "cross_exchange_confirmation": 0.72,
+            },
+        }
+    )
+    assert not status["active"]
+    assert "probability move" in status["summary"]
 
 
 def test_dashboard_reversal_status_in_decisions(tmp_path: Path):
@@ -272,6 +368,12 @@ def test_dashboard_reversal_status_in_decisions(tmp_path: Path):
                 "score": 72.0,
                 "tier": "reversal_candidate",
                 "active": True,
+                "material_setup": True,
+                "initial_direction": "DOWN",
+                "reversal_side": "YES",
+                "kalshi_lag": 0.12,
+                "probability_change": -0.11,
+                "cross_exchange_confirmation": 0.55,
                 "setup": "DOWN stall → yes",
                 "summary": "candidate reversal",
             },
