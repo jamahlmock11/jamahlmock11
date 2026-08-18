@@ -120,29 +120,29 @@ longshot:
 
 strategy:
   contract_duration_seconds: 900
-  min_edge: 0.10
-  target_edge: 0.10
-  mispricing_enabled: false
+  min_edge: 0.12
+  target_edge: 0.12
+  mispricing_enabled: true
   dynamic_edge_enabled: true
   dynamic_edge_bands:
     - min_minutes: 10.0
       max_minutes: 15.0
-      min_edge: 0.10
+      min_edge: 0.12
     - min_minutes: 7.0
       max_minutes: 10.0
-      min_edge: 0.10
+      min_edge: 0.12
     - min_minutes: 5.0
       max_minutes: 7.0
-      min_edge: 0.08
+      min_edge: 0.12
     - min_minutes: 3.0
       max_minutes: 5.0
-      min_edge: 0.08
+      min_edge: 0.12
     - min_minutes: 1.0
       max_minutes: 3.0
-      min_edge: 0.06
+      min_edge: 0.12
     - min_minutes: 0.0
       max_minutes: 1.0
-      min_edge: 0.06
+      min_edge: 0.12
   late_favorite_edge_bands:
     - min_minutes: 5.0
       max_minutes: 7.0
@@ -199,6 +199,7 @@ risk:
   min_hold_seconds: 60
   take_profit_bid_price: 0.90
   take_profit_late_seconds: 0
+  take_profit_reversal_buffer_cents: 0.15
   position_reversal_enabled: true
   position_reversal_window_seconds: 420
   position_reversal_min_hold_probability: 0.50

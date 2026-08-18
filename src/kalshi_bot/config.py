@@ -439,6 +439,12 @@ class RiskConfig(BaseModel):
         le=1.0,
         description="Minimum bid gain over entry for late-window take profit.",
     )
+    take_profit_reversal_buffer_cents: float = Field(
+        default=0.15,
+        ge=0.0,
+        le=1.0,
+        description="Skip position-reversal exits when bid is within this many dollars of take-profit.",
+    )
     position_reversal_enabled: bool = True
     position_reversal_window_seconds: float = Field(default=420.0, ge=0.0)
     position_reversal_min_hold_probability: float = Field(default=0.50, ge=0.0, le=1.0)

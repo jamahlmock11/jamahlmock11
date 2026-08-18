@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
+
+logger = logging.getLogger(__name__)
 
 from kalshi_bot.domain import (
     ContractSide,
@@ -123,6 +126,7 @@ def evaluate_position_exit(
     take_profit_bid_price: float | None = None,
     take_profit_late_seconds: float = 0.0,
     take_profit_late_min_gain: float = 0.04,
+    take_profit_reversal_buffer: float = 0.15,
     position_reversal: PositionReversalConfig | None = None,
     now: datetime | None = None,
     reliability_gates: set[str] | frozenset[str] | None = None,
@@ -203,25 +207,39 @@ def evaluate_position_exit(
                 )
 
     reversal_cfg = position_reversal or PositionReversalConfig()
+    near_take_profit = (
+        take_profit_bid_price is not None
+        and exit_bid is not None
+        and take_profit_reversal_buffer > 0
+        and abs(exit_bid - take_profit_bid_price) <= take_profit_reversal_buffer
+    )
     if features is not None and reversal_cfg.enabled and position.side is not None:
-        reversal = evaluate_position_reversal(
-            position_side=position.side,
-            features=features,
-            forecast=forecast,
-            cfg=reversal_cfg,
-        )
-        if reversal.should_reverse:
-            if within_min_hold:
-                return None
-            return PositionExitSignal(
-                should_exit=True,
-                reason=f"{reversal.reason}; exit before any opposite entry",
-                trigger="position_reversal",
-                premium_loss_fraction=(
-                    premium_loss_fraction(entry, exit_bid) if exit_bid is not None else None
-                ),
-                exit_bid=exit_bid,
+        if near_take_profit:
+            logger.debug(
+                "skip position reversal: bid %.2f within %.0f¢ of TP %.2f",
+                exit_bid,
+                take_profit_reversal_buffer * 100,
+                take_profit_bid_price,
             )
+        else:
+            reversal = evaluate_position_reversal(
+                position_side=position.side,
+                features=features,
+                forecast=forecast,
+                cfg=reversal_cfg,
+            )
+            if reversal.should_reverse:
+                if within_min_hold:
+                    return None
+                return PositionExitSignal(
+                    should_exit=True,
+                    reason=f"{reversal.reason}; exit before any opposite entry",
+                    trigger="position_reversal",
+                    premium_loss_fraction=(
+                        premium_loss_fraction(entry, exit_bid) if exit_bid is not None else None
+                    ),
+                    exit_bid=exit_bid,
+                )
 
     held_prob = forecast.p_up if position.side is ContractSide.YES else forecast.p_down
     thesis_reversed = (
