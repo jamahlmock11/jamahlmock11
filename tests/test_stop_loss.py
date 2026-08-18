@@ -472,7 +472,8 @@ def test_opposite_edge_exit_disabled_by_default():
     assert disabled is None
 
 
-def test_stop_loss_still_triggers_during_min_hold():
+def test_stop_loss_triggers_during_min_hold():
+    """Stop loss is not blocked by min_hold_seconds (only reversal/thesis waits)."""
     market = MarketSnapshot(
         ticker="KXBTC15M-TEST",
         status="active",
@@ -509,9 +510,37 @@ def test_stop_loss_still_triggers_during_min_hold():
         min_hold_seconds=90,
         now=NOW,
     )
-    assert signal is None
+    assert signal is not None
+    assert signal.trigger == "stop_loss"
 
-    signal_after_hold = evaluate_position_exit(
+
+def test_take_profit_triggers_during_min_hold():
+    market = MarketSnapshot(
+        ticker="KXBTC15M-TEST",
+        status="active",
+        rules="BRTI",
+        strike=65000,
+        expiration=NOW + timedelta(minutes=5),
+        open_time=NOW - timedelta(minutes=10),
+        reference="BRTI",
+        orderbook=book(yes_bid=0.92),
+        current_position=MarketPosition(
+            side=ContractSide.YES,
+            quantity=1,
+            average_price=0.72,
+            opened_at=NOW - timedelta(seconds=10),
+        ),
+    )
+    forecast = ProbabilityEstimate(
+        p_up=0.90,
+        p_down=0.10,
+        confidence=0.7,
+        signal_agreement=0.8,
+        component_probabilities={"terminal": 0.90},
+        regime=Regime.TREND_UP,
+        raw_p_up=0.90,
+    )
+    signal = evaluate_position_exit(
         market=market,
         position=market.current_position,
         forecast=forecast,
@@ -519,11 +548,12 @@ def test_stop_loss_still_triggers_during_min_hold():
         predicted_side=ContractSide.YES,
         quantity=1,
         stop_loss_fraction=0.55,
+        take_profit_bid_price=0.90,
         min_hold_seconds=90,
-        now=NOW + timedelta(seconds=120),
+        now=NOW,
     )
-    assert signal_after_hold is not None
-    assert signal_after_hold.trigger == "stop_loss"
+    assert signal is not None
+    assert signal.trigger == "take_profit_price"
 
 
 def test_take_profit_price_ceiling():

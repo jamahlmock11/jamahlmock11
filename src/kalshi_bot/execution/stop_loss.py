@@ -158,7 +158,7 @@ def evaluate_position_exit(
     entry = position.average_price
     seconds_remaining = max(0.0, (market.expiration - observed_now).total_seconds())
 
-    if exit_bid is not None and not within_min_hold:
+    if exit_bid is not None:
         gain = exit_bid - entry
         if take_profit_bid_price is not None and exit_bid + 1e-12 >= take_profit_bid_price:
             return PositionExitSignal(
@@ -190,17 +190,16 @@ def evaluate_position_exit(
     if stop_loss_fraction > 0 and exit_bid is not None:
         loss = premium_loss_fraction(entry, exit_bid)
         if loss + 1e-12 >= stop_loss_fraction:
-            if not within_min_hold:
-                return PositionExitSignal(
-                    should_exit=True,
-                    reason=(
-                        f"stop loss: {loss:.0%} premium loss "
-                        f"(limit {stop_loss_fraction:.0%}; entry {entry:.2f} bid {exit_bid:.2f})"
-                    ),
-                    trigger="stop_loss",
-                    premium_loss_fraction=loss,
-                    exit_bid=exit_bid,
-                )
+            return PositionExitSignal(
+                should_exit=True,
+                reason=(
+                    f"stop loss: {loss:.0%} premium loss "
+                    f"(limit {stop_loss_fraction:.0%}; entry {entry:.2f} bid {exit_bid:.2f})"
+                ),
+                trigger="stop_loss",
+                premium_loss_fraction=loss,
+                exit_bid=exit_bid,
+            )
 
     reversal_cfg = position_reversal or PositionReversalConfig()
     if features is not None and reversal_cfg.enabled and position.side is not None:
