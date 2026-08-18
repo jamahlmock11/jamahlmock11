@@ -20,8 +20,12 @@ fi
 CONFIG="${CONFIG_1H:-config/1h.yaml}"
 mkdir -p logs
 
+effective_dry_run() {
+  echo "${DRY_RUN_1H:-${DRY_RUN:-true}}"
+}
+
 live_flag() {
-  if [[ "${DRY_RUN:-true}" == "false" && -n "${KALSHI_API_KEY_ID:-}" && -f secrets/kalshi_private.key ]]; then
+  if [[ "$(effective_dry_run)" == "false" && -n "${KALSHI_API_KEY_ID:-}" && -f secrets/kalshi_private.key ]]; then
     LIVE_FLAG=(--live)
   else
     LIVE_FLAG=()
