@@ -266,10 +266,22 @@ class HourStrategyConfig(BaseModel):
     strong_evidence_min_agreement: float = Field(default=0.55, ge=0.0, le=1.0)
 
 
+class DynamicEdgeBand(BaseModel):
+    min_minutes: float = Field(ge=0.0)
+    max_minutes: float = Field(gt=0.0)
+    min_edge: float = Field(ge=0.0, le=1.0)
+
+
 class StrategyConfig(BaseModel):
     contract_duration_seconds: float = Field(default=900.0, gt=0.0)
-    min_edge: float = Field(default=0.15, ge=0.10)
-    target_edge: float = Field(default=0.25, ge=0.10)
+    min_edge: float = Field(default=0.15, ge=0.06)
+    target_edge: float = Field(default=0.25, ge=0.06)
+    dynamic_edge_enabled: bool = Field(
+        default=False,
+        description="Use dynamic_edge_bands for time-tiered minimum net edge floors.",
+    )
+    dynamic_edge_bands: list[DynamicEdgeBand] = Field(default_factory=list)
+    late_favorite_edge_bands: list[DynamicEdgeBand] = Field(default_factory=list)
     min_confidence: float = Field(default=0.60, ge=0.0, le=1.0)
     min_signal_agreement: float = Field(default=0.60, ge=0.0, le=1.0)
     min_data_completeness: float = Field(default=0.75, ge=0.0, le=1.0)
@@ -301,10 +313,16 @@ class StrategyConfig(BaseModel):
         description="Dominant market poll required for the late favorite edge floor.",
     )
     late_favorite_min_edge: float = Field(
-        default=0.04,
+        default=0.06,
         ge=0.0,
         le=0.20,
-        description="Minimum edge (e.g. 4¢) when late favorite poll threshold is met.",
+        description="Fallback minimum net edge when late favorite shortcut is active.",
+    )
+    late_favorite_min_model_probability: float = Field(
+        default=0.88,
+        ge=0.0,
+        le=1.0,
+        description="Model probability on side required for late favorite edge shortcut.",
     )
     min_entry_executable_cost: float = Field(
         default=0.08,
@@ -449,12 +467,6 @@ class PricingConfig(BaseModel):
 class SettlementConfig(BaseModel):
     reference: str = "BRTI"
     proxy_symbol: str = "BTC-USD"
-
-
-class DynamicEdgeBand(BaseModel):
-    min_minutes: float = Field(ge=0.0)
-    max_minutes: float = Field(gt=0.0)
-    min_edge: float = Field(ge=0.0, le=1.0)
 
 
 class CalibrationStoreConfig(BaseModel):

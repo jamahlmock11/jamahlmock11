@@ -163,6 +163,10 @@ class ForecastingScanner:
                 late_favorite_seconds=config.strategy.late_favorite_seconds,
                 late_favorite_poll_threshold=config.strategy.late_favorite_poll_threshold,
                 late_favorite_min_edge=config.strategy.late_favorite_min_edge,
+                late_favorite_min_model_probability=config.strategy.late_favorite_min_model_probability,
+                late_favorite_edge_bands=list(config.strategy.late_favorite_edge_bands),
+                dynamic_edge_enabled=config.strategy.dynamic_edge_enabled,
+                dynamic_edge_bands=list(config.strategy.dynamic_edge_bands),
                 min_entry_executable_cost=config.strategy.min_entry_executable_cost,
                 allow_proxy_data=(
                     config.execution.dry_run

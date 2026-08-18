@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
-from kalshi_bot.config import AppConfig, LongshotConfig, PollConfig
+from kalshi_bot.config import AppConfig, DynamicEdgeBand, LongshotConfig, PollConfig
 from kalshi_bot.domain import (
     BenchmarkQuote,
     ContractSide,
@@ -38,6 +38,10 @@ from kalshi_bot.strategies.longshot import (
     resolve_longshot_entries,
 )
 from kalshi_bot.strategies.entry_filters import is_in_chop_zone
+from kalshi_bot.strategies.edge_floor import (
+    late_favorite_required_edge,
+    required_edge_from_bands,
+)
 from kalshi_bot.market.poll_alignment import (
     PollConfig as PollAlignmentConfig,
     PollSnapshot,
@@ -136,7 +140,11 @@ class DecisionConfig:
     final_minimum_edge: float = 0.25
     late_favorite_seconds: float = 420.0
     late_favorite_poll_threshold: float = 0.78
-    late_favorite_min_edge: float = 0.04
+    late_favorite_min_edge: float = 0.06
+    late_favorite_min_model_probability: float = 0.88
+    late_favorite_edge_bands: list[DynamicEdgeBand] = field(default_factory=list)
+    dynamic_edge_enabled: bool = False
+    dynamic_edge_bands: list[DynamicEdgeBand] = field(default_factory=list)
     min_entry_executable_cost: float = 0.08
     minimum_dominant_poll: float | None = None
     require_dominant_poll_side: bool = False
@@ -166,9 +174,11 @@ class DecisionConfig:
 
     @property
     def effective_minimum_edge(self) -> Decimal:
-        """Longshot mode allows 10¢ edges; otherwise the 15¢ floor applies."""
+        """Longshot mode allows lower edges; otherwise use configured minimum."""
         if self.longshot.enabled:
             return Decimal(str(self.longshot.min_edge))
+        if self.dynamic_edge_enabled and self.dynamic_edge_bands:
+            return Decimal(str(min(band.min_edge for band in self.dynamic_edge_bands)))
         return max(ABSOLUTE_MINIMUM_EDGE, Decimal(str(self.minimum_edge)))
 
 
@@ -211,6 +221,10 @@ def decision_config_from_app(
         late_favorite_seconds=strategy.late_favorite_seconds,
         late_favorite_poll_threshold=strategy.late_favorite_poll_threshold,
         late_favorite_min_edge=strategy.late_favorite_min_edge,
+        late_favorite_min_model_probability=strategy.late_favorite_min_model_probability,
+        late_favorite_edge_bands=list(strategy.late_favorite_edge_bands),
+        dynamic_edge_enabled=strategy.dynamic_edge_enabled,
+        dynamic_edge_bands=list(strategy.dynamic_edge_bands),
         min_entry_executable_cost=strategy.min_entry_executable_cost,
         minimum_dominant_poll=strategy.minimum_dominant_poll,
         require_dominant_poll_side=strategy.require_dominant_poll_side,
@@ -265,6 +279,7 @@ def _late_favorite_edge_floor(
     seconds_remaining: float,
     poll: PollSnapshot,
     selected_side: ContractSide,
+    model_probability: float,
     cfg: DecisionConfig,
 ) -> float | None:
     if cfg.late_favorite_seconds <= 0:
@@ -277,7 +292,65 @@ def _late_favorite_edge_floor(
         return None
     if selected_side is not poll.dominant_side:
         return None
-    return cfg.late_favorite_min_edge
+    if model_probability + 1e-12 < cfg.late_favorite_min_model_probability:
+        return None
+    return late_favorite_required_edge(
+        seconds_remaining,
+        late_favorite_min_edge=cfg.late_favorite_min_edge,
+        late_favorite_edge_bands=cfg.late_favorite_edge_bands,
+    )
+
+
+def _resolve_required_edge(
+    *,
+    seconds_remaining: float,
+    cfg: DecisionConfig,
+    poll_snapshot: PollSnapshot,
+    selected_side: ContractSide,
+    model_probability: float,
+    benchmark_is_proxy: bool,
+    entry_ctx: object | None,
+) -> Decimal:
+    if cfg.dynamic_edge_enabled and cfg.dynamic_edge_bands:
+        required = Decimal(
+            str(
+                required_edge_from_bands(
+                    seconds_remaining,
+                    cfg.dynamic_edge_bands,
+                    cfg.minimum_edge,
+                )
+            )
+        )
+    else:
+        required = cfg.effective_minimum_edge
+
+    if entry_ctx is not None and getattr(entry_ctx, "min_edge_override", None) is not None:
+        required = Decimal(str(entry_ctx.min_edge_override))
+
+    if benchmark_is_proxy and not cfg.longshot.enabled:
+        required = max(required, Decimal(str(cfg.proxy_minimum_edge)))
+
+    late_favorite_edge = _late_favorite_edge_floor(
+        seconds_remaining=seconds_remaining,
+        poll=poll_snapshot,
+        selected_side=selected_side,
+        model_probability=model_probability,
+        cfg=cfg,
+    )
+    if late_favorite_edge is not None:
+        required = Decimal(str(late_favorite_edge))
+    elif not cfg.longshot.enabled and not cfg.dynamic_edge_enabled:
+        if seconds_remaining <= cfg.late_seconds:
+            required = max(required, Decimal(str(cfg.late_minimum_edge)))
+        if seconds_remaining <= cfg.final_seconds:
+            required = max(required, Decimal(str(cfg.final_minimum_edge)))
+
+    if entry_ctx is not None and getattr(entry_ctx, "min_edge_override", None) is not None:
+        override = entry_ctx.min_edge_override
+        if override >= 0:
+            required = Decimal(str(override))
+
+    return required
 
 
 class DecisionEngine:
@@ -733,27 +806,15 @@ class DecisionEngine:
                         poll_snapshot.dominant_side.value,
                     )
                 )
-        required_edge = cfg.effective_minimum_edge
-        if entry_ctx is not None and entry_ctx.min_edge_override is not None:
-            required_edge = Decimal(str(entry_ctx.min_edge_override))
-        if benchmark.is_proxy and not cfg.longshot.enabled:
-            required_edge = max(required_edge, Decimal(str(cfg.proxy_minimum_edge)))
-        late_favorite_edge = _late_favorite_edge_floor(
+        required_edge = _resolve_required_edge(
             seconds_remaining=seconds_remaining,
-            poll=poll_snapshot,
-            selected_side=selected_side,
             cfg=cfg,
+            poll_snapshot=poll_snapshot,
+            selected_side=selected_side,
+            model_probability=side_probabilities[selected_side],
+            benchmark_is_proxy=benchmark.is_proxy,
+            entry_ctx=entry_ctx,
         )
-        if late_favorite_edge is not None:
-            required_edge = Decimal(str(late_favorite_edge))
-        elif not cfg.longshot.enabled:
-            if seconds_remaining <= cfg.late_seconds:
-                required_edge = max(required_edge, Decimal(str(cfg.late_minimum_edge)))
-            if seconds_remaining <= cfg.final_seconds:
-                required_edge = max(required_edge, Decimal(str(cfg.final_minimum_edge)))
-        if entry_ctx is not None and entry_ctx.min_edge_override is not None:
-            if entry_ctx.min_edge_override >= 0:
-                required_edge = Decimal(str(entry_ctx.min_edge_override))
         if selected_execution.executable_cost + 1e-12 < cfg.min_entry_executable_cost:
             failures.append(
                 _failure(

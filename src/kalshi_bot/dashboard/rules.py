@@ -29,22 +29,29 @@ def _rules_15m(cfg: AppConfig | None, mode: str, account: str) -> list[dict[str,
     min_price = strategy.min_entry_executable_cost if strategy else 0.08
     late_fav_secs = strategy.late_favorite_seconds if strategy else 420
     late_fav_poll = strategy.late_favorite_poll_threshold if strategy else 0.78
-    late_fav_edge = strategy.late_favorite_min_edge if strategy else 0.04
+    late_fav_model = strategy.late_favorite_min_model_probability if strategy else 0.88
+    persistence = strategy.entry_signal_persistence_polls if strategy else 2
     min_secs = strategy.min_seconds_remaining if strategy else 60
     max_secs = strategy.max_entry_seconds_remaining if strategy else 900
     bankroll = risk.max_position_size if risk else 50
     exposure = risk.max_contract_exposure if risk else 25
     depth = strategy.order_quantity if strategy else 1
+    edge_tiers = (
+        "15–10m:10¢ · 10–7m:10¢ · 7–5m:8¢ · 5–3m:8¢ · <3m:6¢"
+        if strategy and strategy.dynamic_edge_enabled
+        else f"≥{min_edge * 100:.0f}¢ net"
+    )
 
     return [
         {"key": "Mode", "value": mode},
+        {"key": "Primary gate", "value": "model prob − executable price (net edge)"},
         {"key": "Window", "value": f"{min_secs:.0f}–{max_secs:.0f}s left"},
-        {"key": "Edge", "value": f"≥{min_edge * 100:.0f}¢ net"},
+        {"key": "Edge tiers", "value": edge_tiers},
         {
             "key": "Late favorite",
             "value": (
-                f"≤{late_fav_secs / 60:.0f}m @ {late_fav_poll * 100:.0f}% "
-                f"→ {late_fav_edge * 100:.0f}¢"
+                f"≤{late_fav_secs / 60:.0f}m · poll ≥{late_fav_poll * 100:.0f}% · "
+                f"model ≥{late_fav_model * 100:.0f}% · {persistence} polls → 6–8¢"
             ),
         },
         {"key": "Ensemble", "value": f"≥{min_agreement * 100:.0f}%"},

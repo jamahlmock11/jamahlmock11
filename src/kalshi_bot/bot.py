@@ -34,6 +34,7 @@ from kalshi_bot.models.strike_gravity import assess_strike_gravity
 from kalshi_bot.strategies.alt_runner import AltStrategyRunner
 from kalshi_bot.strategies.forecasting import ForecastCycle, ForecastingScanner
 from kalshi_bot.strategies.decision import format_edge_gap
+from kalshi_bot.strategies.edge_floor import strategy_minimum_edge_floor
 from kalshi_bot.strategies.lag_reversal import ReversalContextTracker, evaluate_lag_reversal
 from kalshi_bot.strategies.reversal_score import ReversalScoreAssessment, ReversalTier
 from kalshi_bot.strategies.forecast_setup import ForecastSetupAssessment
@@ -111,7 +112,7 @@ class TradingBot:
             hard_min_edge=(
                 config.longshot.min_edge
                 if config.longshot.enabled
-                else config.strategy.min_edge
+                else strategy_minimum_edge_floor(config.strategy)
             ),
         )
         self._hydrate_positions()
@@ -365,6 +366,10 @@ class TradingBot:
                 "late_favorite_seconds": self.config.strategy.late_favorite_seconds,
                 "late_favorite_poll_threshold": self.config.strategy.late_favorite_poll_threshold,
                 "late_favorite_min_edge": self.config.strategy.late_favorite_min_edge,
+                "late_favorite_min_model_probability": (
+                    self.config.strategy.late_favorite_min_model_probability
+                ),
+                "dynamic_edge_enabled": self.config.strategy.dynamic_edge_enabled,
                 "minimum_dominant_poll": self.config.strategy.minimum_dominant_poll,
                 "min_trade_quality_score": self.config.strategy.min_trade_quality_score,
                 "kelly_fraction": self.config.risk.kelly_fraction,

@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from kalshi_bot.config import DynamicEdgeBand
 from kalshi_bot.data.cf_benchmark import (
     BenchmarkSourceError,
     StaleBenchmarkError,
@@ -465,9 +466,24 @@ def test_existing_position_exits_before_opposite_entry():
 
 def _late_favorite_config() -> DecisionConfig:
     return DecisionConfig(
+        dynamic_edge_enabled=True,
+        dynamic_edge_bands=[
+            DynamicEdgeBand(min_minutes=10.0, max_minutes=15.0, min_edge=0.10),
+            DynamicEdgeBand(min_minutes=7.0, max_minutes=10.0, min_edge=0.10),
+            DynamicEdgeBand(min_minutes=5.0, max_minutes=7.0, min_edge=0.08),
+            DynamicEdgeBand(min_minutes=3.0, max_minutes=5.0, min_edge=0.08),
+            DynamicEdgeBand(min_minutes=1.0, max_minutes=3.0, min_edge=0.06),
+            DynamicEdgeBand(min_minutes=0.0, max_minutes=1.0, min_edge=0.06),
+        ],
         late_favorite_seconds=420.0,
-        late_favorite_poll_threshold=0.78,
-        late_favorite_min_edge=0.04,
+        late_favorite_poll_threshold=0.80,
+        late_favorite_min_model_probability=0.88,
+        late_favorite_min_edge=0.06,
+        late_favorite_edge_bands=[
+            DynamicEdgeBand(min_minutes=5.0, max_minutes=7.0, min_edge=0.08),
+            DynamicEdgeBand(min_minutes=3.0, max_minutes=5.0, min_edge=0.08),
+            DynamicEdgeBand(min_minutes=0.0, max_minutes=3.0, min_edge=0.06),
+        ],
     )
 
 
@@ -486,7 +502,21 @@ def test_last_minute_entry_blocked():
     assert any(failure.gate == "last_minute" for failure in result.gate_failures)
 
 
-def test_late_favorite_allows_four_cent_edge_on_poll_dominant_side():
+def test_late_favorite_allows_eight_cent_edge_with_strong_model():
+    late_market = replace(market(yes_ask=0.84), expiration=NOW + timedelta(seconds=300))
+    result = DecisionEngine(_late_favorite_config()).decide(
+        late_market,
+        forecast(0.93),
+        features(),
+        benchmark(),
+        now=NOW,
+    )
+    assert result.action is DecisionAction.BUY_UP
+    assert result.edge is not None
+    assert result.edge >= 0.08
+
+
+def test_late_favorite_blocks_without_model_88_percent():
     late_market = replace(market(yes_ask=0.79), expiration=NOW + timedelta(seconds=300))
     result = DecisionEngine(_late_favorite_config()).decide(
         late_market,
@@ -495,15 +525,15 @@ def test_late_favorite_allows_four_cent_edge_on_poll_dominant_side():
         benchmark(),
         now=NOW,
     )
-    assert result.action is DecisionAction.BUY_UP
-    assert result.edge == pytest.approx(0.05, abs=0.01)
+    assert result.action is DecisionAction.NO_TRADE
+    assert any(failure.gate == "minimum_edge" for failure in result.gate_failures)
 
 
-def test_late_favorite_still_blocks_sub_four_cent_edge():
-    late_market = replace(market(yes_ask=0.79), expiration=NOW + timedelta(seconds=300))
+def test_late_favorite_still_blocks_sub_eight_cent_edge():
+    late_market = replace(market(yes_ask=0.86), expiration=NOW + timedelta(seconds=300))
     result = DecisionEngine(_late_favorite_config()).decide(
         late_market,
-        forecast(0.82),
+        forecast(0.90),
         features(),
         benchmark(),
         now=NOW,
@@ -513,10 +543,10 @@ def test_late_favorite_still_blocks_sub_four_cent_edge():
 
 
 def test_late_favorite_does_not_apply_outside_window():
-    early_market = replace(market(yes_ask=0.79), expiration=NOW + timedelta(seconds=500))
+    early_market = replace(market(yes_ask=0.84), expiration=NOW + timedelta(seconds=500))
     result = DecisionEngine(_late_favorite_config()).decide(
         early_market,
-        forecast(0.84),
+        forecast(0.93),
         features(),
         benchmark(),
         now=NOW,
