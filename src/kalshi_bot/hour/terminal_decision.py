@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
@@ -29,6 +30,8 @@ from kalshi_bot.market.orderbook import (
     spread,
 )
 from kalshi_bot.strategies.decision import _direction_for_side, _failure
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -61,6 +64,7 @@ class TerminalDecisionConfig:
     min_hold_seconds: float = 120.0
     take_profit_bid_price: float | None = None
     take_profit_late_seconds: float = 0.0
+    take_profit_reversal_buffer: float = 0.15
     position_reversal: PositionReversalConfig = field(default_factory=PositionReversalConfig)
 
 
@@ -517,6 +521,7 @@ class HourTerminalDecisionEngine:
                 min_hold_seconds=cfg.min_hold_seconds,
                 take_profit_bid_price=cfg.take_profit_bid_price,
                 take_profit_late_seconds=cfg.take_profit_late_seconds,
+                take_profit_reversal_buffer=cfg.take_profit_reversal_buffer,
                 position_reversal=cfg.position_reversal,
                 now=observed_now,
             )
@@ -608,6 +613,8 @@ class HourTerminalDecisionEngine:
         selected_mispricing = (
             mispricing.yes if selected_side is ContractSide.YES else mispricing.no
         )
+        if selected_mispricing is not None:
+            logger.info("edge=%.1f¢", selected_mispricing.raw_edge * 100.0)
         if selected_side is None or selected_mispricing is None:
             failures.append(
                 _failure(
@@ -900,5 +907,6 @@ def terminal_decision_config_from_app(config) -> TerminalDecisionConfig:
         min_hold_seconds=app.risk.min_hold_seconds,
         take_profit_bid_price=app.risk.take_profit_bid_price,
         take_profit_late_seconds=app.risk.take_profit_late_seconds,
+        take_profit_reversal_buffer=app.risk.take_profit_reversal_buffer_cents,
         position_reversal=reversal_config_from_risk(app.risk),
     )

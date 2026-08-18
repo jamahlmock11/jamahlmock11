@@ -142,9 +142,9 @@ def test_terminal_probability_above_strike_when_brti_above():
 
 def test_dynamic_edge_bands():
     cfg = load_yaml_config("config/1h.yaml").terminal_probability
-    assert required_edge_for_minutes(50, cfg) == pytest.approx(0.10)
-    assert required_edge_for_minutes(12, cfg) == pytest.approx(0.08)
-    assert required_edge_for_minutes(3, cfg) == pytest.approx(0.06)
+    assert required_edge_for_minutes(50, cfg) == pytest.approx(0.12)
+    assert required_edge_for_minutes(12, cfg) == pytest.approx(0.12)
+    assert required_edge_for_minutes(3, cfg) == pytest.approx(0.12)
 
 
 def test_one_hour_edge_scenarios():
@@ -196,17 +196,17 @@ def test_one_hour_edge_scenarios():
     assert decision.action is DecisionAction.NO_TRADE
     assert any(f.gate == "time_window" for f in decision.gate_failures)
 
-    # 12m: 84% vs 76% = 8¢ edge — trade (favorite band off)
-    decision, _, _ = decide_at(minutes_remaining=12, model_yes=0.84, yes_ask=0.76)
+    # 12m: 88% vs 76% = 12¢ edge — trade (favorite band off)
+    decision, _, _ = decide_at(minutes_remaining=12, model_yes=0.88, yes_ask=0.76)
     assert decision.action is DecisionAction.BUY_UP
-    assert decision.edge == pytest.approx(0.08, abs=0.01)
+    assert decision.edge == pytest.approx(0.12, abs=0.01)
 
-    # 3m: 94% vs 88% = 6¢ edge — trade
-    decision, _, _ = decide_at(minutes_remaining=3, model_yes=0.94, yes_ask=0.88)
+    # 3m: 94% vs 82% = 12¢ edge — trade
+    decision, _, _ = decide_at(minutes_remaining=3, model_yes=0.94, yes_ask=0.82)
     assert decision.action is DecisionAction.BUY_UP
-    assert decision.edge == pytest.approx(0.06, abs=0.01)
+    assert decision.edge == pytest.approx(0.12, abs=0.01)
 
-    # 3m: 91% vs 88% = 3¢ edge — NO TRADE
+    # 3m: 91% vs 88% = 3¢ edge — NO TRADE (below 12¢ floor)
     decision, _, _ = decide_at(minutes_remaining=3, model_yes=0.91, yes_ask=0.88)
     assert decision.action is DecisionAction.NO_TRADE
     assert any(f.gate == "minimum_edge" for f in decision.gate_failures)
@@ -292,8 +292,8 @@ def test_forecast_only_entry_when_mispricing_disabled():
             vol,
             market_strike=65_000,
         ),
-        calibrated_p_yes=0.84,
-        calibrated_p_no=0.16,
+        calibrated_p_yes=0.88,
+        calibrated_p_no=0.12,
         confidence=0.75,
         signal_agreement=0.70,
     )
@@ -319,7 +319,7 @@ def test_forecast_only_entry_when_mispricing_disabled():
     )
     assert mispricing is not None
     assert mispricing.yes is not None
-    assert mispricing.yes.raw_edge == pytest.approx(0.08, abs=0.01)
+    assert abs(mispricing.yes.raw_edge - 0.12) < 0.011
     assert decision.action is DecisionAction.BUY_UP
     assert "tier" in decision.reason
 
@@ -431,7 +431,7 @@ def test_1h_yaml_terminal_config_loaded():
     assert cfg.terminal_probability.enabled is True
     assert cfg.terminal_probability.intelligence_overlay is False
     assert cfg.terminal_probability.minimum_confidence == pytest.approx(0.52)
-    assert cfg.terminal_probability.mispricing_enabled is False
+    assert cfg.terminal_probability.mispricing_enabled is True
     assert cfg.terminal_probability.exclude_coin_flip_band is True
     assert cfg.terminal_probability.exclude_longshot_band is True
     assert cfg.orderbook_skew.ensemble_enabled is True
