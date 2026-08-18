@@ -43,11 +43,11 @@ spot_lag:
   poll_interval_sec: 1.0
 
 orderbook_skew:
-  enabled: false
+  enabled: true
   ensemble_enabled: true
-  ensemble_max_seconds_remaining: 540
+  ensemble_max_seconds_remaining: 300
   top_levels: 5
-  max_seconds_remaining: 180
+  max_seconds_remaining: 300
   min_skew: 0.25
   min_z_distance: 1.5
   min_edge: 0.20
