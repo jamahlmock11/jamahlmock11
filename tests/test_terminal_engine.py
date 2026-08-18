@@ -142,9 +142,11 @@ def test_terminal_probability_above_strike_when_brti_above():
 
 def test_dynamic_edge_bands():
     cfg = load_yaml_config("config/1h.yaml").terminal_probability
-    assert required_edge_for_minutes(50, cfg) == pytest.approx(0.10)
-    assert required_edge_for_minutes(12, cfg) == pytest.approx(0.08)
-    assert required_edge_for_minutes(3, cfg) == pytest.approx(0.06)
+    assert required_edge_for_minutes(50, cfg) == pytest.approx(cfg.fallback_min_edge)
+    cfg_tiered = cfg.model_copy(update={"dynamic_edge_enabled": True})
+    assert required_edge_for_minutes(50, cfg_tiered) == pytest.approx(0.10)
+    assert required_edge_for_minutes(12, cfg_tiered) == pytest.approx(0.08)
+    assert required_edge_for_minutes(3, cfg_tiered) == pytest.approx(0.06)
 
 
 def test_one_hour_edge_scenarios():
@@ -321,7 +323,7 @@ def test_forecast_only_entry_when_mispricing_disabled():
     assert mispricing.yes is not None
     assert mispricing.yes.raw_edge == pytest.approx(0.08, abs=0.01)
     assert decision.action is DecisionAction.BUY_UP
-    assert "tier" in decision.reason
+    assert "forecast" in decision.reason.lower()
 
 
 def test_dynamic_edge_enforced_when_mispricing_disabled_1h():
@@ -343,6 +345,13 @@ def test_dynamic_edge_enforced_when_mispricing_disabled_1h():
     )
     market = hour_market(yes_ask=0.88, minutes_remaining=3)
     app_cfg = load_yaml_config("config/1h.yaml")
+    app_cfg = app_cfg.model_copy(
+        update={
+            "terminal_probability": app_cfg.terminal_probability.model_copy(
+                update={"dynamic_edge_enabled": True}
+            )
+        }
+    )
     decision_engine = HourTerminalDecisionEngine(
         terminal_decision_config_from_app(app_cfg)
     )

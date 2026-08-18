@@ -123,7 +123,7 @@ strategy:
   min_edge: 0.10
   target_edge: 0.10
   mispricing_enabled: false
-  dynamic_edge_enabled: true
+  dynamic_edge_enabled: false
   dynamic_edge_bands:
     - min_minutes: 10.0
       max_minutes: 15.0

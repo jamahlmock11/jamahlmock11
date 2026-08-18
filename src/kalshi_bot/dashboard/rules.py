@@ -37,9 +37,13 @@ def _rules_15m(cfg: AppConfig | None, mode: str, account: str) -> list[dict[str,
     exposure = risk.max_contract_exposure if risk else 25
     depth = strategy.order_quantity if strategy else 1
     edge_tiers = (
-        "15–10m:10¢ · 10–7m:10¢ · 7–5m:8¢ · 5–3m:8¢ · <3m:6¢"
-        if strategy and strategy.dynamic_edge_enabled
-        else "OFF (forecast only)"
+        "OFF"
+        if strategy and not strategy.dynamic_edge_enabled and not strategy.mispricing_enabled
+        else (
+            "15–10m:10¢ · 10–7m:10¢ · 7–5m:8¢ · 5–3m:8¢ · <3m:6¢"
+            if strategy and strategy.dynamic_edge_enabled
+            else "OFF"
+        )
     )
 
     return [
@@ -123,7 +127,7 @@ def _rules_1h(cfg: AppConfig | None, mode: str) -> list[dict[str, str]]:
         },
         {"key": "Mispricing", "value": "ON (edge vs book)" if mispricing else "OFF (forecast + tiers)"},
     ]
-    if edge_gate and terminal:
+    if edge_gate and terminal and terminal.dynamic_edge_enabled:
         rules.append(
             {
                 "key": "Edge tiers",

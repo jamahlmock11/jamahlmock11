@@ -67,7 +67,7 @@ terminal_probability:
   thesis_invalid_min_probability: 0.45
   thesis_invalid_margin: 0.12
   fallback_min_edge: 0.06
-  dynamic_edge_enabled: true
+  dynamic_edge_enabled: false
   dynamic_edge_bands:
   # Model probability minus executable price (raw mispricing edge).
     - min_minutes: 30
