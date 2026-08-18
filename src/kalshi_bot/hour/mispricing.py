@@ -32,6 +32,7 @@ class MispricingAssessment:
     no: SideMispricing | None
     best_side: ContractSide | None
     best_net_edge: float
+    best_raw_edge: float
     required_edge: float
     yes_net_edge: float | None
     no_net_edge: float | None
@@ -49,6 +50,13 @@ def required_edge_for_minutes(
             return band.min_edge
     if cfg.dynamic_edge_bands:
         return cfg.dynamic_edge_bands[-1].min_edge
+    return cfg.fallback_min_edge
+
+
+def terminal_hard_min_edge(cfg: TerminalProbabilityConfig) -> float:
+    """Lowest tier floor for risk execution when dynamic bands are enabled."""
+    if cfg.dynamic_edge_enabled and cfg.dynamic_edge_bands:
+        return min(band.min_edge for band in cfg.dynamic_edge_bands)
     return cfg.fallback_min_edge
 
 
@@ -103,7 +111,8 @@ def assess_mispricing(
                 slippage_bps=slippage_bps,
                 slippage_per_contract=slippage_per_contract,
             )
-            raw_edge = model_prob - execution.executable_cost
+            entry_price = ask if ask is not None else execution.executable_cost
+            raw_edge = model_prob - entry_price
             net_edge = model_prob - execution.executable_cost - costs
             sides[side] = SideMispricing(
                 side=side,
@@ -120,13 +129,14 @@ def assess_mispricing(
     yes_side = sides.get(ContractSide.YES)
     no_side = sides.get(ContractSide.NO)
     candidates = [item for item in (yes_side, no_side) if item is not None]
-    best = max(candidates, key=lambda item: item.net_edge) if candidates else None
+    best = max(candidates, key=lambda item: item.raw_edge) if candidates else None
 
     return MispricingAssessment(
         yes=yes_side,
         no=no_side,
         best_side=best.side if best is not None else None,
         best_net_edge=best.net_edge if best is not None else -1.0,
+        best_raw_edge=best.raw_edge if best is not None else -1.0,
         required_edge=required,
         yes_net_edge=yes_side.net_edge if yes_side is not None else None,
         no_net_edge=no_side.net_edge if no_side is not None else None,

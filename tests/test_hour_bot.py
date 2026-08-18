@@ -396,7 +396,7 @@ def test_1h_yaml_loads_without_validation_error():
     assert cfg.strategy.minimum_dominant_poll is None
     assert cfg.strategy.require_dominant_poll_side is False
     assert cfg.strategy.min_entry_executable_cost == pytest.approx(0.60)
-    assert cfg.terminal_probability.max_entry_executable_cost == pytest.approx(0.80)
+    assert cfg.terminal_probability.max_entry_executable_cost == pytest.approx(0.90)
     assert cfg.terminal_probability.exclude_coin_flip_band is True
     assert cfg.orderbook_skew.ensemble_enabled is True
     assert cfg.risk.kelly_enabled is False

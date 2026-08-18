@@ -28,6 +28,7 @@ from kalshi_bot.intelligence.kill_switch import ConfidenceKillSwitch
 from kalshi_bot.intelligence.orchestrator import IntelligenceOrchestrator
 from kalshi_bot.journal import TradeJournal
 from kalshi_bot.learning.signal_weights import SignalWeightTracker
+from kalshi_bot.hour.mispricing import terminal_hard_min_edge
 from kalshi_bot.hour.scanner import HourForecastCycle, HourForecastingScanner
 from kalshi_bot.strategies.decision import format_edge_gap
 from kalshi_bot.venues.kalshi import KalshiClient
@@ -91,7 +92,7 @@ class HourTradingBot:
             hard_min_edge=(
                 config.longshot.min_edge
                 if config.longshot.enabled
-                else config.strategy.min_edge
+                else terminal_hard_min_edge(config.terminal_probability)
             ),
         )
         self._hydrate_positions()

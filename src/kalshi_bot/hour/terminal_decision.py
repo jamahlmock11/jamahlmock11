@@ -630,13 +630,13 @@ class HourTerminalDecisionEngine:
             return decision, mispricing, stability_swing
 
         if tcfg.mispricing_enabled and (
-            selected_mispricing.net_edge + 1e-12 < mispricing.required_edge
+            selected_mispricing.raw_edge + 1e-12 < mispricing.required_edge
         ):
             failures.append(
                 _failure(
                     "minimum_edge",
-                    "best net edge below dynamic minimum after costs",
-                    selected_mispricing.net_edge,
+                    "model-vs-executable edge below dynamic minimum",
+                    selected_mispricing.raw_edge,
                     mispricing.required_edge,
                 )
             )
@@ -705,7 +705,7 @@ class HourTerminalDecisionEngine:
         if selected_execution is not None and risk_manager is not None:
             if risk_manager.config.risk.kelly_enabled:
                 kelly_qty = risk_manager.kelly_contracts_for_entry(
-                    edge=selected_mispricing.net_edge,
+                    edge=selected_mispricing.raw_edge,
                     executable_cost=selected_execution.executable_cost,
                     size_multiplier=1.0,
                     ticker=market.ticker,
@@ -716,7 +716,7 @@ class HourTerminalDecisionEngine:
                         _failure(
                             "kelly_sizing",
                             "Kelly sizing produced zero affordable contracts",
-                            selected_mispricing.net_edge,
+                            selected_mispricing.raw_edge,
                             mispricing.required_edge,
                         )
                     )
@@ -749,13 +749,13 @@ class HourTerminalDecisionEngine:
                         )
                         if tcfg.mispricing_enabled and (
                             selected_mispricing is None
-                            or selected_mispricing.net_edge + 1e-12 < mispricing.required_edge
+                            or selected_mispricing.raw_edge + 1e-12 < mispricing.required_edge
                         ):
                             failures.append(
                                 _failure(
                                     "minimum_edge",
-                                    "Kelly-sized entry no longer meets net edge floor",
-                                    selected_mispricing.net_edge if selected_mispricing else None,
+                                    "Kelly-sized entry no longer meets edge floor",
+                                    selected_mispricing.raw_edge if selected_mispricing else None,
                                     mispricing.required_edge,
                                 )
                             )
@@ -796,7 +796,7 @@ class HourTerminalDecisionEngine:
                 selected_side=selected_side,
                 predicted_probability=selected_mispricing.model_probability,
                 executable_cost=selected_mispricing.executable_cost,
-                edge=selected_mispricing.net_edge,
+                edge=selected_mispricing.raw_edge,
                 target_edge=tcfg.fallback_min_edge,
                 required_edge=mispricing.required_edge,
                 quantity=trade_quantity,
@@ -805,7 +805,7 @@ class HourTerminalDecisionEngine:
             return decision, mispricing, stability_swing
 
         persistence_edge = (
-            selected_mispricing.net_edge
+            selected_mispricing.raw_edge
             if tcfg.mispricing_enabled
             else selected_mispricing.model_probability
         )
@@ -821,8 +821,8 @@ class HourTerminalDecisionEngine:
             else DecisionAction.BUY_DOWN
         )
         entry_reason = (
-            f"terminal mispricing: {selected_side.value} net edge "
-            f"{selected_mispricing.net_edge:.1%} >= required {mispricing.required_edge:.1%}"
+            f"terminal mispricing: {selected_side.value} edge "
+            f"{selected_mispricing.raw_edge:.1%} >= required {mispricing.required_edge:.1%}"
             if tcfg.mispricing_enabled
             else (
                 f"terminal forecast: {selected_side.value} "

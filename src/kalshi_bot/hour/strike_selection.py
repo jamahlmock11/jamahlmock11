@@ -97,7 +97,7 @@ def rank_terminal_candidate(
     elif (
         cfg.mispricing_enabled
         and mispricing is not None
-        and mispricing.best_net_edge + 1e-12 >= mispricing.required_edge
+        and mispricing.best_raw_edge + 1e-12 >= mispricing.required_edge
     ):
         tier = 3 if strong else 2
     elif not cfg.mispricing_enabled and (
@@ -117,7 +117,7 @@ def rank_terminal_candidate(
 
     edge = decision.edge
     if edge is None and mispricing is not None:
-        edge = mispricing.best_net_edge
+        edge = mispricing.best_raw_edge
     edge = edge if edge is not None else -1.0
 
     required = mispricing.required_edge if mispricing is not None else 1.0

@@ -74,7 +74,7 @@ def _rules_1h(cfg: AppConfig | None, mode: str) -> list[dict[str, str]]:
     min_agree = terminal.minimum_ensemble if terminal else 0.50
     align = terminal.forecast_alignment_min_probability if terminal else 0.52
     min_price = terminal.min_entry_executable_cost if terminal else 0.60
-    max_price = terminal.max_entry_executable_cost if terminal else 0.80
+    max_price = terminal.max_entry_executable_cost if terminal else 0.90
     mispricing = terminal.mispricing_enabled if terminal else False
     all_strikes = hour.evaluate_all_active_strikes if hour else True
     strong = hour.strong_evidence_min_probability if hour else 0.78
@@ -86,7 +86,20 @@ def _rules_1h(cfg: AppConfig | None, mode: str) -> list[dict[str, str]]:
         {"key": "Mode", "value": mode},
         {"key": "Window", "value": f"first {max_mins:.0f}m · ≥{min_secs:.0f}s left"},
         {"key": "Strikes", "value": "all active hour books" if all_strikes else "nearest ATM"},
+        {
+            "key": "Primary gate",
+            "value": "model prob − executable price" if mispricing else "forecast alignment",
+        },
         {"key": "Mispricing", "value": "ON (edge vs book)" if mispricing else "OFF (forecast only)"},
+    ]
+    if mispricing and terminal and terminal.dynamic_edge_enabled:
+        rules.append(
+            {
+                "key": "Edge tiers",
+                "value": "30–60m:10¢ · 10–30m:8¢ · 5–10m:8¢ · <5m:6¢",
+            }
+        )
+    rules.extend([
         {
             "key": "Entry band",
             "value": f"{min_price * 100:.0f}–{max_price * 100:.0f}¢ favorites",
@@ -98,9 +111,7 @@ def _rules_1h(cfg: AppConfig | None, mode: str) -> list[dict[str, str]]:
         {"key": "Persistence", "value": f"{persistence} poll(s)"},
         {"key": "Kelly", "value": "ON" if kelly else "OFF"},
         {"key": "Bankroll", "value": f"${bankroll:.0f} cap"},
-    ]
-    if strategy and strategy.min_edge:
-        rules.insert(4, {"key": "Legacy edge", "value": f"≥{strategy.min_edge * 100:.0f}¢"})
+    ])
     return rules
 
 
