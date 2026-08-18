@@ -15,6 +15,7 @@ from kalshi_bot.domain import (
     Regime,
     TrajectoryState,
 )
+from kalshi_bot.execution.position_reversal import PositionReversalConfig
 from kalshi_bot.execution.stop_loss import (
     evaluate_position_exit,
     premium_loss_fraction,
@@ -566,3 +567,70 @@ def test_take_profit_price_ceiling():
     )
     assert signal is not None
     assert signal.trigger == "take_profit_price"
+
+
+def test_reversal_skipped_when_bid_near_take_profit():
+    """Path dips near 90¢ TP should not trigger position reversal."""
+    market = MarketSnapshot(
+        ticker="KXBTC15M-TEST",
+        status="active",
+        rules="BRTI",
+        strike=65000,
+        expiration=NOW + timedelta(seconds=120),
+        open_time=NOW - timedelta(minutes=10),
+        reference="BRTI",
+        orderbook=book(yes_bid=0.78),
+        current_position=MarketPosition(
+            side=ContractSide.YES,
+            quantity=1,
+            average_price=0.55,
+            opened_at=NOW - timedelta(seconds=180),
+        ),
+    )
+    forecast = ProbabilityEstimate(
+        p_up=0.35,
+        p_down=0.65,
+        confidence=0.7,
+        signal_agreement=0.7,
+        component_probabilities={"terminal": 0.35},
+        regime=Regime.TREND_UP,
+        raw_p_up=0.35,
+    )
+    features = FeatureSnapshot(
+        timestamp=NOW,
+        current_price=64940.0,
+        strike=65000.0,
+        seconds_remaining=120.0,
+        changes={5: -0.0004},
+        velocities={5: -0.00008},
+        acceleration=0.0,
+        short_trend=-0.0005,
+        medium_trend=-0.0004,
+        realized_vol=0.65,
+        expected_remaining_move=80,
+        z_distance_to_strike=-0.9,
+        mean_reversion_score=0.0,
+        orderbook_imbalance=0.0,
+        cross_venue_agreement=0.9,
+        cross_venue_dispersion=0.0002,
+        data_completeness=1.0,
+        trajectory=TrajectoryState.DECELERATING_DOWN,
+        sample_count=100,
+        oldest_sample_age=100,
+    )
+    signal = evaluate_position_exit(
+        market=market,
+        position=market.current_position,
+        forecast=forecast,
+        features=features,
+        failures=(),
+        predicted_side=ContractSide.NO,
+        quantity=1,
+        stop_loss_fraction=0.55,
+        min_hold_seconds=60,
+        take_profit_bid_price=0.90,
+        take_profit_reversal_buffer=0.15,
+        position_reversal=PositionReversalConfig(),
+        now=NOW,
+    )
+    assert signal is None

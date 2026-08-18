@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import math
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -52,6 +53,8 @@ from kalshi_bot.market.poll_alignment import (
 
 if TYPE_CHECKING:
     from kalshi_bot.execution.risk import RiskManager
+
+logger = logging.getLogger(__name__)
 
 ABSOLUTE_MINIMUM_EDGE = Decimal("0.10")
 EDGE_TOLERANCE = Decimal("0.000000000001")
@@ -169,6 +172,7 @@ class DecisionConfig:
     take_profit_bid_price: float | None = None
     take_profit_late_seconds: float = 0.0
     take_profit_late_min_gain: float = 0.04
+    take_profit_reversal_buffer: float = 0.15
     position_reversal: PositionReversalConfig = field(default_factory=PositionReversalConfig)
     poll: PollConfig = field(default_factory=PollConfig)
     longshot: LongshotConfig = field(default_factory=LongshotConfig)
@@ -252,6 +256,7 @@ def decision_config_from_app(
         take_profit_bid_price=config.risk.take_profit_bid_price,
         take_profit_late_seconds=config.risk.take_profit_late_seconds,
         take_profit_late_min_gain=config.risk.take_profit_late_min_gain,
+        take_profit_reversal_buffer=config.risk.take_profit_reversal_buffer_cents,
         position_reversal=reversal_config_from_risk(config.risk),
         poll=config.poll,
         longshot=config.longshot,
@@ -657,6 +662,7 @@ class DecisionEngine:
                 take_profit_bid_price=cfg.take_profit_bid_price,
                 take_profit_late_seconds=cfg.take_profit_late_seconds,
                 take_profit_late_min_gain=cfg.take_profit_late_min_gain,
+                take_profit_reversal_buffer=cfg.take_profit_reversal_buffer,
                 position_reversal=cfg.position_reversal,
                 now=observed_now,
             )
@@ -788,6 +794,10 @@ class DecisionEngine:
         edge_decimal = Decimal(str(side_probabilities[selected_side])) - Decimal(
             str(selected_execution.executable_cost)
         )
+        true_edge_cents = (
+            side_probabilities[selected_side] - selected_execution.executable_cost
+        ) * 100.0
+        logger.info("edge=%.1f¢", true_edge_cents)
         seconds_remaining = (market.expiration - observed_now).total_seconds()
         poll_snapshot = market_poll_snapshot(market.orderbook)
         if cfg.minimum_dominant_poll is not None:
