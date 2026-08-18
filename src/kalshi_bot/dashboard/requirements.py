@@ -29,8 +29,40 @@ REVERSAL_TIER_LABELS: dict[str, str] = {
     "strong_reversal_candidate": "Strong",
 }
 
+REVERSAL_HEADLINES: dict[str, str] = {
+    "strong_reversal_candidate": "STRONG REVERSAL",
+    "reversal_candidate": "REVERSAL CANDIDATE",
+    "watch": "WATCH REVERSAL",
+    "no_reversal": "NO REVERSAL",
+}
+
+
 def _parse_payload(row: dict[str, Any]) -> dict[str, Any]:
     return _parse_json(row.get("payload"), {})
+
+
+def _confirmation_level(value: float | None) -> str:
+    if value is None:
+        return "LOW"
+    if value + 1e-12 >= 0.65:
+        return "HIGH"
+    if value + 1e-12 >= 0.40:
+        return "MEDIUM"
+    return "LOW"
+
+
+def _confirmation_class(level: str) -> str:
+    return {
+        "HIGH": "reversal-confirmation-high",
+        "MEDIUM": "reversal-confirmation-medium",
+        "LOW": "reversal-confirmation-low",
+    }.get(level, "reversal-confirmation-low")
+
+
+def _pct_signed(value: float | None) -> str | None:
+    if value is None:
+        return None
+    return f"{value * 100:+.1f}%"
 
 
 def build_reversal_status(payload: dict[str, Any]) -> dict[str, Any]:
@@ -51,6 +83,12 @@ def build_reversal_status(payload: dict[str, Any]) -> dict[str, Any]:
             "score": None,
             "tier": None,
             "tier_label": "—",
+            "headline": None,
+            "direction_change": None,
+            "lag_text": None,
+            "probability_shift_text": None,
+            "confirmation": None,
+            "confirmation_class": "reversal-confirmation-low",
             "summary": lag.get("rationale") or "Lag reversal disabled",
             "setup": None,
             "rationale": lag.get("rationale"),
@@ -60,18 +98,66 @@ def build_reversal_status(payload: dict[str, Any]) -> dict[str, Any]:
     tier = signal.get("tier")
     score = signal.get("score")
     tier_label = REVERSAL_TIER_LABELS.get(str(tier or ""), tier or "—")
-    active = bool(signal.get("active"))
-    if score is not None and tier is None:
-        active = float(score) >= 50.0
+    headline = REVERSAL_HEADLINES.get(str(tier or ""), "REVERSAL")
+    if score is not None:
+        headline = f"{headline} · {float(score):.0f}/100"
+
+    min_lag = float(lag.get("min_kalshi_lag") or 0.08)
+    min_prob = float(lag.get("min_probability_change") or 0.10)
+    kalshi_lag = signal.get("kalshi_lag")
+    prob_change = signal.get("probability_change")
+    material = signal.get("material_setup")
+    if material is None and kalshi_lag is not None and prob_change is not None:
+        material = (
+            abs(float(kalshi_lag)) + 1e-12 >= min_lag
+            and abs(float(prob_change)) + 1e-12 >= min_prob
+        )
+
+    tier_active = tier is not None and str(tier) != "no_reversal"
+    if signal and material is not None:
+        active = tier_active and bool(material)
+    elif signal:
+        active = bool(signal.get("active")) and tier_active
+    else:
+        active = False
+
+    initial = signal.get("initial_direction")
+    reversal_side = signal.get("reversal_side")
+    direction_change = (
+        f"{initial} → {reversal_side}"
+        if initial and reversal_side
+        else None
+    )
+    lag_text = _pct_signed(kalshi_lag if isinstance(kalshi_lag, (int, float)) else None)
+    probability_shift_text = _pct_signed(
+        prob_change if isinstance(prob_change, (int, float)) else None
+    )
+    cross_confirm = signal.get("cross_exchange_confirmation")
+    confirmation = _confirmation_level(
+        float(cross_confirm) if cross_confirm is not None else None
+    )
+    confirmation_class = _confirmation_class(confirmation)
 
     if signal:
         active_label = tier_label if active else "No setup"
         summary = signal.get("summary") or lag.get("rationale") or mode_label
         setup = signal.get("setup")
+        if not material and kalshi_lag is not None and prob_change is not None:
+            summary = (
+                f"lag {_pct_signed(float(kalshi_lag))} and shift "
+                f"{_pct_signed(float(prob_change))} need ≥{min_lag:.0%} lag "
+                f"and ≥{min_prob:.0%} probability move"
+            )
     else:
         active_label = "No data"
         summary = lag.get("rationale") or mode_label
         setup = None
+        direction_change = None
+        lag_text = None
+        probability_shift_text = None
+        confirmation = None
+        confirmation_class = "reversal-confirmation-low"
+        headline = None
 
     return {
         "enabled": True,
@@ -84,6 +170,13 @@ def build_reversal_status(payload: dict[str, Any]) -> dict[str, Any]:
         "score": score,
         "tier": tier,
         "tier_label": tier_label,
+        "headline": headline if signal else None,
+        "direction_change": direction_change,
+        "lag_text": lag_text,
+        "probability_shift_text": probability_shift_text,
+        "confirmation": confirmation,
+        "confirmation_class": confirmation_class,
+        "material_setup": material,
         "summary": summary,
         "setup": setup,
         "rationale": lag.get("rationale"),

@@ -170,9 +170,11 @@
       row.reversal_status && row.reversal_status.enabled
         ? `
         <div class="hero-reversal">
-          <span class="hero-reversal-label">Lag reversal</span>
-          <strong>${row.reversal_status.mode_label || "—"}</strong>
-          <span>${row.reversal_status.summary || row.reversal_status.setup || ""}</span>
+          <div class="hero-reversal-headline">${row.reversal_status.headline || "LAG REVERSAL"}</div>
+          ${row.reversal_status.direction_change ? `<div class="hero-reversal-line">Direction Change: <strong>${row.reversal_status.direction_change}</strong></div>` : ""}
+          ${row.reversal_status.lag_text || row.reversal_status.probability_shift_text ? `<div class="hero-reversal-line">Lag: <strong>${row.reversal_status.lag_text || "—"}</strong> · Probability Shift: <strong>${row.reversal_status.probability_shift_text || "—"}</strong></div>` : ""}
+          ${row.reversal_status.confirmation ? `<div class="hero-reversal-line">Confirmation: <strong class="${row.reversal_status.confirmation_class || ""}">${row.reversal_status.confirmation}</strong></div>` : ""}
+          <div class="hero-reversal-meta">${row.reversal_status.mode_label || ""}${row.reversal_status.active ? "" : " · " + (row.reversal_status.summary || "No setup")}</div>
         </div>`
         : "";
 

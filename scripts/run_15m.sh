@@ -21,7 +21,8 @@ CONFIG="${CONFIG_15M:-config/default.yaml}"
 mkdir -p logs
 
 live_flag() {
-  if [[ "${DRY_RUN:-true}" == "false" && -n "${KALSHI_API_KEY_ID:-}" && -f secrets/kalshi_private.key ]]; then
+  local mode="${DRY_RUN_15M:-${DRY_RUN:-true}}"
+  if [[ "$mode" == "false" && -n "${KALSHI_API_KEY_ID:-}" && -f secrets/kalshi_private.key ]]; then
     LIVE_FLAG=(--live)
   else
     LIVE_FLAG=()
