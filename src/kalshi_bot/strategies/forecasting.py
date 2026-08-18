@@ -163,6 +163,10 @@ class ForecastingScanner:
                 late_favorite_seconds=config.strategy.late_favorite_seconds,
                 late_favorite_poll_threshold=config.strategy.late_favorite_poll_threshold,
                 late_favorite_min_edge=config.strategy.late_favorite_min_edge,
+                late_favorite_min_model_probability=config.strategy.late_favorite_min_model_probability,
+                late_favorite_edge_bands=list(config.strategy.late_favorite_edge_bands),
+                dynamic_edge_enabled=config.strategy.dynamic_edge_enabled,
+                dynamic_edge_bands=list(config.strategy.dynamic_edge_bands),
                 min_entry_executable_cost=config.strategy.min_entry_executable_cost,
                 allow_proxy_data=(
                     config.execution.dry_run
@@ -186,11 +190,15 @@ class ForecastingScanner:
                 recovery_hold_min_confidence=config.risk.recovery_hold_min_confidence,
                 recovery_hold_min_agreement=config.risk.recovery_hold_min_agreement,
                 min_hold_seconds=config.risk.min_hold_seconds,
+                take_profit_bid_price=config.risk.take_profit_bid_price,
+                take_profit_late_seconds=config.risk.take_profit_late_seconds,
+                take_profit_late_min_gain=config.risk.take_profit_late_min_gain,
                 position_reversal=reversal_config_from_risk(config.risk),
                 poll=config.poll,
                 longshot=config.longshot,
                 chop_zone_min_sigma=config.strategy.chop_zone_min_sigma,
                 require_orderbook_depth=config.strategy.require_orderbook_depth,
+                mispricing_enabled=config.strategy.mispricing_enabled,
             )
         )
         self.entry_tracker = EntrySignalTracker(

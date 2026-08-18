@@ -252,12 +252,40 @@ class HourStrategyConfig(BaseModel):
     model_version: str = "hour-v1.0.0"
     require_forecast_alignment: bool = True
     forecast_alignment_min_probability: float = Field(default=0.65, ge=0.0, le=1.0)
+    evaluate_all_active_strikes: bool = Field(
+        default=True,
+        description="Evaluate every strike on the active hourly expiration (typically 3–4 books).",
+    )
+    strong_evidence_min_probability: float = Field(
+        default=0.78,
+        ge=0.0,
+        le=1.0,
+        description="Side probability threshold for ranking outer strikes with strong finish-above/below thesis.",
+    )
+    strong_evidence_min_confidence: float = Field(default=0.60, ge=0.0, le=1.0)
+    strong_evidence_min_agreement: float = Field(default=0.55, ge=0.0, le=1.0)
+
+
+class DynamicEdgeBand(BaseModel):
+    min_minutes: float = Field(ge=0.0)
+    max_minutes: float = Field(gt=0.0)
+    min_edge: float = Field(ge=0.0, le=1.0)
 
 
 class StrategyConfig(BaseModel):
     contract_duration_seconds: float = Field(default=900.0, gt=0.0)
-    min_edge: float = Field(default=0.15, ge=0.10)
-    target_edge: float = Field(default=0.25, ge=0.10)
+    min_edge: float = Field(default=0.15, ge=0.06)
+    target_edge: float = Field(default=0.25, ge=0.06)
+    dynamic_edge_enabled: bool = Field(
+        default=False,
+        description="Use dynamic_edge_bands for time-tiered minimum net edge floors.",
+    )
+    dynamic_edge_bands: list[DynamicEdgeBand] = Field(default_factory=list)
+    late_favorite_edge_bands: list[DynamicEdgeBand] = Field(default_factory=list)
+    mispricing_enabled: bool = Field(
+        default=True,
+        description="When false, forecast-direction entries skip edge-vs-book mispricing gates.",
+    )
     min_confidence: float = Field(default=0.60, ge=0.0, le=1.0)
     min_signal_agreement: float = Field(default=0.60, ge=0.0, le=1.0)
     min_data_completeness: float = Field(default=0.75, ge=0.0, le=1.0)
@@ -289,10 +317,16 @@ class StrategyConfig(BaseModel):
         description="Dominant market poll required for the late favorite edge floor.",
     )
     late_favorite_min_edge: float = Field(
-        default=0.04,
+        default=0.06,
         ge=0.0,
         le=0.20,
-        description="Minimum edge (e.g. 4¢) when late favorite poll threshold is met.",
+        description="Fallback minimum net edge when late favorite shortcut is active.",
+    )
+    late_favorite_min_model_probability: float = Field(
+        default=0.88,
+        ge=0.0,
+        le=1.0,
+        description="Model probability on side required for late favorite edge shortcut.",
     )
     min_entry_executable_cost: float = Field(
         default=0.08,
@@ -388,6 +422,23 @@ class RiskConfig(BaseModel):
     recovery_hold_min_confidence: float = Field(default=0.58, ge=0.0, le=1.0)
     recovery_hold_min_agreement: float = Field(default=0.58, ge=0.0, le=1.0)
     min_hold_seconds: float = Field(default=0.0, ge=0.0)
+    take_profit_bid_price: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description="Exit when executable bid reaches this price (forecast path).",
+    )
+    take_profit_late_seconds: float = Field(
+        default=0.0,
+        ge=0.0,
+        description="With ≤N seconds left, take profit at entry + late_min_gain.",
+    )
+    take_profit_late_min_gain: float = Field(
+        default=0.04,
+        ge=0.0,
+        le=1.0,
+        description="Minimum bid gain over entry for late-window take profit.",
+    )
     position_reversal_enabled: bool = True
     position_reversal_window_seconds: float = Field(default=420.0, ge=0.0)
     position_reversal_min_hold_probability: float = Field(default=0.50, ge=0.0, le=1.0)
@@ -439,12 +490,6 @@ class SettlementConfig(BaseModel):
     proxy_symbol: str = "BTC-USD"
 
 
-class DynamicEdgeBand(BaseModel):
-    min_minutes: float = Field(ge=0.0)
-    max_minutes: float = Field(gt=0.0)
-    min_edge: float = Field(ge=0.0, le=1.0)
-
-
 class CalibrationStoreConfig(BaseModel):
     enabled: bool = True
     store_path: str = "data/calibration_1h.json"
@@ -456,6 +501,10 @@ class TerminalProbabilityConfig(BaseModel):
     """Live 1-hour terminal mispricing engine settings."""
 
     enabled: bool = False
+    mispricing_enabled: bool = Field(
+        default=True,
+        description="When false, trade on terminal forecast alignment only (no net-edge vs book gate).",
+    )
     intelligence_overlay: bool = False
     late_window_shortcut: bool = False
     late_favorite_shortcut: bool = False
@@ -469,6 +518,38 @@ class TerminalProbabilityConfig(BaseModel):
     require_orderbook_depth: bool = True
     max_spread: float = Field(default=0.05, ge=0.0, le=1.0)
     min_entry_executable_cost: float = Field(default=0.0, ge=0.0, le=1.0)
+    max_entry_executable_cost: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description="When set, block entries above this executable price (e.g. 0.50 for 50¢ only).",
+    )
+    exclude_longshot_band: bool = Field(
+        default=False,
+        description="Block cheap longshot entries below longshot_max_executable_cost.",
+    )
+    longshot_max_executable_cost: float = Field(
+        default=0.42,
+        ge=0.0,
+        le=1.0,
+        description="Executable cost ceiling for longshot exclusion (e.g. 0.42 = 42¢).",
+    )
+    exclude_coin_flip_band: bool = Field(
+        default=False,
+        description="Block coin-flip entries inside the configured price band.",
+    )
+    coin_flip_min_executable_cost: float = Field(
+        default=0.42,
+        ge=0.0,
+        le=1.0,
+        description="Lower bound of coin-flip exclusion band (inclusive).",
+    )
+    coin_flip_max_executable_cost: float = Field(
+        default=0.58,
+        ge=0.0,
+        le=1.0,
+        description="Upper bound of coin-flip exclusion band (inclusive).",
+    )
     thesis_invalid_min_probability: float = Field(default=0.45, ge=0.0, le=1.0)
     thesis_invalid_margin: float = Field(default=0.12, ge=0.0, le=1.0)
     fallback_min_edge: float = Field(default=0.10, ge=0.0, le=1.0)

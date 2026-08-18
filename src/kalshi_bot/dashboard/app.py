@@ -11,7 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from kalshi_bot.dashboard.analytics import analytics_to_dict, build_analytics
-from kalshi_bot.dashboard.assessments import build_assessment, latest_assessments
+from kalshi_bot.dashboard.assessments import assessments_by_horizon, build_assessment, latest_assessments
 from kalshi_bot.dashboard.requirements import enrich_decision
 from kalshi_bot.dashboard.rules import active_edge_rules
 from kalshi_bot.journal import CombinedTradeJournal, TradeJournal
@@ -20,8 +20,13 @@ BASE = Path(__file__).resolve().parent
 templates = Jinja2Templates(directory=str(BASE / "templates"))
 
 
-def create_app(db_path: str | Path | None = None) -> FastAPI:
-    if db_path is not None:
+def create_app(
+    db_path: str | Path | None = None,
+    journal: CombinedTradeJournal | TradeJournal | None = None,
+) -> FastAPI:
+    if journal is not None:
+        store = journal
+    elif db_path is not None:
         store: CombinedTradeJournal | TradeJournal = TradeJournal(db_path)
     else:
         store = CombinedTradeJournal()
@@ -51,9 +56,12 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
         base.update(merged)
         return base
 
-    def _decisions(limit: int) -> list[dict]:
+    def _decisions(limit: int, per_horizon: bool = False) -> list[dict]:
         if isinstance(store, CombinedTradeJournal):
-            rows = store.recent_decisions(limit)
+            if per_horizon:
+                rows = store.recent_decisions_per_horizon(max(1, min(limit, 10)))
+            else:
+                rows = store.recent_decisions(limit)
         else:
             rows = store.recent_decisions(limit)
         return [enrich_decision(row) for row in rows]
@@ -110,7 +118,7 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
     @app.get("/api/edge-desk")
     def api_edge_desk(limit: int = Query(50, ge=1, le=200)) -> dict:
         stats = _stats()
-        decisions = _decisions(limit)
+        decisions = _decisions(limit, per_horizon=True)
         last = decisions[0] if decisions else None
         mode = "PAPER"
         if last is not None:
@@ -118,13 +126,20 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
         elif stats.get("live_trades", 0) > 0:
             mode = "LIVE"
         rules_payload = active_edge_rules(mode=mode)
+        assessments_map = assessments_by_horizon(decisions)
         assessments = latest_assessments(decisions)
         entries = stats.get("entries") or 0
         exits = stats.get("exits") or 0
         return {
             "rules": rules_payload["rules"],
+            "rules_15m": rules_payload.get("rules_15m", []),
+            "rules_1h": rules_payload.get("rules_1h", []),
             "rules_summary": rules_payload["summary"],
+            "rules_summary_15m": rules_payload.get("summary_15m", ""),
+            "rules_summary_1h": rules_payload.get("summary_1h", ""),
             "assessments": assessments,
+            "assessment_15m": assessments_map.get("15m"),
+            "assessment_1h": assessments_map.get("1h"),
             "stats": stats,
             "market_count": len(assessments),
             "entries": entries,

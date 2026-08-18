@@ -122,6 +122,37 @@ strategy:
   contract_duration_seconds: 900
   min_edge: 0.10
   target_edge: 0.10
+  mispricing_enabled: false
+  dynamic_edge_enabled: true
+  dynamic_edge_bands:
+    - min_minutes: 10.0
+      max_minutes: 15.0
+      min_edge: 0.10
+    - min_minutes: 7.0
+      max_minutes: 10.0
+      min_edge: 0.10
+    - min_minutes: 5.0
+      max_minutes: 7.0
+      min_edge: 0.08
+    - min_minutes: 3.0
+      max_minutes: 5.0
+      min_edge: 0.08
+    - min_minutes: 1.0
+      max_minutes: 3.0
+      min_edge: 0.06
+    - min_minutes: 0.0
+      max_minutes: 1.0
+      min_edge: 0.06
+  late_favorite_edge_bands:
+    - min_minutes: 5.0
+      max_minutes: 7.0
+      min_edge: 0.08
+    - min_minutes: 3.0
+      max_minutes: 5.0
+      min_edge: 0.08
+    - min_minutes: 0.0
+      max_minutes: 3.0
+      min_edge: 0.06
   min_confidence: 0.0
   min_signal_agreement: 0.55
   setup_score_enabled: true
@@ -132,7 +163,7 @@ strategy:
   require_setup_score: false
   min_data_completeness: 0.65
   max_spread: 0.07
-  min_seconds_remaining: 60
+  min_seconds_remaining: 30
   max_entry_seconds_remaining: 900
   late_seconds: 360
   final_seconds: 360
@@ -140,7 +171,8 @@ strategy:
   late_confidence_increment: 0.10
   late_favorite_seconds: 420
   late_favorite_poll_threshold: 0.80
-  late_favorite_min_edge: 0.04
+  late_favorite_min_edge: 0.06
+  late_favorite_min_model_probability: 0.88
   order_quantity: 1
   min_trade_quality_score: 70
   max_do_not_trade_score: 40
@@ -164,7 +196,9 @@ risk:
   max_trades_per_contract: 1
   max_flips_per_contract: 0
   cooldown_seconds: 300
-  min_hold_seconds: 120
+  min_hold_seconds: 60
+  take_profit_bid_price: 0.90
+  take_profit_late_seconds: 0
   position_reversal_enabled: true
   position_reversal_window_seconds: 420
   position_reversal_min_hold_probability: 0.50
@@ -176,7 +210,7 @@ risk:
   kelly_fraction: 0.25
   kelly_max_fraction: 0.25
   kelly_bankroll_usd: 16.22
-  stop_loss_fraction: 0.55
+  stop_loss_fraction: 0.45
   opposite_edge_shift: 0.25
   thesis_reversal_enabled: false
   opposite_edge_exit_enabled: false

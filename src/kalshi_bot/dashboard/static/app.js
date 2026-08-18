@@ -98,50 +98,61 @@
       .join("");
   }
 
-  function renderDecisionHeroes(rows) {
-    const container = $("decisionHeroes");
-    if (!rows || !rows.length) {
-      container.innerHTML =
-        '<div class="hero-placeholder">Waiting for bot scans… Decisions appear after the next 15m/1h poll.</div>';
+  function renderBotRules(containerId, rules) {
+    const el = $(containerId);
+    if (!el) return;
+    if (!rules || !rules.length) {
+      el.innerHTML = "";
       return;
     }
+    el.innerHTML = rules
+      .map(
+        (r) =>
+          `<span class="bot-rule-chip"><span class="rule-key">${r.key}</span> ${r.value}</span>`
+      )
+      .join("");
+  }
 
-    container.innerHTML = rows
-      .map((row) => {
-        const action = row.decision_action || "NO_TRADE";
-        const signal = row.signal || "notrade";
-        const tau = row.tau_left_min != null ? `${row.tau_left_min}m left` : "—";
-        const netEdge =
-          row.net_edge_cents != null ? `${row.net_edge_cents}¢` : "—";
-        const ensemble =
-          row.ensemble_pct != null ? `${Number(row.ensemble_pct).toFixed(0)}%` : "—";
-        const confidence =
-          row.confidence_pct != null ? `${Number(row.confidence_pct).toFixed(0)}%` : "—";
-        const quality = row.quality != null ? `${row.quality}%` : "—";
-        const passFail = `${row.pass_count || 0}/${(row.pass_count || 0) + (row.fail_count || 0)}`;
-        const edgeGap = row.edge_gap_text || "—";
-        const whyText =
-          row.blocker || row.reason || "All blocking gates cleared.";
-        const horizonLabel = row.horizon === "1h" ? "1 hour" : "15 minute";
-        const botMode = row.dry_run ? "PAPER" : "LIVE";
-        const brti =
-          row.brti_price != null && row.strike != null
-            ? `${money(row.brti_price)} / ${money(row.strike)}`
-            : "—";
-        const bookAsk =
-          row.yes_ask != null && row.no_ask != null
-            ? `Y ${(row.yes_ask * 100).toFixed(0)}¢ · N ${(row.no_ask * 100).toFixed(0)}¢`
-            : "—";
-        const positionText = row.has_position && row.position
-          ? `${row.position.side} × ${row.position.quantity}`
-          : "FLAT";
-        const reqs = renderRequirementsList(row.requirements);
+  function buildHeroCard(row) {
+    const action = row.decision_action || "NO_TRADE";
+    const signal = row.signal || "notrade";
+    const tau = row.tau_left_min != null ? `${row.tau_left_min}m left` : "—";
+    const netEdge =
+      row.net_edge_cents != null ? `${row.net_edge_cents}¢` : "—";
+    const ensemble =
+      row.ensemble_pct != null ? `${Number(row.ensemble_pct).toFixed(0)}%` : "—";
+    const confidence =
+      row.confidence_pct != null ? `${Number(row.confidence_pct).toFixed(0)}%` : "—";
+    const quality = row.quality != null ? `${row.quality}%` : "—";
+    const passFail = `${row.pass_count || 0}/${(row.pass_count || 0) + (row.fail_count || 0)}`;
+    const edgeGap = row.edge_gap_text || "—";
+    const whyText = row.blocker || row.reason || "All blocking gates cleared.";
+    const botMode = row.dry_run ? "PAPER" : "LIVE";
+    const brti =
+      row.brti_price != null && row.strike != null
+        ? `${money(row.brti_price)} / ${money(row.strike)}`
+        : "—";
+    const bookAsk =
+      row.yes_ask != null && row.no_ask != null
+        ? `Y ${(row.yes_ask * 100).toFixed(0)}¢ · N ${(row.no_ask * 100).toFixed(0)}¢`
+        : "—";
+    const positionText =
+      row.has_position && row.position
+        ? `${row.position.side} × ${row.position.quantity}`
+        : "FLAT";
+    const reqs = renderRequirementsList(row.requirements);
+    const mispricingTag =
+      row.horizon === "1h" && row.mispricing_enabled === false
+        ? '<span class="hero-tag">Forecast only</span>'
+        : "";
+    const modelTag =
+      row.model_version ? `<span class="hero-tag mono">${row.model_version}</span>` : "";
 
-        const terminalBlock =
-          row.terminal_mode && row.terminal_forecast
-            ? `
+    const terminalBlock =
+      row.terminal_mode && (row.terminal_forecast || row.terminal_p_yes != null)
+        ? `
         <div class="hero-terminal">
-          <div class="hero-terminal-title">Terminal forecast</div>
+          <div class="hero-terminal-title">Terminal forecast ${mispricingTag}</div>
           <div class="hero-terminal-grid">
             <span>BRTI ${row.brti_price != null ? money(row.brti_price) : "—"}</span>
             <span>Exp terminal ${row.expected_terminal_brti != null ? money(row.expected_terminal_brti) : "—"}</span>
@@ -153,17 +164,27 @@
           </div>
           <pre class="hero-explanation">${row.terminal_explanation || ""}</pre>
         </div>`
-            : "";
+        : "";
 
-        return `
+    const reversalBlock =
+      row.reversal_status && row.reversal_status.enabled
+        ? `
+        <div class="hero-reversal">
+          <span class="hero-reversal-label">Lag reversal</span>
+          <strong>${row.reversal_status.mode_label || "—"}</strong>
+          <span>${row.reversal_status.summary || row.reversal_status.setup || ""}</span>
+        </div>`
+        : "";
+
+    return `
       <article class="decision-hero ${signalClass(signal)}">
         <div class="hero-signal-bar">
           <span class="hero-signal-label">${signalLabel(signal)}</span>
           <span class="hero-bot-mode">${botMode}</span>
+          ${modelTag}
         </div>
         <div class="hero-top">
           <div class="hero-meta">
-            <span class="hero-horizon">BTC · ${horizonLabel}</span>
             <span class="hero-ticker">${row.ticker || "—"}</span>
           </div>
           <span class="hero-tau">${tau}</span>
@@ -175,7 +196,7 @@
         </div>
         <div class="hero-metrics">
           <div class="hero-metric">
-            <span>Net edge</span>
+            <span>${row.mispricing_enabled === false ? "Side prob" : "Net edge"}</span>
             <strong>${netEdge}</strong>
           </div>
           <div class="hero-metric">
@@ -210,6 +231,7 @@
           <span class="hero-why-label">${signal === "notrade" ? "Why no trade" : "Status"}</span>
           <span class="hero-why-text">${whyText}</span>
         </div>
+        ${reversalBlock}
         ${terminalBlock}
         <div class="requirements-panel">
           <div class="requirements-head">
@@ -219,6 +241,60 @@
           <div class="requirements-grid">${reqs}</div>
         </div>
       </article>`;
+  }
+
+  function renderBotHero(containerId, row, placeholder) {
+    const container = $(containerId);
+    if (!container) return;
+    if (!row) {
+      container.innerHTML = `<div class="hero-placeholder">${placeholder}</div>`;
+      return;
+    }
+    container.innerHTML = buildHeroCard(row);
+  }
+
+  function renderStrikeCandidates(row) {
+    const wrap = $("strikeCandidates1h");
+    const body = $("strikeCandidatesBody");
+    if (!wrap || !body) return;
+    const candidates = row && row.strike_candidates ? row.strike_candidates : [];
+    if (!candidates.length) {
+      wrap.hidden = true;
+      body.innerHTML = "";
+      return;
+    }
+    wrap.hidden = false;
+    const selectedTicker = row.ticker || "";
+    body.innerHTML = candidates
+      .map((c) => {
+        const strike =
+          c.strike != null ? money(c.strike).replace("$", "$") : "—";
+        const action = formatAction(c.action || "NO_TRADE");
+        const pYes =
+          c.p_yes != null ? `${(c.p_yes * 100).toFixed(1)}%` : "—";
+        const yesEdge =
+          c.yes_net_edge != null ? `${(c.yes_net_edge * 100).toFixed(1)}pp` : "—";
+        const noEdge =
+          c.no_net_edge != null ? `${(c.no_net_edge * 100).toFixed(1)}pp` : "—";
+        const need =
+          c.required_edge != null ? `${(c.required_edge * 100).toFixed(0)}pp` : "—";
+        const book =
+          c.yes_ask != null && c.no_ask != null
+            ? `Y ${(c.yes_ask * 100).toFixed(0)}¢ N ${(c.no_ask * 100).toFixed(0)}¢`
+            : "—";
+        const strong = c.strong_evidence ? "yes" : "—";
+        const selected = c.ticker === selectedTicker ? "strike-selected" : "";
+        return `
+        <tr class="${selected}">
+          <td class="mono">${strike}</td>
+          <td>${action}</td>
+          <td class="mono">${pYes}</td>
+          <td class="mono">${yesEdge}</td>
+          <td class="mono">${noEdge}</td>
+          <td class="mono">${need}</td>
+          <td class="mono">${book}</td>
+          <td>${strong}</td>
+        </tr>`;
       })
       .join("");
   }
@@ -263,6 +339,7 @@
         return `
       <tr>
         <td class="mono">${fmtTime(d.ts)}</td>
+        <td class="mono">${d.horizon || "15m"}</td>
         <td>${d.action || "—"}</td>
         <td class="mono">${tau}</td>
         <td class="mono">${edge}</td>
@@ -300,8 +377,35 @@
       ]);
 
       $("offlineBanner").hidden = true;
-      const assessments = desk.assessments || [];
-      renderDecisionHeroes(assessments);
+      const row15m = desk.assessment_15m || null;
+      const row1h = desk.assessment_1h || null;
+
+      renderBotHero(
+        "hero15m",
+        row15m,
+        "Waiting for 15m bot scan… (KXBTC15M polls every ~10s)"
+      );
+      renderBotHero(
+        "hero1h",
+        row1h,
+        "Waiting for 1h bot scan… (KXBTCD terminal engine polls every ~10s)"
+      );
+      renderBotRules("rules15m", desk.rules_15m || []);
+      renderBotRules("rules1h", desk.rules_1h || []);
+      if (row15m) {
+        $("summary15m").textContent = `${formatAction(row15m.decision_action)} · ${row15m.tau_left_min ?? "—"}m left · ${fmtClock(row15m.ts)}`;
+        const b15 = $("badge15m");
+        if (b15) b15.textContent = row15m.dry_run ? "15m PAPER" : "15m LIVE";
+      } else {
+        $("summary15m").textContent = desk.rules_summary_15m || "Waiting for 15m bot…";
+      }
+      if (row1h) {
+        $("summary1h").textContent = `${formatAction(row1h.decision_action)} · ${row1h.tau_left_min ?? "—"}m left · ${fmtClock(row1h.ts)} — ${desk.rules_summary_1h || ""}`;
+      } else {
+        $("summary1h").textContent = desk.rules_summary_1h || "Waiting for 1h bot…";
+      }
+      renderStrikeCandidates(row1h);
+
       renderStatsStrip(desk.stats || {});
       renderRules(desk.rules);
       $("rulesSummary").textContent = desk.rules_summary || "—";

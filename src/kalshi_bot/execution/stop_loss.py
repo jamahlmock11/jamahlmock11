@@ -120,11 +120,14 @@ def evaluate_position_exit(
     recovery_hold_min_confidence: float = 0.58,
     recovery_hold_min_agreement: float = 0.58,
     min_hold_seconds: float = 0.0,
+    take_profit_bid_price: float | None = None,
+    take_profit_late_seconds: float = 0.0,
+    take_profit_late_min_gain: float = 0.04,
     position_reversal: PositionReversalConfig | None = None,
     now: datetime | None = None,
     reliability_gates: set[str] | frozenset[str] | None = None,
 ) -> PositionExitSignal | None:
-    """Return an exit signal when stop-loss or thesis protections trigger."""
+    """Return an exit signal when take-profit, stop-loss, or thesis protections trigger."""
     if position.quantity <= 0:
         return None
 
@@ -153,6 +156,36 @@ def evaluate_position_exit(
     exit_qty = min(position.quantity, quantity)
     exit_bid = executable_exit_price(market.orderbook, position.side, exit_qty)
     entry = position.average_price
+    seconds_remaining = max(0.0, (market.expiration - observed_now).total_seconds())
+
+    if exit_bid is not None and not within_min_hold:
+        gain = exit_bid - entry
+        if take_profit_bid_price is not None and exit_bid + 1e-12 >= take_profit_bid_price:
+            return PositionExitSignal(
+                should_exit=True,
+                reason=(
+                    f"take profit: bid {exit_bid:.2f} reached ceiling "
+                    f"{take_profit_bid_price:.2f}"
+                ),
+                trigger="take_profit_price",
+                premium_loss_fraction=premium_loss_fraction(entry, exit_bid),
+                exit_bid=exit_bid,
+            )
+        if (
+            take_profit_late_seconds > 0
+            and seconds_remaining <= take_profit_late_seconds
+            and gain + 1e-12 >= take_profit_late_min_gain
+        ):
+            return PositionExitSignal(
+                should_exit=True,
+                reason=(
+                    f"take profit: {seconds_remaining:.0f}s left, bid +{gain * 100:.0f}¢ "
+                    f"over entry (target +{take_profit_late_min_gain * 100:.0f}¢)"
+                ),
+                trigger="take_profit_late",
+                premium_loss_fraction=premium_loss_fraction(entry, exit_bid),
+                exit_bid=exit_bid,
+            )
 
     if stop_loss_fraction > 0 and exit_bid is not None:
         loss = premium_loss_fraction(entry, exit_bid)

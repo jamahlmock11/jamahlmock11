@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
-from kalshi_bot.config import AppConfig, LongshotConfig, PollConfig
+from kalshi_bot.config import AppConfig, DynamicEdgeBand, LongshotConfig, PollConfig
 from kalshi_bot.domain import (
     BenchmarkQuote,
     ContractSide,
@@ -38,6 +38,10 @@ from kalshi_bot.strategies.longshot import (
     resolve_longshot_entries,
 )
 from kalshi_bot.strategies.entry_filters import is_in_chop_zone
+from kalshi_bot.strategies.edge_floor import (
+    late_favorite_required_edge,
+    required_edge_from_bands,
+)
 from kalshi_bot.market.poll_alignment import (
     PollConfig as PollAlignmentConfig,
     PollSnapshot,
@@ -136,7 +140,11 @@ class DecisionConfig:
     final_minimum_edge: float = 0.25
     late_favorite_seconds: float = 420.0
     late_favorite_poll_threshold: float = 0.78
-    late_favorite_min_edge: float = 0.04
+    late_favorite_min_edge: float = 0.06
+    late_favorite_min_model_probability: float = 0.88
+    late_favorite_edge_bands: list[DynamicEdgeBand] = field(default_factory=list)
+    dynamic_edge_enabled: bool = False
+    dynamic_edge_bands: list[DynamicEdgeBand] = field(default_factory=list)
     min_entry_executable_cost: float = 0.08
     minimum_dominant_poll: float | None = None
     require_dominant_poll_side: bool = False
@@ -158,17 +166,23 @@ class DecisionConfig:
     recovery_hold_min_confidence: float = 0.58
     recovery_hold_min_agreement: float = 0.58
     min_hold_seconds: float = 0.0
+    take_profit_bid_price: float | None = None
+    take_profit_late_seconds: float = 0.0
+    take_profit_late_min_gain: float = 0.04
     position_reversal: PositionReversalConfig = field(default_factory=PositionReversalConfig)
     poll: PollConfig = field(default_factory=PollConfig)
     longshot: LongshotConfig = field(default_factory=LongshotConfig)
     chop_zone_min_sigma: float = 0.0
     require_orderbook_depth: bool = False
+    mispricing_enabled: bool = True
 
     @property
     def effective_minimum_edge(self) -> Decimal:
-        """Longshot mode allows 10¢ edges; otherwise the 15¢ floor applies."""
+        """Longshot mode allows lower edges; otherwise use configured minimum."""
         if self.longshot.enabled:
             return Decimal(str(self.longshot.min_edge))
+        if self.dynamic_edge_enabled and self.dynamic_edge_bands:
+            return Decimal(str(min(band.min_edge for band in self.dynamic_edge_bands)))
         return max(ABSOLUTE_MINIMUM_EDGE, Decimal(str(self.minimum_edge)))
 
 
@@ -211,6 +225,10 @@ def decision_config_from_app(
         late_favorite_seconds=strategy.late_favorite_seconds,
         late_favorite_poll_threshold=strategy.late_favorite_poll_threshold,
         late_favorite_min_edge=strategy.late_favorite_min_edge,
+        late_favorite_min_model_probability=strategy.late_favorite_min_model_probability,
+        late_favorite_edge_bands=list(strategy.late_favorite_edge_bands),
+        dynamic_edge_enabled=strategy.dynamic_edge_enabled,
+        dynamic_edge_bands=list(strategy.dynamic_edge_bands),
         min_entry_executable_cost=strategy.min_entry_executable_cost,
         minimum_dominant_poll=strategy.minimum_dominant_poll,
         require_dominant_poll_side=strategy.require_dominant_poll_side,
@@ -231,11 +249,15 @@ def decision_config_from_app(
         recovery_hold_min_confidence=config.risk.recovery_hold_min_confidence,
         recovery_hold_min_agreement=config.risk.recovery_hold_min_agreement,
         min_hold_seconds=config.risk.min_hold_seconds,
+        take_profit_bid_price=config.risk.take_profit_bid_price,
+        take_profit_late_seconds=config.risk.take_profit_late_seconds,
+        take_profit_late_min_gain=config.risk.take_profit_late_min_gain,
         position_reversal=reversal_config_from_risk(config.risk),
         poll=config.poll,
         longshot=config.longshot,
         chop_zone_min_sigma=strategy.chop_zone_min_sigma,
         require_orderbook_depth=strategy.require_orderbook_depth,
+        mispricing_enabled=strategy.mispricing_enabled,
     )
 
 
@@ -265,6 +287,7 @@ def _late_favorite_edge_floor(
     seconds_remaining: float,
     poll: PollSnapshot,
     selected_side: ContractSide,
+    model_probability: float,
     cfg: DecisionConfig,
 ) -> float | None:
     if cfg.late_favorite_seconds <= 0:
@@ -277,7 +300,65 @@ def _late_favorite_edge_floor(
         return None
     if selected_side is not poll.dominant_side:
         return None
-    return cfg.late_favorite_min_edge
+    if model_probability + 1e-12 < cfg.late_favorite_min_model_probability:
+        return None
+    return late_favorite_required_edge(
+        seconds_remaining,
+        late_favorite_min_edge=cfg.late_favorite_min_edge,
+        late_favorite_edge_bands=cfg.late_favorite_edge_bands,
+    )
+
+
+def _resolve_required_edge(
+    *,
+    seconds_remaining: float,
+    cfg: DecisionConfig,
+    poll_snapshot: PollSnapshot,
+    selected_side: ContractSide,
+    model_probability: float,
+    benchmark_is_proxy: bool,
+    entry_ctx: object | None,
+) -> Decimal:
+    if cfg.dynamic_edge_enabled and cfg.dynamic_edge_bands:
+        required = Decimal(
+            str(
+                required_edge_from_bands(
+                    seconds_remaining,
+                    cfg.dynamic_edge_bands,
+                    cfg.minimum_edge,
+                )
+            )
+        )
+    else:
+        required = cfg.effective_minimum_edge
+
+    if entry_ctx is not None and getattr(entry_ctx, "min_edge_override", None) is not None:
+        required = Decimal(str(entry_ctx.min_edge_override))
+
+    if benchmark_is_proxy and not cfg.longshot.enabled:
+        required = max(required, Decimal(str(cfg.proxy_minimum_edge)))
+
+    late_favorite_edge = _late_favorite_edge_floor(
+        seconds_remaining=seconds_remaining,
+        poll=poll_snapshot,
+        selected_side=selected_side,
+        model_probability=model_probability,
+        cfg=cfg,
+    )
+    if late_favorite_edge is not None:
+        required = Decimal(str(late_favorite_edge))
+    elif not cfg.longshot.enabled and not cfg.dynamic_edge_enabled:
+        if seconds_remaining <= cfg.late_seconds:
+            required = max(required, Decimal(str(cfg.late_minimum_edge)))
+        if seconds_remaining <= cfg.final_seconds:
+            required = max(required, Decimal(str(cfg.final_minimum_edge)))
+
+    if entry_ctx is not None and getattr(entry_ctx, "min_edge_override", None) is not None:
+        override = entry_ctx.min_edge_override
+        if override >= 0:
+            required = Decimal(str(override))
+
+    return required
 
 
 class DecisionEngine:
@@ -573,6 +654,9 @@ class DecisionEngine:
                 recovery_hold_min_confidence=cfg.recovery_hold_min_confidence,
                 recovery_hold_min_agreement=cfg.recovery_hold_min_agreement,
                 min_hold_seconds=cfg.min_hold_seconds,
+                take_profit_bid_price=cfg.take_profit_bid_price,
+                take_profit_late_seconds=cfg.take_profit_late_seconds,
+                take_profit_late_min_gain=cfg.take_profit_late_min_gain,
                 position_reversal=cfg.position_reversal,
                 now=observed_now,
             )
@@ -733,27 +817,17 @@ class DecisionEngine:
                         poll_snapshot.dominant_side.value,
                     )
                 )
-        required_edge = cfg.effective_minimum_edge
-        if entry_ctx is not None and entry_ctx.min_edge_override is not None:
-            required_edge = Decimal(str(entry_ctx.min_edge_override))
-        if benchmark.is_proxy and not cfg.longshot.enabled:
-            required_edge = max(required_edge, Decimal(str(cfg.proxy_minimum_edge)))
-        late_favorite_edge = _late_favorite_edge_floor(
+        required_edge = _resolve_required_edge(
             seconds_remaining=seconds_remaining,
-            poll=poll_snapshot,
-            selected_side=selected_side,
             cfg=cfg,
+            poll_snapshot=poll_snapshot,
+            selected_side=selected_side,
+            model_probability=side_probabilities[selected_side],
+            benchmark_is_proxy=benchmark.is_proxy,
+            entry_ctx=entry_ctx,
         )
-        if late_favorite_edge is not None:
-            required_edge = Decimal(str(late_favorite_edge))
-        elif not cfg.longshot.enabled:
-            if seconds_remaining <= cfg.late_seconds:
-                required_edge = max(required_edge, Decimal(str(cfg.late_minimum_edge)))
-            if seconds_remaining <= cfg.final_seconds:
-                required_edge = max(required_edge, Decimal(str(cfg.final_minimum_edge)))
-        if entry_ctx is not None and entry_ctx.min_edge_override is not None:
-            if entry_ctx.min_edge_override >= 0:
-                required_edge = Decimal(str(entry_ctx.min_edge_override))
+        if not cfg.mispricing_enabled and not cfg.dynamic_edge_enabled:
+            required_edge = Decimal("0")
         if selected_execution.executable_cost + 1e-12 < cfg.min_entry_executable_cost:
             failures.append(
                 _failure(
@@ -763,7 +837,8 @@ class DecisionEngine:
                     cfg.min_entry_executable_cost,
                 )
             )
-        if (
+        edge_gate_active = cfg.mispricing_enabled or cfg.dynamic_edge_enabled
+        if edge_gate_active and (
             entry_ctx is None
             or entry_ctx.min_edge_override is None
             or entry_ctx.min_edge_override >= 0
@@ -817,7 +892,7 @@ class DecisionEngine:
                     edge_decimal = Decimal(str(side_probabilities[selected_side])) - Decimal(
                         str(selected_execution.executable_cost)
                     )
-                    if edge_decimal + EDGE_TOLERANCE < required_edge:
+                    if edge_gate_active and edge_decimal + EDGE_TOLERANCE < required_edge:
                         failures.append(
                             _failure(
                                 "minimum_edge",
@@ -898,14 +973,33 @@ class DecisionEngine:
             if selected_side is ContractSide.YES
             else DecisionAction.BUY_DOWN
         )
-        target_text = (
-            "meets target edge"
-            if selected_edge + float(EDGE_TOLERANCE) >= cfg.target_edge
-            else "meets hard minimum edge but is below target"
-        )
+        if cfg.mispricing_enabled:
+            target_text = (
+                "meets target edge"
+                if selected_edge + float(EDGE_TOLERANCE) >= cfg.target_edge
+                else "meets hard minimum edge but is below target"
+            )
+            entry_reason = f"{selected_side.value} {target_text}{_crowd_context_suffix(entry_ctx)}"
+            report_edge = selected_edge
+            report_required = float(required_edge)
+        elif cfg.dynamic_edge_enabled:
+            entry_reason = (
+                f"{selected_side.value} tiered edge "
+                f"{selected_edge:.1%} >= {float(required_edge):.1%}"
+                f"{_crowd_context_suffix(entry_ctx)}"
+            )
+            report_edge = selected_edge
+            report_required = float(required_edge)
+        else:
+            entry_reason = (
+                f"{selected_side.value} forecast entry "
+                f"(mispricing off){_crowd_context_suffix(entry_ctx)}"
+            )
+            report_edge = side_probabilities[selected_side]
+            report_required = cfg.minimum_confidence
         return DecisionResult(
             action=action,
-            reason=f"{selected_side.value} {target_text}{_crowd_context_suffix(entry_ctx)}",
+            reason=entry_reason,
             gate_failures=(),
             current_direction=current_direction,
             predicted_direction=predicted_direction,
@@ -913,9 +1007,9 @@ class DecisionEngine:
             selected_side=selected_side,
             predicted_probability=side_probabilities[selected_side],
             executable_cost=selected_execution.executable_cost,
-            edge=selected_edge,
+            edge=report_edge,
             target_edge=cfg.target_edge,
-            required_edge=float(required_edge),
+            required_edge=report_required,
             quantity=trade_quantity,
             execution=selected_execution,
             size_multiplier=size_multiplier,
