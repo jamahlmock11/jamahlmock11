@@ -84,4 +84,4 @@ def test_decision_config_from_app_uses_hour_entry_window():
     assert decision_cfg.require_dominant_poll_side is False
     assert decision_cfg.longshot.enabled is False
     assert cfg.terminal_probability.enabled is True
-    assert cfg.strategy.min_edge == pytest.approx(0.10)
+    assert cfg.strategy.min_edge == pytest.approx(0.12)

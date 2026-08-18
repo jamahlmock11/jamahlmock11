@@ -43,7 +43,7 @@ orderbook_skew:
 # Terminal expiration-probability + mispricing engine (live 1h path).
 terminal_probability:
   enabled: true
-  mispricing_enabled: false
+  mispricing_enabled: true
   intelligence_overlay: false
   late_window_shortcut: false
   late_favorite_shortcut: false
@@ -66,22 +66,22 @@ terminal_probability:
   coin_flip_max_executable_cost: 0.58
   thesis_invalid_min_probability: 0.45
   thesis_invalid_margin: 0.12
-  fallback_min_edge: 0.06
+  fallback_min_edge: 0.12
   dynamic_edge_enabled: true
   dynamic_edge_bands:
   # Model probability minus executable price (raw mispricing edge).
     - min_minutes: 30
       max_minutes: 60
-      min_edge: 0.10
+      min_edge: 0.12
     - min_minutes: 10
       max_minutes: 30
-      min_edge: 0.08
+      min_edge: 0.12
     - min_minutes: 5
       max_minutes: 10
-      min_edge: 0.08
+      min_edge: 0.12
     - min_minutes: 0
       max_minutes: 5
-      min_edge: 0.06
+      min_edge: 0.12
   calibration:
     enabled: false
     store_path: data/calibration_1h.json
@@ -95,8 +95,8 @@ intelligence:
 # Legacy strategy block (used for data completeness / order quantity only in terminal mode).
 strategy:
   contract_duration_seconds: 3600
-  min_edge: 0.10
-  target_edge: 0.10
+  min_edge: 0.12
+  target_edge: 0.12
   min_confidence: 0.52
   min_signal_agreement: 0.50
   min_data_completeness: 0.65
@@ -170,6 +170,7 @@ risk:
   kelly_bankroll_usd: 16.22
   take_profit_bid_price: 0.90
   take_profit_late_seconds: 0
+  take_profit_reversal_buffer_cents: 0.15
   stop_loss_fraction: 0.45
   opposite_edge_shift: 0.25
   thesis_reversal_enabled: false

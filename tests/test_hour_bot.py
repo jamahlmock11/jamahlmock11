@@ -403,6 +403,6 @@ def test_1h_yaml_loads_without_validation_error():
     assert cfg.terminal_probability.exclude_coin_flip_band is True
     assert cfg.orderbook_skew.ensemble_enabled is True
     assert cfg.risk.kelly_enabled is False
-    assert cfg.strategy.min_edge == pytest.approx(0.10)
+    assert cfg.strategy.min_edge == pytest.approx(0.12)
     assert cfg.strategy.late_seconds == pytest.approx(600)
     assert cfg.risk.min_hold_seconds == pytest.approx(120)
