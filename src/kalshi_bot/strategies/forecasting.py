@@ -195,6 +195,7 @@ class ForecastingScanner:
                 longshot=config.longshot,
                 chop_zone_min_sigma=config.strategy.chop_zone_min_sigma,
                 require_orderbook_depth=config.strategy.require_orderbook_depth,
+                mispricing_enabled=config.strategy.mispricing_enabled,
             )
         )
         self.entry_tracker = EntrySignalTracker(

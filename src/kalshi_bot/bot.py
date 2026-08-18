@@ -370,6 +370,7 @@ class TradingBot:
                     self.config.strategy.late_favorite_min_model_probability
                 ),
                 "dynamic_edge_enabled": self.config.strategy.dynamic_edge_enabled,
+                "mispricing_enabled": self.config.strategy.mispricing_enabled,
                 "minimum_dominant_poll": self.config.strategy.minimum_dominant_poll,
                 "min_trade_quality_score": self.config.strategy.min_trade_quality_score,
                 "kelly_fraction": self.config.risk.kelly_fraction,

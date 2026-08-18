@@ -150,7 +150,13 @@ def test_dynamic_edge_bands():
 def test_one_hour_edge_scenarios():
     """User reference scenarios: model minus executable vs time-tiered floor."""
     app_cfg = load_yaml_config("config/1h.yaml")
-    assert app_cfg.terminal_probability.mispricing_enabled is True
+    app_cfg = app_cfg.model_copy(
+        update={
+            "terminal_probability": app_cfg.terminal_probability.model_copy(
+                update={"mispricing_enabled": True}
+            )
+        }
+    )
     engine = HourTerminalDecisionEngine(terminal_decision_config_from_app(app_cfg))
 
     def decide_at(
@@ -394,7 +400,7 @@ def test_1h_yaml_terminal_config_loaded():
     assert cfg.terminal_probability.enabled is True
     assert cfg.terminal_probability.intelligence_overlay is False
     assert cfg.terminal_probability.minimum_confidence == pytest.approx(0.52)
-    assert cfg.terminal_probability.mispricing_enabled is True
+    assert cfg.terminal_probability.mispricing_enabled is False
     assert cfg.terminal_probability.exclude_coin_flip_band is True
     assert cfg.terminal_probability.exclude_longshot_band is True
     assert cfg.orderbook_skew.ensemble_enabled is True

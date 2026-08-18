@@ -171,6 +171,7 @@ class DecisionConfig:
     longshot: LongshotConfig = field(default_factory=LongshotConfig)
     chop_zone_min_sigma: float = 0.0
     require_orderbook_depth: bool = False
+    mispricing_enabled: bool = True
 
     @property
     def effective_minimum_edge(self) -> Decimal:
@@ -250,6 +251,7 @@ def decision_config_from_app(
         longshot=config.longshot,
         chop_zone_min_sigma=strategy.chop_zone_min_sigma,
         require_orderbook_depth=strategy.require_orderbook_depth,
+        mispricing_enabled=strategy.mispricing_enabled,
     )
 
 
@@ -815,6 +817,8 @@ class DecisionEngine:
             benchmark_is_proxy=benchmark.is_proxy,
             entry_ctx=entry_ctx,
         )
+        if not cfg.mispricing_enabled:
+            required_edge = Decimal("0")
         if selected_execution.executable_cost + 1e-12 < cfg.min_entry_executable_cost:
             failures.append(
                 _failure(
@@ -824,7 +828,7 @@ class DecisionEngine:
                     cfg.min_entry_executable_cost,
                 )
             )
-        if (
+        if cfg.mispricing_enabled and (
             entry_ctx is None
             or entry_ctx.min_edge_override is None
             or entry_ctx.min_edge_override >= 0
@@ -878,7 +882,7 @@ class DecisionEngine:
                     edge_decimal = Decimal(str(side_probabilities[selected_side])) - Decimal(
                         str(selected_execution.executable_cost)
                     )
-                    if edge_decimal + EDGE_TOLERANCE < required_edge:
+                    if cfg.mispricing_enabled and edge_decimal + EDGE_TOLERANCE < required_edge:
                         failures.append(
                             _failure(
                                 "minimum_edge",
@@ -959,14 +963,25 @@ class DecisionEngine:
             if selected_side is ContractSide.YES
             else DecisionAction.BUY_DOWN
         )
-        target_text = (
-            "meets target edge"
-            if selected_edge + float(EDGE_TOLERANCE) >= cfg.target_edge
-            else "meets hard minimum edge but is below target"
-        )
+        if cfg.mispricing_enabled:
+            target_text = (
+                "meets target edge"
+                if selected_edge + float(EDGE_TOLERANCE) >= cfg.target_edge
+                else "meets hard minimum edge but is below target"
+            )
+            entry_reason = f"{selected_side.value} {target_text}{_crowd_context_suffix(entry_ctx)}"
+            report_edge = selected_edge
+            report_required = float(required_edge)
+        else:
+            entry_reason = (
+                f"{selected_side.value} forecast entry "
+                f"(mispricing off){_crowd_context_suffix(entry_ctx)}"
+            )
+            report_edge = side_probabilities[selected_side]
+            report_required = cfg.minimum_confidence
         return DecisionResult(
             action=action,
-            reason=f"{selected_side.value} {target_text}{_crowd_context_suffix(entry_ctx)}",
+            reason=entry_reason,
             gate_failures=(),
             current_direction=current_direction,
             predicted_direction=predicted_direction,
@@ -974,9 +989,9 @@ class DecisionEngine:
             selected_side=selected_side,
             predicted_probability=side_probabilities[selected_side],
             executable_cost=selected_execution.executable_cost,
-            edge=selected_edge,
+            edge=report_edge,
             target_edge=cfg.target_edge,
-            required_edge=float(required_edge),
+            required_edge=report_required,
             quantity=trade_quantity,
             execution=selected_execution,
             size_multiplier=size_multiplier,

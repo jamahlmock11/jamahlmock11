@@ -43,7 +43,7 @@ orderbook_skew:
 # Terminal expiration-probability + mispricing engine (live 1h path).
 terminal_probability:
   enabled: true
-  mispricing_enabled: true
+  mispricing_enabled: false
   intelligence_overlay: false
   late_window_shortcut: false
   late_favorite_shortcut: false

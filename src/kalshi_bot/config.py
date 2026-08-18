@@ -282,6 +282,10 @@ class StrategyConfig(BaseModel):
     )
     dynamic_edge_bands: list[DynamicEdgeBand] = Field(default_factory=list)
     late_favorite_edge_bands: list[DynamicEdgeBand] = Field(default_factory=list)
+    mispricing_enabled: bool = Field(
+        default=True,
+        description="When false, forecast-direction entries skip edge-vs-book mispricing gates.",
+    )
     min_confidence: float = Field(default=0.60, ge=0.0, le=1.0)
     min_signal_agreement: float = Field(default=0.60, ge=0.0, le=1.0)
     min_data_completeness: float = Field(default=0.75, ge=0.0, le=1.0)
