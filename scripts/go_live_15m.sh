@@ -8,6 +8,7 @@ export PATH="${HOME}/.local/bin:${PATH}"
 export DRY_RUN=true
 export DRY_RUN_15M=false
 export DRY_RUN_1H=true
+export BENCHMARK_MODE=kalshi_passthrough
 bash scripts/bootstrap_env.sh
 
 set -a
