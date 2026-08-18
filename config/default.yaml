@@ -43,14 +43,14 @@ spot_lag:
   poll_interval_sec: 1.0
 
 orderbook_skew:
-  enabled: false
+  enabled: true
   ensemble_enabled: true
-  ensemble_max_seconds_remaining: 540
+  ensemble_max_seconds_remaining: 300
   top_levels: 5
-  max_seconds_remaining: 180
+  max_seconds_remaining: 300
   min_skew: 0.25
   min_z_distance: 1.5
-  min_edge: 0.20
+  min_edge: 0.11
 
 mean_reversion:
   enabled: false
@@ -120,29 +120,29 @@ longshot:
 
 strategy:
   contract_duration_seconds: 900
-  min_edge: 0.12
-  target_edge: 0.12
+  min_edge: 0.11
+  target_edge: 0.11
   mispricing_enabled: true
   dynamic_edge_enabled: true
   dynamic_edge_bands:
     - min_minutes: 10.0
       max_minutes: 15.0
-      min_edge: 0.12
+      min_edge: 0.11
     - min_minutes: 7.0
       max_minutes: 10.0
-      min_edge: 0.12
+      min_edge: 0.11
     - min_minutes: 5.0
       max_minutes: 7.0
-      min_edge: 0.12
+      min_edge: 0.11
     - min_minutes: 3.0
       max_minutes: 5.0
-      min_edge: 0.12
+      min_edge: 0.11
     - min_minutes: 1.0
       max_minutes: 3.0
-      min_edge: 0.12
+      min_edge: 0.11
     - min_minutes: 0.0
       max_minutes: 1.0
-      min_edge: 0.12
+      min_edge: 0.11
   late_favorite_edge_bands:
     - min_minutes: 5.0
       max_minutes: 7.0
