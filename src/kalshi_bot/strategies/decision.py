@@ -175,6 +175,7 @@ class DecisionConfig:
     chop_zone_min_sigma: float = 0.0
     require_orderbook_depth: bool = False
     mispricing_enabled: bool = True
+    pyramiding_enabled: bool = False
 
     @property
     def effective_minimum_edge(self) -> Decimal:
@@ -258,6 +259,7 @@ def decision_config_from_app(
         chop_zone_min_sigma=strategy.chop_zone_min_sigma,
         require_orderbook_depth=strategy.require_orderbook_depth,
         mispricing_enabled=strategy.mispricing_enabled,
+        pyramiding_enabled=strategy.pyramiding_enabled,
     )
 
 
@@ -686,19 +688,32 @@ class DecisionEngine:
                     quantity=position.quantity,
                     target_edge=cfg.target_edge,
                 )
-            return DecisionResult(
-                action=DecisionAction.HOLD,
-                reason="existing same-side position; pyramiding is not allowed",
-                gate_failures=tuple(failures),
-                current_direction=current_direction,
-                predicted_direction=predicted_direction,
-                trade_direction=Direction.FLAT,
-                selected_side=position.side,
-                predicted_probability=forecast.p_up if position.side is ContractSide.YES else forecast.p_down,
-                quantity=position.quantity,
-                target_edge=cfg.target_edge,
-            )
+            if cfg.pyramiding_enabled and position.side == predicted_side:
+                pass  # continue to entry evaluation for a pyramid add
+            else:
+                hold_reason = (
+                    "opposite-side position must be exited before entry"
+                    if position.side != predicted_side
+                    else "existing same-side position; pyramiding is not allowed"
+                )
+                return DecisionResult(
+                    action=DecisionAction.HOLD,
+                    reason=hold_reason,
+                    gate_failures=tuple(failures),
+                    current_direction=current_direction,
+                    predicted_direction=predicted_direction,
+                    trade_direction=Direction.FLAT,
+                    selected_side=position.side,
+                    predicted_probability=forecast.p_up if position.side is ContractSide.YES else forecast.p_down,
+                    quantity=position.quantity,
+                    target_edge=cfg.target_edge,
+                )
 
+        pyramid_add = (
+            cfg.pyramiding_enabled
+            and position is not None
+            and position.quantity > 0
+        )
         executions = {}
         side_probabilities = {
             ContractSide.YES: forecast.p_up,
@@ -997,6 +1012,8 @@ class DecisionEngine:
             )
             report_edge = side_probabilities[selected_side]
             report_required = cfg.minimum_confidence
+        if pyramid_add and position is not None and position.side == selected_side:
+            entry_reason += " (pyramid add)"
         return DecisionResult(
             action=action,
             reason=entry_reason,

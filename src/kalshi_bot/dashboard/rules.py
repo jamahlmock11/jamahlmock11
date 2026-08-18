@@ -70,6 +70,10 @@ def _rules_15m(cfg: AppConfig | None, mode: str, account: str) -> list[dict[str,
         {"key": "Price floor", "value": f"≥{min_price * 100:.0f}¢"},
         {"key": "Spread", "value": f"≤{max_spread * 100:.0f}¢"},
         {"key": "Depth", "value": f"≥{depth:.0f} ct"},
+        {
+            "key": "Pyramiding",
+            "value": "ON" if strategy and strategy.pyramiding_enabled else "OFF",
+        },
         {"key": "Bankroll", "value": f"${bankroll:.0f} / ${exposure:.0f} cap"},
     ]
 

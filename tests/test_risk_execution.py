@@ -179,6 +179,15 @@ def test_position_manager_requires_exit_before_flip_and_rejects_duplicates():
             price=0.4,
             timestamp=NOW,
         )
+    with pytest.raises(PositionConflictError):
+        manager.enter(
+            intent_id="pyramid-blocked",
+            contract="T",
+            side=ContractSide.YES,
+            quantity=1,
+            price=0.5,
+            timestamp=NOW,
+        )
     manager.exit(
         intent_id="exit",
         contract="T",
@@ -194,6 +203,37 @@ def test_position_manager_requires_exit_before_flip_and_rejects_duplicates():
         timestamp=NOW + timedelta(seconds=2),
     )
     assert manager.position("T").side is ContractSide.NO
+
+
+def test_position_manager_pyramiding_adds_to_same_side():
+    manager = PositionManager(
+        PositionManagerConfig(
+            max_flips_per_contract=0,
+            max_trades_per_contract=4,
+            pyramiding_enabled=True,
+        )
+    )
+    manager.enter(
+        intent_id="base",
+        contract="T",
+        side=ContractSide.YES,
+        quantity=1,
+        price=0.40,
+        timestamp=NOW,
+    )
+    manager.enter(
+        intent_id="add",
+        contract="T",
+        side=ContractSide.YES,
+        quantity=1,
+        price=0.60,
+        timestamp=NOW + timedelta(seconds=1),
+    )
+    position = manager.position("T")
+    assert position is not None
+    assert position.quantity == 2
+    assert position.entry_price == pytest.approx(0.50)
+    assert len(manager.entries) == 2
 
 
 def test_consecutive_losses_activate_risk_lock():

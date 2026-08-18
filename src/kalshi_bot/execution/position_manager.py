@@ -32,6 +32,7 @@ class PositionManagerConfig:
 
     max_flips_per_contract: int = 2
     max_trades_per_contract: int = 4
+    pyramiding_enabled: bool = False
 
     def __post_init__(self) -> None:
         if self.max_flips_per_contract < 0:
@@ -248,19 +249,61 @@ class PositionManager:
         self._validate_fill(quantity, price, fee)
         existing = self._positions.get(contract)
         if existing is not None:
-            reason = (
-                "pyramiding is not allowed"
-                if existing.side is side
-                else "opposite position must be exited before entry"
+            if existing.side is not side:
+                self._reject(
+                    intent_id,
+                    contract,
+                    "ENTRY",
+                    "opposite position must be exited before entry",
+                    observed_at,
+                    PositionConflictError,
+                )
+            if not self.config.pyramiding_enabled:
+                self._reject(
+                    intent_id,
+                    contract,
+                    "ENTRY",
+                    "pyramiding is not allowed",
+                    observed_at,
+                    PositionConflictError,
+                )
+            trades = self._trade_counts.get(contract, 0)
+            if trades >= self.config.max_trades_per_contract:
+                self._reject(
+                    intent_id,
+                    contract,
+                    "ENTRY",
+                    "maximum trades per contract reached",
+                    observed_at,
+                    PositionLimitError,
+                )
+            combined_qty = existing.quantity + quantity
+            combined_price = (
+                existing.entry_price * existing.quantity + price * quantity
+            ) / combined_qty
+            combined_fee = existing.entry_fee + fee
+            record = EntryRecord(
+                intent_id=intent_id,
+                contract=contract,
+                side=side,
+                quantity=quantity,
+                price=price,
+                fee=fee,
+                timestamp=observed_at,
             )
-            self._reject(
-                intent_id,
-                contract,
-                "ENTRY",
-                reason,
-                observed_at,
-                PositionConflictError,
+            self._positions[contract] = Position(
+                contract=contract,
+                side=side,
+                quantity=combined_qty,
+                entry_price=combined_price,
+                entry_fee=combined_fee,
+                opened_at=existing.opened_at,
+                entry_intent_id=existing.entry_intent_id,
             )
+            self._entries.append(record)
+            self._trade_counts[contract] = trades + 1
+            self._last_sides[contract] = side
+            return record
         trades = self._trade_counts.get(contract, 0)
         if trades >= self.config.max_trades_per_contract:
             self._reject(
