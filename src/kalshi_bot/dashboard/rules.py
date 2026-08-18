@@ -70,6 +70,17 @@ def _rules_15m(cfg: AppConfig | None, mode: str, account: str) -> list[dict[str,
     ]
 
 
+def _entry_band_label(min_price: float, max_price: float | None) -> str:
+    """Format favorite-band display; handles disabled band (no min/max ceiling)."""
+    if max_price is None and min_price <= 0:
+        return "OFF"
+    if max_price is None:
+        return f"≥{min_price * 100:.0f}¢"
+    if min_price <= 0:
+        return f"≤{max_price * 100:.0f}¢"
+    return f"{min_price * 100:.0f}–{max_price * 100:.0f}¢ favorites"
+
+
 def _rules_1h(cfg: AppConfig | None, mode: str) -> list[dict[str, str]]:
     hour = cfg.hour if cfg else None
     terminal = cfg.terminal_probability if cfg else None
@@ -82,7 +93,7 @@ def _rules_1h(cfg: AppConfig | None, mode: str) -> list[dict[str, str]]:
     min_agree = terminal.minimum_ensemble if terminal else 0.50
     align = terminal.forecast_alignment_min_probability if terminal else 0.52
     min_price = terminal.min_entry_executable_cost if terminal else 0.0
-    max_price = terminal.max_entry_executable_cost
+    max_price = terminal.max_entry_executable_cost if terminal else None
     mispricing = terminal.mispricing_enabled if terminal else False
     dynamic_edge = terminal.dynamic_edge_enabled if terminal else False
     edge_gate = mispricing or dynamic_edge
@@ -120,14 +131,7 @@ def _rules_1h(cfg: AppConfig | None, mode: str) -> list[dict[str, str]]:
             }
         )
     rules.extend([
-        {
-            "key": "Entry band",
-            "value": (
-                "OFF"
-                if max_price is None and min_price <= 0
-                else f"{min_price * 100:.0f}–{max_price * 100:.0f}¢ favorites"
-            ),
-        },
+        {"key": "Entry band", "value": _entry_band_label(min_price, max_price)},
         {"key": "Alignment", "value": f"≥{align * 100:.0f}% on side"},
         {"key": "Confidence", "value": f"≥{min_conf * 100:.0f}%"},
         {"key": "Agreement", "value": f"≥{min_agree * 100:.0f}%"},

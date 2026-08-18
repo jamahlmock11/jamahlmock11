@@ -283,3 +283,15 @@ def test_dashboard_reversal_status_in_decisions(tmp_path: Path):
     assert decision["reversal_status"]["tier_label"] == "Candidate"
     lag_req = next(r for r in decision["requirements"] if r["id"] == "lag_reversal")
     assert lag_req["status"] == "pass"
+
+
+def test_active_edge_rules_with_null_max_entry_band():
+    from kalshi_bot.dashboard.rules import _entry_band_label, active_edge_rules
+
+    assert _entry_band_label(0.0, None) == "OFF"
+    assert _entry_band_label(0.6, None) == "≥60¢"
+    assert _entry_band_label(0.0, 0.9) == "≤90¢"
+
+    payload = active_edge_rules(mode="LIVE")
+    entry_band = next(r for r in payload["rules_1h"] if r["key"] == "Entry band")
+    assert entry_band["value"] == "OFF"

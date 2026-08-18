@@ -46,6 +46,7 @@ restart_bot() {
 
 restart_bot kalshi_15m_bot scripts/run_15m.sh
 restart_bot kalshi_1h_bot scripts/run_1h.sh
+restart_bot edge_desk scripts/run_dashboard.sh
 
 echo "Done. Tail logs:"
 echo "  tail -f logs/15m.log logs/1h.log"
