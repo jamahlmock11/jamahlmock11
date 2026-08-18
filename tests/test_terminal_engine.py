@@ -146,7 +146,7 @@ def test_dynamic_edge_bands():
     cfg_tiered = cfg.model_copy(update={"dynamic_edge_enabled": True})
     assert required_edge_for_minutes(50, cfg_tiered) == pytest.approx(0.10)
     assert required_edge_for_minutes(12, cfg_tiered) == pytest.approx(0.08)
-    assert required_edge_for_minutes(3, cfg_tiered) == pytest.approx(0.06)
+    assert required_edge_for_minutes(2, cfg_tiered) == pytest.approx(0.04)
 
 
 def test_one_hour_edge_scenarios():

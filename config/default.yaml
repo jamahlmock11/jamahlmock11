@@ -137,12 +137,9 @@ strategy:
     - min_minutes: 3.0
       max_minutes: 5.0
       min_edge: 0.08
-    - min_minutes: 1.0
-      max_minutes: 3.0
-      min_edge: 0.06
     - min_minutes: 0.0
-      max_minutes: 1.0
-      min_edge: 0.06
+      max_minutes: 3.0
+      min_edge: 0.04
   late_favorite_edge_bands:
     - min_minutes: 5.0
       max_minutes: 7.0
@@ -152,7 +149,7 @@ strategy:
       min_edge: 0.08
     - min_minutes: 0.0
       max_minutes: 3.0
-      min_edge: 0.06
+      min_edge: 0.04
   min_confidence: 0.0
   min_signal_agreement: 0.55
   setup_score_enabled: true
@@ -171,7 +168,7 @@ strategy:
   late_confidence_increment: 0.10
   late_favorite_seconds: 420
   late_favorite_poll_threshold: 0.80
-  late_favorite_min_edge: 0.06
+  late_favorite_min_edge: 0.04
   late_favorite_min_model_probability: 0.88
   order_quantity: 1
   min_trade_quality_score: 70

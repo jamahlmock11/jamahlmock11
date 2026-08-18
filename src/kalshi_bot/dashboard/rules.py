@@ -40,7 +40,7 @@ def _rules_15m(cfg: AppConfig | None, mode: str, account: str) -> list[dict[str,
         "OFF"
         if strategy and not strategy.dynamic_edge_enabled and not strategy.mispricing_enabled
         else (
-            "15–10m:10¢ · 10–7m:10¢ · 7–5m:8¢ · 5–3m:8¢ · <3m:6¢"
+            "15–10m:10¢ · 10–7m:10¢ · 7–5m:8¢ · 5–3m:8¢ · <3m:4¢"
             if strategy and strategy.dynamic_edge_enabled
             else "OFF"
         )
@@ -92,7 +92,7 @@ def _rules_1h(cfg: AppConfig | None, mode: str) -> list[dict[str, str]]:
     risk = cfg.risk if cfg else None
 
     min_secs = hour.min_seconds_remaining if hour else 60
-    max_mins = (hour.max_entry_seconds_remaining / 60.0) if hour else 15
+    max_mins = (hour.max_entry_seconds_remaining / 60.0) if hour else 25
     min_conf = terminal.minimum_confidence if terminal else 0.52
     min_agree = terminal.minimum_ensemble if terminal else 0.50
     align = terminal.forecast_alignment_min_probability if terminal else 0.52
@@ -131,7 +131,7 @@ def _rules_1h(cfg: AppConfig | None, mode: str) -> list[dict[str, str]]:
         rules.append(
             {
                 "key": "Edge tiers",
-                "value": "30–60m:10¢ · 10–30m:8¢ · 5–10m:8¢ · <5m:6¢",
+                "value": "30–60m:10¢ · 10–30m:8¢ · 5–10m:8¢ · 3–5m:6¢ · <3m:4¢",
             }
         )
     rules.extend([
@@ -163,7 +163,7 @@ def active_edge_rules(*, mode: str = "LIVE", account: str = "API connected") -> 
 
     summary = (
         f"15m: {min_edge * 100:.0f}¢ edge, ≥{min_agreement * 100:.0f}% ensemble. "
-        f"1h: terminal forecast, last 15m, tiered edge."
+        f"1h: terminal forecast, last 25m, tiered edge."
     )
 
     return {
@@ -176,7 +176,7 @@ def active_edge_rules(*, mode: str = "LIVE", account: str = "API connected") -> 
             f"BRTI + microstructure gates."
         ),
         "summary_1h": (
-            "Terminal probability across all hourly strikes in the last 15 minutes; "
+            "Terminal probability across all hourly strikes in the last 25 minutes; "
             + (
                 "mispricing gate on."
                 if cfg_1h and cfg_1h.terminal_probability.mispricing_enabled

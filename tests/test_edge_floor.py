@@ -16,8 +16,7 @@ def _bands_15m() -> list[DynamicEdgeBand]:
         DynamicEdgeBand(min_minutes=7.0, max_minutes=10.0, min_edge=0.10),
         DynamicEdgeBand(min_minutes=5.0, max_minutes=7.0, min_edge=0.08),
         DynamicEdgeBand(min_minutes=3.0, max_minutes=5.0, min_edge=0.08),
-        DynamicEdgeBand(min_minutes=1.0, max_minutes=3.0, min_edge=0.06),
-        DynamicEdgeBand(min_minutes=0.0, max_minutes=1.0, min_edge=0.06),
+        DynamicEdgeBand(min_minutes=0.0, max_minutes=3.0, min_edge=0.04),
     ]
 
 
@@ -27,7 +26,7 @@ def test_edge_tiers_by_time_remaining():
     assert required_edge_from_bands(600, bands, 0.10) == pytest.approx(0.10)  # 10m
     assert required_edge_from_bands(420, bands, 0.10) == pytest.approx(0.08)  # 7m
     assert required_edge_from_bands(300, bands, 0.10) == pytest.approx(0.08)  # 5m
-    assert required_edge_from_bands(120, bands, 0.10) == pytest.approx(0.06)  # 2m
+    assert required_edge_from_bands(120, bands, 0.10) == pytest.approx(0.04)  # 2m
 
 
 def test_strategy_minimum_edge_floor_with_dynamic_bands():
@@ -36,7 +35,7 @@ def test_strategy_minimum_edge_floor_with_dynamic_bands():
         dynamic_edge_enabled=True,
         dynamic_edge_bands=_bands_15m(),
     )
-    assert strategy_minimum_edge_floor(strategy) == pytest.approx(0.06)
+    assert strategy_minimum_edge_floor(strategy) == pytest.approx(0.04)
 
 
 def test_strategy_required_edge_uses_dynamic_bands():
@@ -45,4 +44,4 @@ def test_strategy_required_edge_uses_dynamic_bands():
         dynamic_edge_enabled=True,
         dynamic_edge_bands=_bands_15m(),
     )
-    assert strategy_required_edge(120, strategy) == pytest.approx(0.06)
+    assert strategy_required_edge(120, strategy) == pytest.approx(0.04)

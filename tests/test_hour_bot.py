@@ -392,7 +392,7 @@ def test_1h_yaml_loads_without_validation_error():
     assert cfg.horizon == "1h"
     assert cfg.hour.series_ticker == "KXBTCD"
     assert cfg.longshot.enabled is False
-    assert cfg.hour.max_entry_seconds_remaining == pytest.approx(900)
+    assert cfg.hour.max_entry_seconds_remaining == pytest.approx(1500)
     assert cfg.strategy.minimum_dominant_poll is None
     assert cfg.strategy.require_dominant_poll_side is False
     assert cfg.strategy.min_entry_executable_cost == pytest.approx(0.0)
