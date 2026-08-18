@@ -37,7 +37,7 @@ def _rules_15m(cfg: AppConfig | None, mode: str, account: str) -> list[dict[str,
     exposure = risk.max_contract_exposure if risk else 25
     depth = strategy.order_quantity if strategy else 1
     edge_tiers = (
-        "15–10m:10¢ · 10–7m:10¢ · 7–5m:8¢ · 5–3m:8¢ · <3m:6¢"
+        "12–7m:11¢ · 7–3m:11¢ · 3–1m:11¢ · <1m:11¢"
         if strategy and strategy.dynamic_edge_enabled
         else "OFF (forecast only)"
     )
