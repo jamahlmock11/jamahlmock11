@@ -77,30 +77,42 @@ def _rules_1h(cfg: AppConfig | None, mode: str) -> list[dict[str, str]]:
     risk = cfg.risk if cfg else None
 
     min_secs = hour.min_seconds_remaining if hour else 60
-    max_mins = (hour.max_entry_seconds_remaining / 60.0) if hour else 55
+    max_mins = (hour.max_entry_seconds_remaining / 60.0) if hour else 15
     min_conf = terminal.minimum_confidence if terminal else 0.52
     min_agree = terminal.minimum_ensemble if terminal else 0.50
     align = terminal.forecast_alignment_min_probability if terminal else 0.52
-    min_price = terminal.min_entry_executable_cost if terminal else 0.60
-    max_price = terminal.max_entry_executable_cost if terminal else 0.90
+    min_price = terminal.min_entry_executable_cost if terminal else 0.0
+    max_price = terminal.max_entry_executable_cost
     mispricing = terminal.mispricing_enabled if terminal else False
+    dynamic_edge = terminal.dynamic_edge_enabled if terminal else False
+    edge_gate = mispricing or dynamic_edge
     all_strikes = hour.evaluate_all_active_strikes if hour else True
     strong = hour.strong_evidence_min_probability if hour else 0.78
-    persistence = terminal.signal_persistence_polls if terminal else 1
+    persistence = terminal.signal_persistence_polls if terminal else 2
+    stop_loss = risk.stop_loss_fraction if risk else 0.45
+    take_profit = risk.take_profit_bid_price if risk else 0.90
     bankroll = risk.max_position_size if risk else 50
     kelly = risk.kelly_enabled if risk else False
 
     rules = [
         {"key": "Mode", "value": mode},
-        {"key": "Window", "value": f"first {max_mins:.0f}m · ≥{min_secs:.0f}s left"},
+        {"key": "Window", "value": f"last {max_mins:.0f}m · ≥{min_secs:.0f}s left"},
         {"key": "Strikes", "value": "all active hour books" if all_strikes else "nearest ATM"},
         {
             "key": "Primary gate",
-            "value": "model prob − executable price" if mispricing else "forecast alignment",
+            "value": (
+                "model prob − ask (tiers)"
+                if edge_gate and not mispricing
+                else (
+                    "model prob − executable price"
+                    if mispricing
+                    else "forecast alignment"
+                )
+            ),
         },
-        {"key": "Mispricing", "value": "ON (edge vs book)" if mispricing else "OFF (forecast only)"},
+        {"key": "Mispricing", "value": "ON (edge vs book)" if mispricing else "OFF (forecast + tiers)"},
     ]
-    if mispricing and terminal and terminal.dynamic_edge_enabled:
+    if edge_gate and terminal:
         rules.append(
             {
                 "key": "Edge tiers",
@@ -110,13 +122,19 @@ def _rules_1h(cfg: AppConfig | None, mode: str) -> list[dict[str, str]]:
     rules.extend([
         {
             "key": "Entry band",
-            "value": f"{min_price * 100:.0f}–{max_price * 100:.0f}¢ favorites",
+            "value": (
+                "OFF"
+                if max_price is None and min_price <= 0
+                else f"{min_price * 100:.0f}–{max_price * 100:.0f}¢ favorites"
+            ),
         },
         {"key": "Alignment", "value": f"≥{align * 100:.0f}% on side"},
         {"key": "Confidence", "value": f"≥{min_conf * 100:.0f}%"},
         {"key": "Agreement", "value": f"≥{min_agree * 100:.0f}%"},
         {"key": "Strong thesis", "value": f"≥{strong * 100:.0f}% (rank boost)"},
         {"key": "Persistence", "value": f"{persistence} poll(s)"},
+        {"key": "Stop loss", "value": f"{stop_loss * 100:.0f}% premium"},
+        {"key": "Take profit", "value": f"bid ≥{take_profit * 100:.0f}¢" if take_profit else "OFF"},
         {"key": "Kelly", "value": "ON" if kelly else "OFF"},
         {"key": "Bankroll", "value": f"${bankroll:.0f} cap"},
     ])
@@ -137,7 +155,7 @@ def active_edge_rules(*, mode: str = "LIVE", account: str = "API connected") -> 
 
     summary = (
         f"15m: {min_edge * 100:.0f}¢ edge, ≥{min_agreement * 100:.0f}% ensemble. "
-        f"1h: terminal forecast, all strikes, favorites band."
+        f"1h: terminal forecast, last 15m, tiered edge."
     )
 
     return {
@@ -150,11 +168,11 @@ def active_edge_rules(*, mode: str = "LIVE", account: str = "API connected") -> 
             f"BRTI + microstructure gates."
         ),
         "summary_1h": (
-            "Terminal probability across all hourly strikes; "
+            "Terminal probability across all hourly strikes in the last 15 minutes; "
             + (
                 "mispricing gate on."
                 if cfg_1h and cfg_1h.terminal_probability.mispricing_enabled
-                else "forecast-only entries (mispricing off)."
+                else "forecast + tiered edge (mispricing off)."
             )
         ),
         "config_15m": strategy.model_dump() if strategy else {},

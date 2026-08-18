@@ -59,6 +59,8 @@ class TerminalDecisionConfig:
     recovery_hold_min_confidence: float = 0.58
     recovery_hold_min_agreement: float = 0.58
     min_hold_seconds: float = 120.0
+    take_profit_bid_price: float | None = None
+    take_profit_late_seconds: float = 0.0
     position_reversal: PositionReversalConfig = field(default_factory=PositionReversalConfig)
 
 
@@ -513,6 +515,8 @@ class HourTerminalDecisionEngine:
                 recovery_hold_min_confidence=cfg.recovery_hold_min_confidence,
                 recovery_hold_min_agreement=cfg.recovery_hold_min_agreement,
                 min_hold_seconds=cfg.min_hold_seconds,
+                take_profit_bid_price=cfg.take_profit_bid_price,
+                take_profit_late_seconds=cfg.take_profit_late_seconds,
                 position_reversal=cfg.position_reversal,
                 now=observed_now,
             )
@@ -629,7 +633,8 @@ class HourTerminalDecisionEngine:
             )
             return decision, mispricing, stability_swing
 
-        if tcfg.mispricing_enabled and (
+        edge_gate_active = tcfg.mispricing_enabled or tcfg.dynamic_edge_enabled
+        if edge_gate_active and (
             selected_mispricing.raw_edge + 1e-12 < mispricing.required_edge
         ):
             failures.append(
@@ -747,7 +752,7 @@ class HourTerminalDecisionEngine:
                             if selected_side is ContractSide.YES
                             else mispricing.no
                         )
-                        if tcfg.mispricing_enabled and (
+                        if edge_gate_active and (
                             selected_mispricing is None
                             or selected_mispricing.raw_edge + 1e-12 < mispricing.required_edge
                         ):
@@ -782,9 +787,13 @@ class HourTerminalDecisionEngine:
 
         if failures:
             blocked_reason = (
-                "terminal forecast blocked by safety gates"
-                if not tcfg.mispricing_enabled
-                else "terminal mispricing blocked by safety gates or insufficient net edge"
+                "terminal mispricing blocked by safety gates or insufficient net edge"
+                if tcfg.mispricing_enabled
+                else (
+                    "terminal forecast blocked by safety gates or insufficient edge tier"
+                    if edge_gate_active
+                    else "terminal forecast blocked by safety gates"
+                )
             )
             decision = DecisionResult(
                 action=DecisionAction.NO_TRADE,
@@ -806,12 +815,12 @@ class HourTerminalDecisionEngine:
 
         persistence_edge = (
             selected_mispricing.raw_edge
-            if tcfg.mispricing_enabled
+            if edge_gate_active
             else selected_mispricing.model_probability
         )
         persistence_required = (
             mispricing.required_edge
-            if tcfg.mispricing_enabled
+            if edge_gate_active
             else tcfg.forecast_alignment_min_probability
         )
 
@@ -820,16 +829,23 @@ class HourTerminalDecisionEngine:
             if selected_side is ContractSide.YES
             else DecisionAction.BUY_DOWN
         )
-        entry_reason = (
-            f"terminal mispricing: {selected_side.value} edge "
-            f"{selected_mispricing.raw_edge:.1%} >= required {mispricing.required_edge:.1%}"
-            if tcfg.mispricing_enabled
-            else (
+        if tcfg.mispricing_enabled:
+            entry_reason = (
+                f"terminal mispricing: {selected_side.value} edge "
+                f"{selected_mispricing.raw_edge:.1%} >= required {mispricing.required_edge:.1%}"
+            )
+        elif edge_gate_active:
+            entry_reason = (
+                f"terminal forecast: {selected_side.value} edge "
+                f"{selected_mispricing.raw_edge:.1%} >= tier {mispricing.required_edge:.1%} "
+                f"(P={selected_mispricing.model_probability:.1%})"
+            )
+        else:
+            entry_reason = (
                 f"terminal forecast: {selected_side.value} "
                 f"P={selected_mispricing.model_probability:.1%} "
                 f"(mispricing gate off)"
             )
-        )
         decision = DecisionResult(
             action=action,
             reason=entry_reason,
@@ -882,5 +898,7 @@ def terminal_decision_config_from_app(config) -> TerminalDecisionConfig:
         recovery_hold_min_confidence=app.risk.recovery_hold_min_confidence,
         recovery_hold_min_agreement=app.risk.recovery_hold_min_agreement,
         min_hold_seconds=app.risk.min_hold_seconds,
+        take_profit_bid_price=app.risk.take_profit_bid_price,
+        take_profit_late_seconds=app.risk.take_profit_late_seconds,
         position_reversal=reversal_config_from_risk(app.risk),
     )

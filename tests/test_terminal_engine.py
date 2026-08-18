@@ -191,15 +191,12 @@ def test_one_hour_edge_scenarios():
             calibration_pass=True,
         )
 
-  # 50m: 68% vs 54% = 14¢ edge — passes 10¢ tier (price below 60¢ band blocks live BUY)
+  # 50m: outside last-15m entry window — NO TRADE
     decision, mispricing, _ = decide_at(minutes_remaining=50, model_yes=0.68, yes_ask=0.54)
-    assert mispricing is not None
-    assert mispricing.yes is not None
-    assert mispricing.yes.raw_edge == pytest.approx(0.14, abs=0.01)
-    assert mispricing.yes.raw_edge >= mispricing.required_edge
-    assert any(f.gate == "min_entry_price" for f in decision.gate_failures)
+    assert decision.action is DecisionAction.NO_TRADE
+    assert any(f.gate == "time_window" for f in decision.gate_failures)
 
-    # 12m: 84% vs 76% = 8¢ edge — trade
+    # 12m: 84% vs 76% = 8¢ edge — trade (favorite band off)
     decision, _, _ = decide_at(minutes_remaining=12, model_yes=0.84, yes_ask=0.76)
     assert decision.action is DecisionAction.BUY_UP
     assert decision.edge == pytest.approx(0.08, abs=0.01)
@@ -284,7 +281,7 @@ def test_no_trade_when_edge_too_small():
 
 
 def test_forecast_only_entry_when_mispricing_disabled():
-    features = hour_features()
+    features = hour_features(seconds_remaining=12 * 60)
     trend = classify_trend(dict(features.changes))
     vol = _vol(features)
     terminal = replace(
@@ -295,12 +292,12 @@ def test_forecast_only_entry_when_mispricing_disabled():
             vol,
             market_strike=65_000,
         ),
-        calibrated_p_yes=0.68,
-        calibrated_p_no=0.32,
+        calibrated_p_yes=0.84,
+        calibrated_p_no=0.16,
         confidence=0.75,
         signal_agreement=0.70,
     )
-    market = hour_market(yes_ask=0.68, minutes_remaining=35)
+    market = hour_market(yes_ask=0.76, minutes_remaining=12)
     app_cfg = load_yaml_config("config/1h.yaml")
     app_cfg = app_cfg.model_copy(
         update={
@@ -322,9 +319,43 @@ def test_forecast_only_entry_when_mispricing_disabled():
     )
     assert mispricing is not None
     assert mispricing.yes is not None
-    assert mispricing.yes.net_edge < mispricing.required_edge
+    assert mispricing.yes.raw_edge == pytest.approx(0.08, abs=0.01)
     assert decision.action is DecisionAction.BUY_UP
-    assert "mispricing gate off" in decision.reason
+    assert "tier" in decision.reason
+
+
+def test_dynamic_edge_enforced_when_mispricing_disabled_1h():
+    features = hour_features(seconds_remaining=3 * 60)
+    trend = classify_trend(dict(features.changes))
+    vol = _vol(features)
+    terminal = replace(
+        TerminalProbabilityEngine().estimate(
+            features,
+            Regime.TREND_UP,
+            trend,
+            vol,
+            market_strike=65_000,
+        ),
+        calibrated_p_yes=0.91,
+        calibrated_p_no=0.09,
+        confidence=0.75,
+        signal_agreement=0.70,
+    )
+    market = hour_market(yes_ask=0.88, minutes_remaining=3)
+    app_cfg = load_yaml_config("config/1h.yaml")
+    decision_engine = HourTerminalDecisionEngine(
+        terminal_decision_config_from_app(app_cfg)
+    )
+    decision, _, _ = decision_engine.decide(
+        market,
+        terminal,
+        features,
+        benchmark(),
+        now=NOW,
+        calibration_pass=True,
+    )
+    assert decision.action is DecisionAction.NO_TRADE
+    assert any(f.gate == "minimum_edge" for f in decision.gate_failures)
 
 
 def test_terminal_decision_picks_best_side_not_direction_only():

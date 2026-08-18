@@ -12,6 +12,7 @@ from kalshi_bot.hour.terminal_probability import TerminalForecast
 @dataclass(frozen=True)
 class StrikeRankConfig:
     mispricing_enabled: bool = True
+    dynamic_edge_enabled: bool = False
     strong_evidence_min_probability: float = 0.78
     strong_evidence_min_confidence: float = 0.60
     strong_evidence_min_agreement: float = 0.55
@@ -87,6 +88,7 @@ def rank_terminal_candidate(
     cfg = rank_cfg or StrikeRankConfig()
     strong = _strong_evidence(terminal, mispricing, cfg)
     side_prob = _selected_side_probability(terminal, mispricing)
+    edge_gate_active = cfg.mispricing_enabled or cfg.dynamic_edge_enabled
 
     if decision.action in {DecisionAction.BUY_UP, DecisionAction.BUY_DOWN}:
         tier = 5 if strong else 4
@@ -95,7 +97,7 @@ def rank_terminal_candidate(
     elif decision.action is DecisionAction.HOLD and has_position:
         tier = 3
     elif (
-        cfg.mispricing_enabled
+        edge_gate_active
         and mispricing is not None
         and mispricing.best_raw_edge + 1e-12 >= mispricing.required_edge
     ):
