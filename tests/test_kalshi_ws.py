@@ -11,7 +11,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 
 from kalshi_signer import KalshiRequestSigner
 from kalshi_ws import KalshiWebSocketSubscriber, WS_URL_PROD
-from orderbook_live import LiveOrderBook
+from orderbook_live import LiveOrderBook, TopOfBook, extract_best_bid_ask, handle_orderbook_update
 
 
 def test_signer_websocket_headers_use_ws_path(tmp_path):
@@ -44,6 +44,40 @@ def test_subscriber_uses_header_auth_not_query_params():
     headers = sub._auth_headers()
     assert "api_key" not in headers
     assert headers["KALSHI-ACCESS-SIGNATURE"] == "sig"
+
+
+@pytest.mark.asyncio
+async def test_extract_best_bid_ask_nested_format():
+    payload = {
+        "msg": {
+            "type": "snapshot",
+            "market_ticker": "KXBTC-26AUG26-B105000",
+            "bids": [[45, 120], [44, 80]],
+            "asks": [[47, 95], [48, 60]],
+        }
+    }
+    best = extract_best_bid_ask(payload)
+    assert best is not None
+    assert best.best_bid_cents == 45
+    assert best.best_ask_cents == 47
+    assert best.ticker == "KXBTC-26AUG26-B105000"
+
+
+@pytest.mark.asyncio
+async def test_handle_orderbook_update_nested_format():
+    book = LiveOrderBook(ticker="KXBTC-26AUG26-B105000")
+    payload = {
+        "msg": {
+            "type": "delta",
+            "market_ticker": "KXBTC-26AUG26-B105000",
+            "bids": [[46, 50]],
+            "asks": [[48, 40]],
+        }
+    }
+    top = await handle_orderbook_update(payload, book)
+    assert isinstance(top, TopOfBook)
+    assert top.yes_bid == pytest.approx(0.46)
+    assert top.yes_ask == pytest.approx(0.48)
 
 
 @pytest.mark.asyncio

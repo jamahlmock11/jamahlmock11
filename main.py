@@ -13,7 +13,7 @@ from brti_engine import BRTIEngine, BRTIWebSocketManager
 from config import BotSettings, HARD_STOP_SEC, PHASE1_END_SEC, PHASE2_END_SEC, load_settings, resolve_private_key_path
 from kalshi_client import ActiveContract, AsyncKalshiClient
 from kalshi_ws import KalshiWebSocketSubscriber
-from orderbook_live import LiveOrderBook, TopOfBook
+from orderbook_live import LiveOrderBook, TopOfBook, handle_orderbook_update
 
 logger = logging.getLogger(__name__)
 
@@ -139,7 +139,9 @@ class FifteenMinuteOrchestrator:
         )
 
         async def on_orderbook_message(payload: dict[str, Any]) -> None:
-            state.top_of_book = await live_book.apply_message(payload)
+            top = await handle_orderbook_update(payload, live_book)
+            if isinstance(top, TopOfBook):
+                state.top_of_book = top
 
         ws_task = asyncio.create_task(
             kalshi_ws.stream_order_book(contract.ticker, on_orderbook_message),
