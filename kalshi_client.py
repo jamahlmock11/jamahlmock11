@@ -2,20 +2,17 @@
 
 from __future__ import annotations
 
-import base64
 import logging
 import re
-import time
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
 import httpx
-from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import padding
+
+from kalshi_signer import KalshiRequestSigner
 
 logger = logging.getLogger(__name__)
 
@@ -94,50 +91,26 @@ class AsyncKalshiClient:
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.api_key_id = api_key_id
-        self._private_key = None
-        self._private_key_path = (
-            private_key_path if private_key_path and Path(private_key_path).exists() else ""
-        )
-        if self._private_key_path:
-            pem = Path(self._private_key_path).read_bytes()
-            self._private_key = serialization.load_pem_private_key(pem, password=None)
+        self._signer = KalshiRequestSigner(api_key_id, private_key_path)
         self._http = httpx.AsyncClient(timeout=timeout)
 
     @property
+    def signer(self) -> KalshiRequestSigner:
+        return self._signer
+
+    @property
     def authenticated(self) -> bool:
-        return bool(self.api_key_id and self._private_key is not None)
+        return self._signer.ready
 
     async def close(self) -> None:
         await self._http.aclose()
-
-    def _sign(self, timestamp_ms: str, method: str, path: str) -> str:
-        if self._private_key is None:
-            raise RuntimeError("Kalshi private key not loaded")
-        message = f"{timestamp_ms}{method.upper()}{path.split('?')[0]}".encode()
-        sig = self._private_key.sign(
-            message,
-            padding.PSS(
-                mgf=padding.MGF1(hashes.SHA256()),
-                salt_length=padding.PSS.DIGEST_LENGTH,
-            ),
-            hashes.SHA256(),
-        )
-        return base64.b64encode(sig).decode()
 
     def _headers(self, method: str, endpoint: str) -> dict[str, str]:
         headers = {"Accept": "application/json", "Content-Type": "application/json"}
         if not self.authenticated:
             return headers
-        ts = str(int(time.time() * 1000))
         sign_path = urlparse(f"{self.base_url}{endpoint}").path
-        headers.update(
-            {
-                "KALSHI-ACCESS-KEY": self.api_key_id,
-                "KALSHI-ACCESS-TIMESTAMP": ts,
-                "KALSHI-ACCESS-SIGNATURE": self._sign(ts, method, sign_path),
-            }
-        )
-        return headers
+        return {**headers, **self._signer.generate_headers(method=method, full_path=sign_path)}
 
     async def request(self, method: str, endpoint: str, **kwargs: Any) -> Any:
         if not endpoint.startswith("/"):

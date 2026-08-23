@@ -12,6 +12,8 @@ from typing import Any
 from brti_engine import BRTIEngine, BRTIWebSocketManager
 from config import BotSettings, HARD_STOP_SEC, PHASE1_END_SEC, PHASE2_END_SEC, load_settings, resolve_private_key_path
 from kalshi_client import ActiveContract, AsyncKalshiClient
+from kalshi_ws import KalshiWebSocketSubscriber
+from orderbook_live import LiveOrderBook, TopOfBook
 
 logger = logging.getLogger(__name__)
 
@@ -28,12 +30,31 @@ class Phase(IntEnum):
 class CycleState:
     contract: ActiveContract
     brti: BRTIEngine
+    live_book: LiveOrderBook
+    top_of_book: TopOfBook | None = None
     last_settlement_second: int = -1
     resting_order_ids: list[str] | None = None
 
     def __post_init__(self) -> None:
         if self.resting_order_ids is None:
             self.resting_order_ids = []
+
+
+def _quote_book(state: CycleState) -> TopOfBook:
+    """Prefer live WebSocket top-of-book; fall back to REST snapshot."""
+    if state.top_of_book and state.top_of_book.updated:
+        return state.top_of_book
+    contract = state.contract
+    return TopOfBook(
+        ticker=contract.ticker,
+        yes_bid=contract.yes_bid,
+        yes_ask=contract.yes_ask,
+        no_bid=contract.no_bid,
+        no_ask=contract.no_ask,
+        yes_bid_size=contract.yes_bid_size,
+        yes_ask_size=contract.yes_ask_size,
+        updated=False,
+    )
 
 
 def determine_phase(elapsed_sec: float, *, hard_stop_sec: int = HARD_STOP_SEC) -> Phase:
@@ -108,9 +129,22 @@ class FifteenMinuteOrchestrator:
             contract.close_time.isoformat(),
         )
         brti = BRTIEngine(strike_price=contract.strike)
-        state = CycleState(contract=contract, brti=brti)
+        live_book = LiveOrderBook(ticker=contract.ticker)
+        state = CycleState(contract=contract, brti=brti, live_book=live_book)
         self._cycle = state
 
+        kalshi_ws = KalshiWebSocketSubscriber(
+            self.kalshi.signer,
+            is_demo=self.settings.kalshi_env.lower() == "demo",
+        )
+
+        async def on_orderbook_message(payload: dict[str, Any]) -> None:
+            state.top_of_book = await live_book.apply_message(payload)
+
+        ws_task = asyncio.create_task(
+            kalshi_ws.stream_order_book(contract.ticker, on_orderbook_message),
+            name=f"kalshi-ws-{contract.ticker}",
+        )
         settlement_task = asyncio.create_task(self._settlement_ticker(state))
         try:
             async for vwap in self.ws.vwap_stream():
@@ -135,8 +169,10 @@ class FifteenMinuteOrchestrator:
                 if contract.seconds_remaining <= 0:
                     break
         finally:
+            kalshi_ws.stop()
+            ws_task.cancel()
             settlement_task.cancel()
-            await asyncio.gather(settlement_task, return_exceptions=True)
+            await asyncio.gather(ws_task, settlement_task, return_exceptions=True)
             await self._hard_stop(state)
             self._cycle = None
 
@@ -167,20 +203,21 @@ class FifteenMinuteOrchestrator:
             )
 
     async def _phase2(self, state: CycleState) -> None:
-        contract = state.contract
-        if contract.spread_cents > self.settings.risk.max_spread_cents:
+        book = _quote_book(state)
+        spread_cents = book.spread_cents
+        if spread_cents > self.settings.risk.max_spread_cents:
             return
         if state.resting_order_ids:
             return
 
         offset = self.settings.phase2_maker_offset_cents
-        bid_cents = max(1, min(99, int(round(contract.yes_bid * 100)) + offset))
-        ask_cents = max(1, min(99, int(round(contract.yes_ask * 100)) - offset))
+        bid_cents = max(1, min(99, int(round(book.yes_bid * 100)) + offset))
+        ask_cents = max(1, min(99, int(round(book.yes_ask * 100)) - offset))
 
         size_bid = AsyncKalshiClient.safe_order_size(
             limit_price_cents=bid_cents,
-            depth_at_price=contract.yes_bid_size,
-            spread_cents=contract.spread_cents,
+            depth_at_price=book.yes_bid_size,
+            spread_cents=spread_cents,
             max_contracts=self.settings.risk.max_contracts_per_order,
             max_spread_cents=self.settings.risk.max_spread_cents,
             min_book_depth=self.settings.risk.min_book_depth_contracts,
@@ -190,23 +227,24 @@ class FifteenMinuteOrchestrator:
             return
 
         logger.info(
-            "Phase2 passive bid %s YES %dct x%d (spread=%dct)",
-            contract.ticker,
+            "Phase2 passive bid %s YES %dct x%d (spread=%dct, live=%s)",
+            state.contract.ticker,
             bid_cents,
             size_bid,
-            contract.spread_cents,
+            spread_cents,
+            book.updated,
         )
         if not self.kalshi.authenticated:
             return
         try:
             resp = await self.kalshi.create_order(
-                contract.ticker,
+                state.contract.ticker,
                 side="yes",
                 action="buy",
                 count=size_bid,
                 yes_price=bid_cents,
                 time_in_force="good_til_canceled",
-                client_order_id=f"phase2-bid-{contract.ticker}",
+                client_order_id=f"phase2-bid-{state.contract.ticker}",
             )
             order_id = (resp.get("order") or {}).get("order_id") or resp.get("order_id")
             if order_id:
@@ -217,8 +255,8 @@ class FifteenMinuteOrchestrator:
         # Optional passive ask — sell YES at improved ask (maker rebate capture)
         size_ask = AsyncKalshiClient.safe_order_size(
             limit_price_cents=ask_cents,
-            depth_at_price=contract.yes_ask_size,
-            spread_cents=contract.spread_cents,
+            depth_at_price=book.yes_ask_size,
+            spread_cents=spread_cents,
             max_contracts=self.settings.risk.max_contracts_per_order,
             max_spread_cents=self.settings.risk.max_spread_cents,
             min_book_depth=self.settings.risk.min_book_depth_contracts,
@@ -227,13 +265,13 @@ class FifteenMinuteOrchestrator:
         if size_ask > 0 and self.kalshi.authenticated and not self.settings.dry_run:
             try:
                 resp = await self.kalshi.create_order(
-                    contract.ticker,
+                    state.contract.ticker,
                     side="yes",
                     action="sell",
                     count=size_ask,
                     yes_price=ask_cents,
                     time_in_force="good_til_canceled",
-                    client_order_id=f"phase2-ask-{contract.ticker}",
+                    client_order_id=f"phase2-ask-{state.contract.ticker}",
                 )
                 order_id = (resp.get("order") or {}).get("order_id") or resp.get("order_id")
                 if order_id:
@@ -249,25 +287,25 @@ class FifteenMinuteOrchestrator:
             certainty_max_remaining=self.settings.phase3_certainty_max_remaining,
         )
         fair_yes = phase3_fair_yes_cents(metrics, spot, state.contract.strike)
-        contract = state.contract
-        market_yes = int(round(contract.yes_ask * 100))
+        book = _quote_book(state)
+        market_yes = int(round(book.yes_ask * 100))
         mispricing = fair_yes - market_yes
         if abs(mispricing) < self.settings.phase3_min_mispricing_cents:
             return
-        if contract.spread_cents > self.settings.risk.max_spread_cents:
+        if book.spread_cents > self.settings.risk.max_spread_cents:
             return
 
         if mispricing > 0:
             side, action, price_cents = "yes", "buy", market_yes
-            depth = contract.yes_ask_size
+            depth = book.yes_ask_size
         else:
-            side, action, price_cents = "no", "buy", int(round(contract.no_ask * 100))
-            depth = contract.no_ask_size
+            side, action, price_cents = "no", "buy", int(round(book.no_ask * 100))
+            depth = book.no_ask_size
 
         size = AsyncKalshiClient.safe_order_size(
             limit_price_cents=price_cents,
             depth_at_price=depth,
-            spread_cents=contract.spread_cents,
+            spread_cents=book.spread_cents,
             max_contracts=self.settings.risk.max_contracts_per_order,
             max_spread_cents=self.settings.risk.max_spread_cents,
             min_book_depth=self.settings.risk.min_book_depth_contracts,
@@ -277,14 +315,15 @@ class FifteenMinuteOrchestrator:
             return
 
         logger.info(
-            "Phase3 IOC %s %s %s %dct x%d fair=%dct mispricing=%+dct metrics=%s",
-            contract.ticker,
+            "Phase3 IOC %s %s %s %dct x%d fair=%dct mispricing=%+dct live=%s metrics=%s",
+            state.contract.ticker,
             action.upper(),
             side.upper(),
             price_cents,
             size,
             fair_yes,
             mispricing,
+            book.updated,
             metrics,
         )
         if self.settings.dry_run or not self.kalshi.authenticated:
@@ -293,23 +332,23 @@ class FifteenMinuteOrchestrator:
         try:
             if side == "yes":
                 await self.kalshi.create_order(
-                    contract.ticker,
+                    state.contract.ticker,
                     side="yes",
                     action=action,
                     count=size,
                     yes_price=price_cents,
                     time_in_force="immediate_or_cancel",
-                    client_order_id=f"phase3-{contract.ticker}-{second_index}",
+                    client_order_id=f"phase3-{state.contract.ticker}-{second_index}",
                 )
             else:
                 await self.kalshi.create_order(
-                    contract.ticker,
+                    state.contract.ticker,
                     side="no",
                     action=action,
                     count=size,
                     no_price=price_cents,
                     time_in_force="immediate_or_cancel",
-                    client_order_id=f"phase3-{contract.ticker}-{second_index}",
+                    client_order_id=f"phase3-{state.contract.ticker}-{second_index}",
                 )
         except Exception as exc:
             logger.warning("Phase3 IOC failed: %s", exc)
