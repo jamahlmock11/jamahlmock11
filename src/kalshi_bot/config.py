@@ -517,6 +517,13 @@ class RiskConfig(BaseModel):
         gt=0.0,
         description="Bankroll for Kelly sizing; defaults to max_position_size.",
     )
+    use_live_bankroll: bool = Field(
+        default=False,
+        description=(
+            "Fetch Kalshi cash balance at startup and apply to Kelly bankroll "
+            "and per-trade exposure caps."
+        ),
+    )
 
 
 class DataConfig(BaseModel):

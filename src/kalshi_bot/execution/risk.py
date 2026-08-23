@@ -103,6 +103,27 @@ class RiskManager:
             else max_per_ticker_usd
         )
         self.state = RiskState()
+        self._live_bankroll_usd: float | None = None
+
+    def apply_live_bankroll(self, balance_usd: float) -> float:
+        """Apply exchange cash balance to Kelly bankroll and per-trade caps."""
+        balance = max(0.0, float(balance_usd))
+        risk = self.config.risk
+        cap_fraction = risk.kelly_max_fraction
+        cap_usd = round(balance * cap_fraction, 2)
+        risk.kelly_bankroll_usd = balance
+        risk.max_position_size = cap_usd
+        risk.max_contract_exposure = cap_usd
+        self.config.execution.max_position_usd = cap_usd
+        self.max_per_ticker_usd = cap_usd
+        self._live_bankroll_usd = balance
+        return balance
+
+    def effective_bankroll_usd(self) -> float:
+        if self._live_bankroll_usd is not None:
+            return self._live_bankroll_usd
+        risk_cfg = self.config.risk
+        return risk_cfg.kelly_bankroll_usd or risk_cfg.max_position_size
 
     @property
     def locked(self) -> bool:
@@ -208,7 +229,7 @@ class RiskManager:
         if edge + 1e-12 < floor:
             return 0
 
-        bankroll = risk_cfg.kelly_bankroll_usd or risk_cfg.max_position_size
+        bankroll = self.effective_bankroll_usd()
         daily_room = max(0.0, abs(self.max_daily_loss) + self.state.realized_pnl)
         portfolio_room = max(0.0, risk_cfg.max_position_size - self.state.open_exposure_usd)
         existing = self.state.positions.get(ticker or "", 0.0)
@@ -298,7 +319,7 @@ class RiskManager:
         if self.state.trades_this_cycle >= self.max_trades_per_cycle:
             return 0
         daily_room = max(0.0, abs(self.max_daily_loss) + self.state.realized_pnl)
-        bankroll = self.config.risk.kelly_bankroll_usd or self.config.risk.max_position_size
+        bankroll = self.effective_bankroll_usd()
         if self.config.risk.kelly_enabled:
             budget = min(
                 self.config.risk.max_position_size - self.state.open_exposure_usd,

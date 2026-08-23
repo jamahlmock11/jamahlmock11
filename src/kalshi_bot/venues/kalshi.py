@@ -124,6 +124,29 @@ def series_from_ticker(ticker: str) -> str:
     return ticker.split("-")[0]
 
 
+def parse_balance_dollars(balance_payload: dict[str, Any]) -> float:
+    """Parse Kalshi /portfolio/balance into USD cash available."""
+    if not balance_payload:
+        return 0.0
+    dollars = balance_payload.get("balance_dollars")
+    if dollars is not None and dollars != "":
+        return max(0.0, float(dollars))
+    cents = balance_payload.get("balance")
+    if cents is not None and cents != "":
+        return max(0.0, float(cents) / 100.0)
+    breakdown = balance_payload.get("balance_breakdown")
+    if isinstance(breakdown, list) and breakdown:
+        total = 0.0
+        for row in breakdown:
+            if not isinstance(row, dict):
+                continue
+            value = row.get("balance")
+            if value is not None and value != "":
+                total += float(value)
+        return max(0.0, total)
+    return 0.0
+
+
 class KalshiClient:
     def __init__(
         self,

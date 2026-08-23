@@ -307,3 +307,29 @@ def test_live_hour_execution_allows_tier_edge_below_global_20_percent():
     assert report is not None
     assert report.ok
     kalshi.create_order.assert_called_once()
+
+
+def test_parse_balance_dollars_from_kalshi_payload():
+    from kalshi_bot.venues.kalshi import parse_balance_dollars
+
+    assert parse_balance_dollars({"balance_dollars": "35.2943"}) == 35.2943
+    assert parse_balance_dollars({"balance": 3529}) == 35.29
+
+
+def test_apply_live_bankroll_sets_kelly_and_caps():
+    cfg = AppConfig(
+        execution=ExecutionConfig(max_position_usd=1.50),
+        risk=RiskConfig(
+            max_position_size=1.50,
+            max_contract_exposure=1.50,
+            kelly_max_fraction=0.25,
+        ),
+    )
+    risk = RiskManager(cfg, max_per_ticker_usd=1.50)
+    applied = risk.apply_live_bankroll(35.29)
+    assert applied == 35.29
+    assert risk.effective_bankroll_usd() == 35.29
+    assert cfg.risk.kelly_bankroll_usd == 35.29
+    assert cfg.risk.max_position_size == pytest.approx(8.82)
+    assert cfg.execution.max_position_usd == pytest.approx(8.82)
+    assert risk.max_per_ticker_usd == pytest.approx(8.82)
