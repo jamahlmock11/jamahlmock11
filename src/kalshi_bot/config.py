@@ -288,6 +288,15 @@ class StrategyConfig(BaseModel):
     )
     min_confidence: float = Field(default=0.60, ge=0.0, le=1.0)
     min_signal_agreement: float = Field(default=0.60, ge=0.0, le=1.0)
+    min_signal_agreement_split: float = Field(
+        default=0.53,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Lower ensemble agreement floor when directional components disagree "
+            "(signal_agreement < 100%)."
+        ),
+    )
     min_data_completeness: float = Field(default=0.75, ge=0.0, le=1.0)
     max_spread: float = Field(default=0.12, ge=0.0, le=1.0)
     min_seconds_remaining: float = Field(

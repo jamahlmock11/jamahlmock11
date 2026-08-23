@@ -44,6 +44,9 @@ def _rules_15m(cfg: AppConfig | None, mode: str, account: str) -> list[dict[str,
     risk = cfg.risk if cfg else None
     min_edge = strategy.min_edge if strategy else 0.20
     min_agreement = strategy.min_signal_agreement if strategy else 0.48
+    min_agreement_split = (
+        strategy.min_signal_agreement_split if strategy else 0.53
+    )
     max_spread = strategy.max_spread if strategy else 0.12
     min_price = strategy.min_entry_executable_cost if strategy else 0.08
     late_fav_secs = strategy.late_favorite_seconds if strategy else 420
@@ -88,7 +91,10 @@ def _rules_15m(cfg: AppConfig | None, mode: str, account: str) -> list[dict[str,
                 )
             ),
         },
-        {"key": "Ensemble", "value": f"≥{min_agreement * 100:.0f}%"},
+        {"key": "Ensemble", "value": (
+            f"≥{min_agreement * 100:.0f}% unanimous · "
+            f"≥{min_agreement_split * 100:.0f}% split"
+        )},
         {"key": "Price floor", "value": f"≥{min_price * 100:.0f}¢"},
         {"key": "Spread", "value": f"≤{max_spread * 100:.0f}¢"},
         {"key": "Depth", "value": f"≥{depth:.0f} ct"},
@@ -200,6 +206,9 @@ def active_edge_rules(*, mode: str = "LIVE", account: str = "API connected") -> 
     strategy = cfg_15m.strategy if cfg_15m else None
     min_edge = strategy.min_edge if strategy else 0.20
     min_agreement = strategy.min_signal_agreement if strategy else 0.48
+    min_agreement_split = (
+        strategy.min_signal_agreement_split if strategy else 0.53
+    )
 
     summary = (
         f"15m: {min_edge * 100:.0f}¢ edge, ≥{min_agreement * 100:.0f}% ensemble. "

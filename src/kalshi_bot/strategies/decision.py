@@ -64,6 +64,17 @@ EDGE_TOLERANCE = Decimal("0.000000000001")
 DEFAULT_MINIMUM_EDGE = float(ABSOLUTE_MINIMUM_EDGE)
 
 
+def required_signal_agreement(
+    signal_agreement: float,
+    minimum_agreement: float,
+    minimum_agreement_split: float,
+) -> float:
+    """Unanimous ensemble uses the higher floor; any dissent uses the split floor."""
+    if signal_agreement + 1e-12 >= 1.0:
+        return minimum_agreement
+    return minimum_agreement_split
+
+
 def edge_gap_details(decision: DecisionResult | None) -> dict[str, float | None]:
     """Return observed, required, and shortfall edge in Kalshi cents (pp)."""
     if decision is None:
@@ -133,6 +144,7 @@ class DecisionConfig:
     maximum_seconds_remaining: float = 15 * 60.0
     minimum_confidence: float = 0.60
     minimum_agreement: float = 0.60
+    minimum_agreement_split: float = 0.53
     minimum_data_completeness: float = 0.75
     minimum_depth: float = 1.0
     maximum_spread: float = 0.12
@@ -219,6 +231,9 @@ def decision_config_from_app(
         minimum_confidence=ls.min_confidence if ls.enabled else strategy.min_confidence,
         minimum_agreement=(
             ls.min_signal_agreement if ls.enabled else strategy.min_signal_agreement
+        ),
+        minimum_agreement_split=(
+            ls.min_signal_agreement if ls.enabled else strategy.min_signal_agreement_split
         ),
         minimum_data_completeness=strategy.min_data_completeness,
         minimum_depth=strategy.order_quantity,
@@ -543,13 +558,22 @@ class DecisionEngine:
                         late_confidence,
                     )
                 )
-        if forecast.signal_agreement < cfg.minimum_agreement:
+        if forecast.signal_agreement < required_signal_agreement(
+            forecast.signal_agreement,
+            cfg.minimum_agreement,
+            cfg.minimum_agreement_split,
+        ):
+            required_agreement = required_signal_agreement(
+                forecast.signal_agreement,
+                cfg.minimum_agreement,
+                cfg.minimum_agreement_split,
+            )
             failures.append(
                 _failure(
                     "agreement",
                     "ensemble components do not agree",
                     forecast.signal_agreement,
-                    cfg.minimum_agreement,
+                    required_agreement,
                 )
             )
         for side in (ContractSide.YES, ContractSide.NO):

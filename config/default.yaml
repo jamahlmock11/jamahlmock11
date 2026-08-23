@@ -155,6 +155,7 @@ strategy:
   late_favorite_edge_bands: []
   min_confidence: 0.0
   min_signal_agreement: 0.60
+  min_signal_agreement_split: 0.53
   setup_score_enabled: true
   setup_score_weight: 0.30
   entry_sweet_spot_min_seconds: 180
@@ -195,7 +196,7 @@ risk:
   max_contract_exposure: 1.50
   max_position_size: 1.50
   max_consecutive_losses: 4
-  max_trades_per_contract: 1
+  max_trades_per_contract: 2
   max_flips_per_contract: 0
   cooldown_seconds: 300
   min_hold_seconds: 60

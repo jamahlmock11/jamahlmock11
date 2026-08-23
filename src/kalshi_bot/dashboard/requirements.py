@@ -6,9 +6,12 @@ import json
 import math
 from typing import Any
 
+from kalshi_bot.strategies.decision import required_signal_agreement
+
 DEFAULT_THRESHOLDS: dict[str, Any] = {
     "min_edge": 0.15,
     "min_signal_agreement": 0.48,
+    "min_signal_agreement_split": 0.53,
     "min_data_completeness": 0.65,
     "min_seconds_remaining": 60.0,
     "max_entry_seconds_remaining": 900.0,
@@ -416,17 +419,27 @@ def build_trade_requirements(row: dict[str, Any]) -> dict[str, Any]:
     )
 
     min_agreement = float(thresholds["min_signal_agreement"])
-    agreement_ok = agreement is not None and float(agreement) >= min_agreement
+    min_agreement_split = float(thresholds.get("min_signal_agreement_split", 0.53))
+    if agreement is not None:
+        required_agreement = required_signal_agreement(
+            float(agreement),
+            min_agreement,
+            min_agreement_split,
+        )
+        agreement_ok = float(agreement) >= required_agreement
+        agreement_detail = (
+            f"{_pct(agreement)} · need ≥{_pct(required_agreement)}"
+            + (" (split)" if required_agreement < min_agreement else " (unanimous)")
+        )
+    else:
+        agreement_ok = False
+        agreement_detail = "unavailable"
     requirements.append(
         _req(
             "signal_agreement",
             "Ensemble agreement",
             status="pass" if agreement_ok and not blocked("signal_agreement") else "fail",
-            detail=(
-                f"{_pct(agreement)} · need ≥{_pct(min_agreement)}"
-                if agreement is not None
-                else "unavailable"
-            ),
+            detail=agreement_detail,
             blocking=blocked("signal_agreement"),
         )
     )
