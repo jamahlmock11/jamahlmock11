@@ -98,10 +98,10 @@ def test_phase3_fair_price_certainty():
     assert phase3_fair_yes_cents(metrics, 99_000, 100_000) == 1
 
 
-def test_phase3_only_defaults():
+def test_all_phases_enabled_defaults():
     settings = BotSettings()
-    assert settings.phase1_enabled is False
-    assert settings.phase2_enabled is False
+    assert settings.phase1_enabled is True
+    assert settings.phase2_enabled is True
     assert settings.phase3_enabled is True
 
 
