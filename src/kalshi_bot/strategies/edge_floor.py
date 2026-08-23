@@ -23,9 +23,15 @@ def required_edge_from_bands(
 
 
 def strategy_minimum_edge_floor(strategy: StrategyConfig) -> float:
-    """Lowest configured edge floor (for risk hard-min when tiers are enabled)."""
+    """Lowest configured edge floor across dynamic and late-favorite tier tables."""
+    candidates: list[float] = []
     if strategy.dynamic_edge_enabled and strategy.dynamic_edge_bands:
-        return min(band.min_edge for band in strategy.dynamic_edge_bands)
+        candidates.append(min(band.min_edge for band in strategy.dynamic_edge_bands))
+    if strategy.late_favorite_edge_bands:
+        candidates.append(min(band.min_edge for band in strategy.late_favorite_edge_bands))
+    candidates.append(strategy.late_favorite_min_edge)
+    if candidates:
+        return min(candidates)
     return strategy.min_edge
 
 

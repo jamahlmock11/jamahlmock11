@@ -10,6 +10,25 @@ from kalshi_bot.config import AppConfig, load_yaml_config
 WORKSPACE = Path(__file__).resolve().parents[3]
 
 
+def _format_edge_tiers(bands: list) -> str:
+    """Build dashboard chip text from dynamic edge bands (half-open minute ranges)."""
+    if not bands:
+        return "OFF"
+    parts: list[str] = []
+    for band in bands:
+        lo = float(band.min_minutes)
+        hi = float(band.max_minutes)
+        cents = int(round(float(band.min_edge) * 100))
+        if lo <= 0:
+            label = f"<{hi:.0f}m"
+        elif hi >= 15:
+            label = f"{hi:.0f}–{lo:.0f}m"
+        else:
+            label = f"{hi:.0f}–{lo:.0f}m"
+        parts.append(f"{label}:{cents}¢")
+    return " · ".join(parts)
+
+
 def _load_config(path: str) -> AppConfig | None:
     full = WORKSPACE / path
     if not full.exists():
@@ -37,8 +56,8 @@ def _rules_15m(cfg: AppConfig | None, mode: str, account: str) -> list[dict[str,
     exposure = risk.max_contract_exposure if risk else 25
     depth = strategy.order_quantity if strategy else 1
     edge_tiers = (
-        "15–10m:10¢ · 10–7m:10¢ · 7–5m:8¢ · 5–3m:8¢ · <3m:6¢"
-        if strategy and strategy.dynamic_edge_enabled
+        _format_edge_tiers(strategy.dynamic_edge_bands)
+        if strategy and strategy.dynamic_edge_enabled and strategy.dynamic_edge_bands
         else "OFF (forecast only)"
     )
 
@@ -59,7 +78,8 @@ def _rules_15m(cfg: AppConfig | None, mode: str, account: str) -> list[dict[str,
             "key": "Late favorite",
             "value": (
                 f"≤{late_fav_secs / 60:.0f}m · poll ≥{late_fav_poll * 100:.0f}% · "
-                f"model ≥{late_fav_model * 100:.0f}% · {persistence} polls → 6–8¢"
+                f"model ≥{late_fav_model * 100:.0f}% · {persistence} polls → "
+                f"{_format_edge_tiers(strategy.late_favorite_edge_bands) if strategy else '6–8¢'}"
             ),
         },
         {"key": "Ensemble", "value": f"≥{min_agreement * 100:.0f}%"},
