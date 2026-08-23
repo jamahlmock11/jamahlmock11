@@ -148,6 +148,57 @@ def test_kalshi_cfbenchmarks_values_parser():
     assert quote.primary and quote.price == pytest.approx(65021.5)
 
 
+def test_create_benchmark_feed_prefers_kalshi_when_authenticated():
+    from kalshi_bot.config import AppConfig, DataConfig
+    from kalshi_bot.data.cf_benchmark import create_benchmark_feed, KalshiCFBenchmarkClient
+    from kalshi_bot.data.supporting_feeds import ConstituentBRTIProxy, SupportingFeeds
+
+    class _AuthKalshi:
+        authenticated = True
+
+        def get(self, path, params=None):
+            return {
+                "payload": [
+                    {
+                        "value": "65021.5",
+                        "time": int((NOW - timedelta(seconds=1)).timestamp() * 1000),
+                    }
+                ]
+            }
+
+    cfg = AppConfig(
+        data=DataConfig(
+            benchmark_mode="constituent_proxy",
+            cf_benchmark_url="kalshi://BRTI",
+        )
+    )
+    feed = create_benchmark_feed(
+        config=cfg,
+        kalshi=_AuthKalshi(),
+        supporting=SupportingFeeds(minimum_venues=2),
+    )
+    assert isinstance(feed, KalshiCFBenchmarkClient)
+    quote = feed.get_quote(now=NOW)
+    assert quote.primary and quote.price == pytest.approx(65021.5)
+
+
+def test_create_benchmark_feed_uses_proxy_without_kalshi_creds():
+    from kalshi_bot.config import AppConfig, DataConfig
+    from kalshi_bot.data.cf_benchmark import create_benchmark_feed
+    from kalshi_bot.data.supporting_feeds import ConstituentBRTIProxy, SupportingFeeds
+
+    class _NoAuthKalshi:
+        authenticated = False
+
+    cfg = AppConfig(data=DataConfig(benchmark_mode="constituent_proxy"))
+    feed = create_benchmark_feed(
+        config=cfg,
+        kalshi=_NoAuthKalshi(),
+        supporting=SupportingFeeds(minimum_venues=2),
+    )
+    assert isinstance(feed, ConstituentBRTIProxy)
+
+
 def test_format_edge_gap_in_kalshi_cents():
     from kalshi_bot.domain import GateFailure
     from kalshi_bot.strategies.decision import format_edge_gap

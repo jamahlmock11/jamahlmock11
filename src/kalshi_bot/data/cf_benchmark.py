@@ -325,10 +325,25 @@ def create_benchmark_feed(
     kalshi: Any | None = None,
     supporting: Any | None = None,
 ):
-    """Build the configured primary benchmark feed."""
+    """Build the configured primary benchmark feed.
+
+    For the 15m bot, official CME CF BRTI is sourced via Kalshi's CF Benchmarks
+    passthrough (``kalshi://BRTI`` → ``/cfbenchmarks/values?id=BRTI``), which
+    proxies https://www.cfbenchmarks.com/api/v1/ without a separate CF license.
+    When Kalshi credentials are present, that path is always preferred over the
+    unofficial constituent exchange proxy.
+    """
     from kalshi_bot.data.supporting_feeds import ConstituentBRTIProxy
 
     mode = config.data.benchmark_mode
+    kalshi_ready = kalshi is not None and getattr(kalshi, "authenticated", False)
+
+    if kalshi_ready and mode in {"kalshi_passthrough", "constituent_proxy"}:
+        return KalshiCFBenchmarkClient(
+            kalshi,
+            index_id=_kalshi_index_id(config.data.cf_benchmark_url),
+            max_age_seconds=config.data.max_brti_age_seconds,
+        )
     if mode == "constituent_proxy":
         if supporting is None:
             raise BenchmarkConfigurationError("supporting feeds required for constituent proxy")

@@ -228,8 +228,9 @@ risk:
   recovery_hold_min_agreement: 0.58
 
 data:
+  # Official CME CF BRTI via Kalshi → CF Benchmarks passthrough (see cfbenchmarks.com/data/indices/BRTI).
   benchmark_mode: kalshi_passthrough
-  cf_benchmark_url: ""
+  cf_benchmark_url: kalshi://BRTI
   cf_benchmark_api_key: ""
   cf_benchmark_api_key_header: Authorization
   cf_benchmark_api_key_prefix: Bearer
