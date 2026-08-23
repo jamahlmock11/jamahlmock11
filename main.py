@@ -248,7 +248,7 @@ class FifteenMinuteOrchestrator:
                 action="buy",
                 count=size_bid,
                 yes_price=bid_cents,
-                time_in_force="good_til_canceled",
+                time_in_force="good_till_canceled",
                 client_order_id=f"phase2-bid-{state.contract.ticker}",
             )
             order_id = (resp.get("order") or {}).get("order_id") or resp.get("order_id")
@@ -275,7 +275,7 @@ class FifteenMinuteOrchestrator:
                     action="sell",
                     count=size_ask,
                     yes_price=ask_cents,
-                    time_in_force="good_til_canceled",
+                    time_in_force="good_till_canceled",
                     client_order_id=f"phase2-ask-{state.contract.ticker}",
                 )
                 order_id = (resp.get("order") or {}).get("order_id") or resp.get("order_id")
