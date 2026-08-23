@@ -118,7 +118,16 @@ def build_assessment(decision: dict[str, Any]) -> dict[str, Any]:
 
     book, side_poll, _dominant = _book_label(decision)
     edge = decision.get("edge")
-    net_edge_cents = round(float(edge) * 100.0) if edge is not None else None
+    observed_edge_cents = decision.get("observed_edge_cents")
+    if observed_edge_cents is not None:
+        net_edge_cents = round(float(observed_edge_cents))
+        net_edge_decimal = float(observed_edge_cents) / 100.0
+    elif edge is not None:
+        net_edge_decimal = float(edge)
+        net_edge_cents = round(net_edge_decimal * 100.0)
+    else:
+        net_edge_decimal = None
+        net_edge_cents = None
 
     agreement = decision.get("signal_agreement")
     ensemble_pct = round(float(agreement) * 100.0) if agreement is not None else None
@@ -152,6 +161,14 @@ def build_assessment(decision: dict[str, Any]) -> dict[str, Any]:
         "side": _side_label(decision),
         "side_poll_pct": side_poll,
         "net_edge_cents": net_edge_cents,
+        "net_edge_text": (
+            f"{net_edge_cents}¢"
+            if net_edge_cents is not None
+            else "—"
+        ),
+        "net_edge_pct": (
+            round(net_edge_decimal * 100.0, 1) if net_edge_decimal is not None else None
+        ),
         "ensemble_pct": ensemble_pct,
         "confidence_pct": confidence_pct,
         "quality": quality,

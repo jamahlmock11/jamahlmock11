@@ -75,6 +75,26 @@ def required_signal_agreement(
     return minimum_agreement_split
 
 
+def format_signed_edge_cents(edge_decimal: float | None) -> str:
+    """Format net edge in Kalshi cents with an explicit minus when negative."""
+    if edge_decimal is None:
+        return "—"
+    cents = float(edge_decimal) * 100.0
+    if abs(cents) < 1.0:
+        return f"{cents:.1f}¢"
+    rounded = int(round(cents))
+    if rounded < 0:
+        return f"-{abs(rounded)}¢"
+    return f"{rounded}¢"
+
+
+def format_signed_edge_percent(edge_decimal: float | None) -> str:
+    """Format net edge as signed percentage points, e.g. -26.4%."""
+    if edge_decimal is None:
+        return "—"
+    return f"{float(edge_decimal) * 100.0:.1f}%"
+
+
 def edge_gap_details(decision: DecisionResult | None) -> dict[str, float | None]:
     """Return observed, required, and shortfall edge in Kalshi cents (pp)."""
     if decision is None:
@@ -120,9 +140,7 @@ def format_edge_gap(decision: DecisionResult | None) -> str:
         return "Edge unavailable (no executable quote)"
 
     def cents(value: float) -> str:
-        if abs(value) < 1.0:
-            return f"{value:.1f}"
-        return f"{value:.0f}"
+        return format_signed_edge_cents(value / 100.0).replace("¢", "")
 
     if gap is None or gap <= 0.05:
         surplus = observed - required

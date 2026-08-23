@@ -416,6 +416,11 @@ html, body {
   color: var(--yellow);
 }
 
+.hero-metric strong.negative-edge,
+td.mono.negative-edge {
+  color: var(--red);
+}
+
 .hero-context {
   display: flex;
   flex-wrap: wrap;

@@ -6,7 +6,10 @@ import json
 import math
 from typing import Any
 
-from kalshi_bot.strategies.decision import required_signal_agreement
+from kalshi_bot.strategies.decision import (
+    format_signed_edge_cents,
+    required_signal_agreement,
+)
 
 DEFAULT_THRESHOLDS: dict[str, Any] = {
     "min_edge": 0.15,
@@ -234,13 +237,15 @@ def _edge_gap_text(observed: float | None, required: float | None) -> str:
     observed_cents = observed * 100.0
     required_cents = required * 100.0
     gap = max(0.0, required_cents - observed_cents)
+    observed_text = format_signed_edge_cents(observed)
+    required_text = format_signed_edge_cents(required)
     if gap <= 0.05:
         surplus = observed_cents - required_cents
         if surplus > 0.05:
-            return f"met (+{surplus:.0f}¢ above {required_cents:.0f}¢ min)"
-        return f"{observed_cents:.0f}¢ have · {required_cents:.0f}¢ need"
+            return f"met (+{surplus:.0f}¢ above {required_text} min)"
+        return f"{observed_text} have · {required_text} need"
     shortfall = math.ceil(gap - 1e-9)
-    return f"need {shortfall:.0f}¢ more ({observed_cents:.0f}¢ have · {required_cents:.0f}¢ need)"
+    return f"need {shortfall:.0f}¢ more ({observed_text} have · {required_text} need)"
 
 
 def _format_gate_failure(failure: dict[str, Any]) -> str:
