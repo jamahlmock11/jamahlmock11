@@ -122,11 +122,14 @@ class FifteenMinuteOrchestrator:
 
     async def _run_contract_cycle(self, contract: ActiveContract) -> None:
         logger.info(
-            "Starting cycle %s strike=%.2f open=%s close=%s",
+            "Starting cycle %s strike=%.2f open=%s close=%s phases=[1:%s 2:%s 3:%s]",
             contract.ticker,
             contract.strike,
             contract.open_time.isoformat(),
             contract.close_time.isoformat(),
+            self.settings.phase1_enabled,
+            self.settings.phase2_enabled,
+            self.settings.phase3_enabled,
         )
         brti = BRTIEngine(strike_price=contract.strike)
         live_book = LiveOrderBook(ticker=contract.ticker)
@@ -161,11 +164,11 @@ class FifteenMinuteOrchestrator:
                 if elapsed >= self.settings.phases.contract_end:
                     break
 
-                if phase is Phase.PHASE1:
+                if phase is Phase.PHASE1 and self.settings.phase1_enabled:
                     await self._phase1(state, vwap)
-                elif phase is Phase.PHASE2:
+                elif phase is Phase.PHASE2 and self.settings.phase2_enabled:
                     await self._phase2(state)
-                elif phase is Phase.PHASE3:
+                elif phase is Phase.PHASE3 and self.settings.phase3_enabled:
                     await self._phase3(state, vwap)
 
                 if contract.seconds_remaining <= 0:

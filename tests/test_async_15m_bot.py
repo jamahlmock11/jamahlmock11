@@ -98,6 +98,13 @@ def test_phase3_fair_price_certainty():
     assert phase3_fair_yes_cents(metrics, 99_000, 100_000) == 1
 
 
+def test_phase3_only_defaults():
+    settings = BotSettings()
+    assert settings.phase1_enabled is False
+    assert settings.phase2_enabled is False
+    assert settings.phase3_enabled is True
+
+
 @pytest.mark.asyncio
 async def test_orchestrator_hard_stop_cancels_orders(monkeypatch):
     settings = BotSettings(dry_run=False, kalshi_api_key_id="test")

@@ -51,6 +51,9 @@ class BotSettings(BaseSettings):
     dry_run: bool = True
 
     series_ticker: str = "KXBTC15M"
+    phase1_enabled: bool = False
+    phase2_enabled: bool = False
+    phase3_enabled: bool = True
     phase1_drift_pct: float = 0.0065
     vwap_interval_ms: int = 100
     vwap_lookback_sec: float = 1.0
