@@ -191,6 +191,8 @@ class MarketPosition:
     quantity: float
     average_price: float = 0.0
     opened_at: datetime | None = None
+    partial_tp_taken: bool = False
+    peak_exit_bid: float | None = None
 
 
 @dataclass(frozen=True)
@@ -356,3 +358,5 @@ class DecisionResult:
     size_multiplier: float = 1.0
     quantity: float = 0.0
     execution: ExecutionEstimate | None = None
+    exit_trigger: str | None = None
+    mark_partial_tp: bool = False

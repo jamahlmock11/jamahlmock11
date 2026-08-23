@@ -313,10 +313,13 @@ class ExecutionEngine:
             position = self.positions.position(market.ticker)
             if position is None or position.side is not side:
                 return ExecutionReport(False, self.dry_run, "forecast", "no matching position to exit", {})
+            exit_count = min(position.quantity, decision.quantity)
+            if exit_count <= 0:
+                return ExecutionReport(False, self.dry_run, "forecast", "exit quantity is zero", {})
             bids = market.orderbook.levels(side, asks=False)
-            if not bids or sum(level.size for level in bids) + 1e-12 < position.quantity:
+            if not bids or sum(level.size for level in bids) + 1e-12 < exit_count:
                 return ExecutionReport(False, self.dry_run, "forecast", "insufficient exit liquidity", {})
-            remaining = position.quantity
+            remaining = exit_count
             proceeds = 0.0
             for level in bids:
                 filled = min(remaining, level.size)
@@ -324,15 +327,16 @@ class ExecutionEngine:
                 remaining -= filled
                 if remaining <= 1e-12:
                     break
-            exit_price = proceeds / position.quantity
+            exit_price = proceeds / exit_count
             price_cents = max(1, min(99, int(round(exit_price * 100))))
             payload = {
                 "ticker": market.ticker,
                 "action": "EXIT",
                 "side": side_text,
-                "count": position.quantity,
+                "count": exit_count,
                 "price_cents": price_cents,
                 "client_order_id": intent,
+                "exit_trigger": decision.exit_trigger,
             }
             try:
                 if not self.dry_run:
@@ -340,7 +344,7 @@ class ExecutionEngine:
                         ticker=market.ticker,
                         side=side_text,
                         action="sell",
-                        count=int(position.quantity),
+                        count=int(exit_count),
                         yes_price=price_cents if side is ContractSide.YES else None,
                         no_price=price_cents if side is ContractSide.NO else None,
                         client_order_id=intent,
@@ -351,25 +355,28 @@ class ExecutionEngine:
                     price=exit_price,
                     timestamp=observed_at,
                     reason=decision.reason,
+                    quantity=exit_count,
+                    mark_partial_tp=decision.mark_partial_tp,
+                    peak_exit_bid=exit_price if decision.mark_partial_tp else None,
                 )
                 self.risk.register_intent(intent)
                 self.risk.release(
                     market.ticker,
-                    position.quantity * position.entry_price,
+                    exit_count * position.entry_price,
                 )
                 self.risk.register_pnl(exit_record.realized_pnl)
                 detail = (
                     f"{'[PAPER]' if self.dry_run else '[LIVE]'} EXIT "
-                    f"{position.quantity:g} {side.value} {market.ticker} @{price_cents}¢ "
+                    f"{exit_count:g} {side.value} {market.ticker} @{price_cents}¢ "
                     f"pnl=${exit_record.realized_pnl:.2f}"
                 )
                 trade_id = self._persist_trade(
                     strategy="forecast_exit",
                     ticker=market.ticker,
                     side=side_text,
-                    count=position.quantity,
+                    count=exit_count,
                     price=exit_price,
-                    notional=position.quantity * exit_price,
+                    notional=exit_count * exit_price,
                     edge=None,
                     confidence="EXIT",
                     dry_run=self.dry_run,

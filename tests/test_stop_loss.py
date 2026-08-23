@@ -21,6 +21,7 @@ from kalshi_bot.execution.stop_loss import (
     premium_loss_fraction,
     recovery_hold_supported,
     thesis_reversal_triggered,
+    TieredTakeProfitConfig,
 )
 from kalshi_bot.market.orderbook import parse_orderbook_fp
 from kalshi_bot.strategies.decision import DecisionConfig, DecisionEngine
@@ -562,6 +563,7 @@ def test_take_profit_price_ceiling():
         quantity=1,
         stop_loss_fraction=0.55,
         take_profit_bid_price=0.90,
+        tiered_take_profit=TieredTakeProfitConfig(enabled=False),
         min_hold_seconds=60,
         now=NOW,
     )
@@ -630,7 +632,146 @@ def test_reversal_skipped_when_bid_near_take_profit():
         min_hold_seconds=60,
         take_profit_bid_price=0.90,
         take_profit_reversal_buffer=0.15,
+        tiered_take_profit=TieredTakeProfitConfig(enabled=False),
         position_reversal=PositionReversalConfig(),
         now=NOW,
     )
     assert signal is None
+
+
+def test_edge_decay_exit_when_live_edge_collapses():
+    market = MarketSnapshot(
+        ticker="KXBTC15M-TEST",
+        status="active",
+        rules="BRTI",
+        strike=65000,
+        expiration=NOW + timedelta(minutes=5),
+        open_time=NOW - timedelta(minutes=10),
+        reference="BRTI",
+        orderbook=book(yes_bid=0.52),
+        current_position=MarketPosition(
+            side=ContractSide.YES,
+            quantity=1,
+            average_price=0.45,
+        ),
+    )
+    forecast = ProbabilityEstimate(
+        p_up=0.55,
+        p_down=0.45,
+        confidence=0.7,
+        signal_agreement=0.8,
+        component_probabilities={"terminal": 0.55},
+        regime=Regime.TREND_UP,
+        raw_p_up=0.55,
+    )
+    signal = evaluate_position_exit(
+        market=market,
+        position=market.current_position,
+        forecast=forecast,
+        failures=(),
+        predicted_side=ContractSide.YES,
+        quantity=1,
+        stop_loss_fraction=0.30,
+        tiered_take_profit=TieredTakeProfitConfig(
+            enabled=True,
+            edge_decay_min_edge=0.04,
+        ),
+    )
+    assert signal is not None
+    assert signal.trigger == "edge_decay"
+
+
+def test_partial_take_profit_sells_half_at_target_gain():
+    market = MarketSnapshot(
+        ticker="KXBTC15M-TEST",
+        status="active",
+        rules="BRTI",
+        strike=65000,
+        expiration=NOW + timedelta(minutes=5),
+        open_time=NOW - timedelta(minutes=10),
+        reference="BRTI",
+        orderbook=book(yes_bid=0.62),
+        current_position=MarketPosition(
+            side=ContractSide.YES,
+            quantity=2,
+            average_price=0.50,
+            opened_at=NOW - timedelta(seconds=120),
+        ),
+    )
+    forecast = ProbabilityEstimate(
+        p_up=0.70,
+        p_down=0.30,
+        confidence=0.7,
+        signal_agreement=0.8,
+        component_probabilities={"terminal": 0.70},
+        regime=Regime.TREND_UP,
+        raw_p_up=0.70,
+    )
+    signal = evaluate_position_exit(
+        market=market,
+        position=market.current_position,
+        forecast=forecast,
+        failures=(),
+        predicted_side=ContractSide.YES,
+        quantity=1,
+        stop_loss_fraction=0.30,
+        min_hold_seconds=60,
+        tiered_take_profit=TieredTakeProfitConfig(
+            enabled=True,
+            partial_gain=0.12,
+            partial_fraction=0.5,
+        ),
+        now=NOW,
+    )
+    assert signal is not None
+    assert signal.trigger == "partial_take_profit"
+    assert signal.exit_quantity == 1.0
+    assert signal.mark_partial_tp
+
+
+def test_trailing_stop_exits_runner_after_peak():
+    position = MarketPosition(
+        side=ContractSide.YES,
+        quantity=1,
+        average_price=0.50,
+        partial_tp_taken=True,
+        peak_exit_bid=0.75,
+        opened_at=NOW - timedelta(seconds=120),
+    )
+    market = MarketSnapshot(
+        ticker="KXBTC15M-TEST",
+        status="active",
+        rules="BRTI",
+        strike=65000,
+        expiration=NOW + timedelta(minutes=5),
+        open_time=NOW - timedelta(minutes=10),
+        reference="BRTI",
+        orderbook=book(yes_bid=0.64),
+        current_position=position,
+    )
+    forecast = ProbabilityEstimate(
+        p_up=0.68,
+        p_down=0.32,
+        confidence=0.7,
+        signal_agreement=0.8,
+        component_probabilities={"terminal": 0.68},
+        regime=Regime.TREND_UP,
+        raw_p_up=0.68,
+    )
+    signal = evaluate_position_exit(
+        market=market,
+        position=position,
+        forecast=forecast,
+        failures=(),
+        predicted_side=ContractSide.YES,
+        quantity=1,
+        stop_loss_fraction=0.30,
+        min_hold_seconds=60,
+        tiered_take_profit=TieredTakeProfitConfig(
+            enabled=True,
+            trailing_stop=0.10,
+        ),
+        now=NOW,
+    )
+    assert signal is not None
+    assert signal.trigger == "trailing_stop"

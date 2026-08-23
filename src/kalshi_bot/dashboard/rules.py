@@ -55,6 +55,8 @@ def _rules_15m(cfg: AppConfig | None, mode: str, account: str) -> list[dict[str,
     bankroll = risk.max_position_size if risk else 50
     exposure = risk.max_contract_exposure if risk else 25
     depth = strategy.order_quantity if strategy else 1
+    stop_loss = risk.stop_loss_fraction if risk else 0.30
+    tiered_tp = risk.tiered_take_profit_enabled if risk else True
     edge_tiers = (
         _format_edge_tiers(strategy.dynamic_edge_bands)
         if strategy and strategy.dynamic_edge_enabled and strategy.dynamic_edge_bands
@@ -77,15 +79,37 @@ def _rules_15m(cfg: AppConfig | None, mode: str, account: str) -> list[dict[str,
         {
             "key": "Late favorite",
             "value": (
-                f"≤{late_fav_secs / 60:.0f}m · poll ≥{late_fav_poll * 100:.0f}% · "
-                f"model ≥{late_fav_model * 100:.0f}% · {persistence} polls → "
-                f"{_format_edge_tiers(strategy.late_favorite_edge_bands) if strategy else '6–8¢'}"
+                "OFF"
+                if not strategy or strategy.late_favorite_seconds <= 0
+                else (
+                    f"≤{late_fav_secs / 60:.0f}m · poll ≥{late_fav_poll * 100:.0f}% · "
+                    f"model ≥{late_fav_model * 100:.0f}% · {persistence} polls → "
+                    f"{_format_edge_tiers(strategy.late_favorite_edge_bands)}"
+                )
             ),
         },
         {"key": "Ensemble", "value": f"≥{min_agreement * 100:.0f}%"},
         {"key": "Price floor", "value": f"≥{min_price * 100:.0f}¢"},
         {"key": "Spread", "value": f"≤{max_spread * 100:.0f}¢"},
         {"key": "Depth", "value": f"≥{depth:.0f} ct"},
+        {
+            "key": "Take profit",
+            "value": (
+                f"½ at +{risk.partial_take_profit_gain * 100:.0f}¢ · "
+                f"BE runner · trail {risk.trailing_stop_cents * 100:.0f}¢"
+                if risk and tiered_tp
+                else "OFF"
+            ),
+        },
+        {
+            "key": "Edge decay exit",
+            "value": (
+                f"<{risk.edge_decay_min_edge * 100:.0f}¢ live edge"
+                if risk and risk.edge_decay_min_edge > 0
+                else "OFF"
+            ),
+        },
+        {"key": "Stop loss", "value": f"{stop_loss * 100:.0f}% premium"},
         {"key": "Bankroll", "value": f"${bankroll:.0f} / ${exposure:.0f} cap"},
     ]
 

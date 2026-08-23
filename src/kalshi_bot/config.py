@@ -359,6 +359,16 @@ class StrategyConfig(BaseModel):
         ge=1,
         description="Consecutive polls where side+edge must hold before entry.",
     )
+    late_entry_seconds: float = Field(
+        default=420.0,
+        ge=0.0,
+        description="Final N seconds where late_entry_signal_persistence_polls applies.",
+    )
+    late_entry_signal_persistence_polls: int = Field(
+        default=3,
+        ge=1,
+        description="Persistence polls required inside late_entry_seconds window.",
+    )
     chop_zone_min_sigma: float = Field(
         default=0.35,
         ge=0.0,
@@ -444,6 +454,34 @@ class RiskConfig(BaseModel):
         ge=0.0,
         le=1.0,
         description="Skip position-reversal exits when bid is within this many dollars of take-profit.",
+    )
+    tiered_take_profit_enabled: bool = Field(
+        default=True,
+        description="Sell half at partial gain, breakeven runner, trail remainder.",
+    )
+    partial_take_profit_gain: float = Field(
+        default=0.12,
+        ge=0.0,
+        le=1.0,
+        description="First take-profit when bid is entry + this many dollars.",
+    )
+    partial_take_profit_fraction: float = Field(
+        default=0.5,
+        gt=0.0,
+        le=1.0,
+        description="Fraction of position to sell on first take-profit leg.",
+    )
+    trailing_stop_cents: float = Field(
+        default=0.10,
+        ge=0.0,
+        le=1.0,
+        description="Trail runner: exit when bid falls this far below peak.",
+    )
+    edge_decay_min_edge: float = Field(
+        default=0.04,
+        ge=0.0,
+        le=1.0,
+        description="Exit when live edge (model prob − bid) drops below this floor.",
     )
     position_reversal_enabled: bool = True
     position_reversal_window_seconds: float = Field(default=420.0, ge=0.0)

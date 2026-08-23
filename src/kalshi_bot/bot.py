@@ -16,7 +16,7 @@ from kalshi_bot.data.cf_benchmark import create_benchmark_feed
 from kalshi_bot.data.ibit_options import IBITOptionsProvider
 from kalshi_bot.data.spot_hub import SpotPriceHub
 from kalshi_bot.data.supporting_feeds import SupportingFeeds
-from kalshi_bot.domain import ContractSide, DecisionAction, MarketPosition, OpenOrder, Regime
+from kalshi_bot.domain import ContractSide, DecisionAction, MarketPosition, MarketSnapshot, OpenOrder, Regime
 from kalshi_bot.execution.engine import ExecutionEngine, ExecutionReport
 from kalshi_bot.execution.position_reversal import (
     evaluate_position_reversal,
@@ -31,6 +31,7 @@ from kalshi_bot.learning.signal_weights import SignalWeightTracker
 from kalshi_bot.learning.trade_recorder import TradeRecorder
 from kalshi_bot.learning.pattern_matcher import PatternMatcher
 from kalshi_bot.models.strike_gravity import assess_strike_gravity
+from kalshi_bot.execution.stop_loss import executable_exit_price
 from kalshi_bot.strategies.alt_runner import AltStrategyRunner
 from kalshi_bot.strategies.forecasting import ForecastCycle, ForecastingScanner
 from kalshi_bot.strategies.decision import format_edge_gap
@@ -132,6 +133,7 @@ class TradingBot:
             position_lookup=self._position_lookup,
             orders_lookup=self._orders_lookup,
             intelligence=self.intelligence,
+            pre_decide_hook=self._bump_runner_peaks,
         )
         self.spot_hub = SpotPriceHub(
             poll_interval_sec=config.spot_lag.poll_interval_sec,
@@ -210,7 +212,22 @@ class TradingBot:
             quantity=position.quantity,
             average_price=position.entry_price,
             opened_at=position.opened_at,
+            partial_tp_taken=position.partial_tp_taken,
+            peak_exit_bid=position.peak_exit_bid,
         )
+
+    def _bump_runner_peaks(self, market: MarketSnapshot) -> None:
+        """Update trailing-stop peak bid for runner legs after partial take-profit."""
+        position = self.positions.position(market.ticker)
+        if position is None or not position.partial_tp_taken:
+            return
+        bid = executable_exit_price(
+            market.orderbook,
+            position.side,
+            position.quantity,
+        )
+        if bid is not None:
+            self.positions.bump_peak_exit_bid(market.ticker, bid)
 
     def _orders_lookup(self, ticker: str) -> tuple[OpenOrder, ...]:
         if not self.kalshi.authenticated:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
@@ -32,6 +33,19 @@ class PositionExitSignal:
     trigger: str
     premium_loss_fraction: float | None = None
     exit_bid: float | None = None
+    exit_quantity: float | None = None
+    mark_partial_tp: bool = False
+
+
+@dataclass(frozen=True)
+class TieredTakeProfitConfig:
+    """Bank partial profits, breakeven the runner, and trail the remainder."""
+
+    enabled: bool = True
+    partial_gain: float = 0.12
+    partial_fraction: float = 0.5
+    trailing_stop: float = 0.10
+    edge_decay_min_edge: float = 0.04
 
 
 def premium_loss_fraction(entry_price: float, exit_bid: float) -> float:
@@ -104,6 +118,14 @@ def thesis_reversal_triggered(
     return False
 
 
+def _partial_exit_quantity(position: MarketPosition, fraction: float) -> float:
+    """Contracts to sell for the first take-profit leg."""
+    if position.quantity <= 1:
+        return position.quantity
+    target = math.floor(position.quantity * fraction)
+    return max(1.0, min(float(target), position.quantity))
+
+
 def evaluate_position_exit(
     *,
     market: MarketSnapshot,
@@ -127,6 +149,7 @@ def evaluate_position_exit(
     take_profit_late_seconds: float = 0.0,
     take_profit_late_min_gain: float = 0.04,
     take_profit_reversal_buffer: float = 0.15,
+    tiered_take_profit: TieredTakeProfitConfig | None = None,
     position_reversal: PositionReversalConfig | None = None,
     now: datetime | None = None,
     reliability_gates: set[str] | frozenset[str] | None = None,
@@ -161,10 +184,98 @@ def evaluate_position_exit(
     exit_bid = executable_exit_price(market.orderbook, position.side, exit_qty)
     entry = position.average_price
     seconds_remaining = max(0.0, (market.expiration - observed_now).total_seconds())
+    held_prob = forecast.p_up if position.side is ContractSide.YES else forecast.p_down
+    tp_cfg = tiered_take_profit or TieredTakeProfitConfig(enabled=False)
+
+    # Edge-decay: thesis is mispricing edge — exit when live edge collapses.
+    if (
+        tp_cfg.enabled
+        and tp_cfg.edge_decay_min_edge > 0
+        and exit_bid is not None
+    ):
+        live_edge = held_prob - exit_bid
+        if live_edge + 1e-12 < tp_cfg.edge_decay_min_edge:
+            return PositionExitSignal(
+                should_exit=True,
+                reason=(
+                    f"edge decay: live edge {live_edge * 100:.0f}¢ "
+                    f"< {tp_cfg.edge_decay_min_edge * 100:.0f}¢ floor "
+                    f"(model {held_prob:.2f} bid {exit_bid:.2f})"
+                ),
+                trigger="edge_decay",
+                premium_loss_fraction=premium_loss_fraction(entry, exit_bid),
+                exit_bid=exit_bid,
+                exit_quantity=position.quantity,
+            )
 
     if exit_bid is not None and not within_min_hold:
         gain = exit_bid - entry
-        if take_profit_bid_price is not None and exit_bid + 1e-12 >= take_profit_bid_price:
+
+        # Tiered take-profit: sell half at +partial_gain, then manage runner.
+        if tp_cfg.enabled:
+            if not position.partial_tp_taken and gain + 1e-12 >= tp_cfg.partial_gain:
+                partial_qty = _partial_exit_quantity(position, tp_cfg.partial_fraction)
+                if partial_qty + 1e-12 < position.quantity:
+                    return PositionExitSignal(
+                        should_exit=True,
+                        reason=(
+                            f"partial take profit: +{gain * 100:.0f}¢ "
+                            f"(target +{tp_cfg.partial_gain * 100:.0f}¢), "
+                            f"sell {partial_qty:g}/{position.quantity:g}"
+                        ),
+                        trigger="partial_take_profit",
+                        premium_loss_fraction=premium_loss_fraction(entry, exit_bid),
+                        exit_bid=exit_bid,
+                        exit_quantity=partial_qty,
+                        mark_partial_tp=True,
+                    )
+                return PositionExitSignal(
+                    should_exit=True,
+                    reason=(
+                        f"take profit: +{gain * 100:.0f}¢ "
+                        f"(target +{tp_cfg.partial_gain * 100:.0f}¢)"
+                    ),
+                    trigger="take_profit_gain",
+                    premium_loss_fraction=premium_loss_fraction(entry, exit_bid),
+                    exit_bid=exit_bid,
+                    exit_quantity=position.quantity,
+                )
+
+            if position.partial_tp_taken:
+                peak = position.peak_exit_bid
+                if peak is not None and exit_bid + 1e-12 <= entry:
+                    return PositionExitSignal(
+                        should_exit=True,
+                        reason=(
+                            f"breakeven stop: bid {exit_bid:.2f} "
+                            f"≤ entry {entry:.2f} on runner"
+                        ),
+                        trigger="breakeven_stop",
+                        premium_loss_fraction=premium_loss_fraction(entry, exit_bid),
+                        exit_bid=exit_bid,
+                        exit_quantity=position.quantity,
+                    )
+                if (
+                    peak is not None
+                    and tp_cfg.trailing_stop > 0
+                    and exit_bid + 1e-12 <= peak - tp_cfg.trailing_stop
+                ):
+                    return PositionExitSignal(
+                        should_exit=True,
+                        reason=(
+                            f"trailing stop: bid {exit_bid:.2f} "
+                            f"≤ peak {peak:.2f} − {tp_cfg.trailing_stop * 100:.0f}¢"
+                        ),
+                        trigger="trailing_stop",
+                        premium_loss_fraction=premium_loss_fraction(entry, exit_bid),
+                        exit_bid=exit_bid,
+                        exit_quantity=position.quantity,
+                    )
+
+        # Legacy bid-ceiling take profit (disabled when tiered TP is on).
+        if not tp_cfg.enabled and take_profit_bid_price is not None and (
+            exit_bid + 1e-12 >= take_profit_bid_price
+        ):
             return PositionExitSignal(
                 should_exit=True,
                 reason=(
@@ -174,9 +285,11 @@ def evaluate_position_exit(
                 trigger="take_profit_price",
                 premium_loss_fraction=premium_loss_fraction(entry, exit_bid),
                 exit_bid=exit_bid,
+                exit_quantity=position.quantity,
             )
         if (
-            take_profit_late_seconds > 0
+            not tp_cfg.enabled
+            and take_profit_late_seconds > 0
             and seconds_remaining <= take_profit_late_seconds
             and gain + 1e-12 >= take_profit_late_min_gain
         ):
@@ -189,6 +302,7 @@ def evaluate_position_exit(
                 trigger="take_profit_late",
                 premium_loss_fraction=premium_loss_fraction(entry, exit_bid),
                 exit_bid=exit_bid,
+                exit_quantity=position.quantity,
             )
 
     if stop_loss_fraction > 0 and exit_bid is not None:
@@ -204,6 +318,7 @@ def evaluate_position_exit(
                     trigger="stop_loss",
                     premium_loss_fraction=loss,
                     exit_bid=exit_bid,
+                    exit_quantity=position.quantity,
                 )
 
     reversal_cfg = position_reversal or PositionReversalConfig()
@@ -239,9 +354,9 @@ def evaluate_position_exit(
                         premium_loss_fraction(entry, exit_bid) if exit_bid is not None else None
                     ),
                     exit_bid=exit_bid,
+                    exit_quantity=position.quantity,
                 )
 
-    held_prob = forecast.p_up if position.side is ContractSide.YES else forecast.p_down
     thesis_reversed = (
         thesis_reversal_enabled
         and thesis_reversal_triggered(
@@ -289,6 +404,7 @@ def evaluate_position_exit(
                 premium_loss_fraction(entry, exit_bid) if exit_bid is not None else None
             ),
             exit_bid=exit_bid,
+            exit_quantity=position.quantity,
         )
 
     return None

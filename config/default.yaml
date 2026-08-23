@@ -151,22 +151,10 @@ strategy:
     - min_minutes: 0.0
       max_minutes: 1.0
       min_edge: 0.05
-  # Lower floors when poll favorite + model agree in the final 7 minutes.
-  late_favorite_edge_bands:
-    - min_minutes: 5.0
-      max_minutes: 7.0
-      min_edge: 0.06
-    - min_minutes: 3.0
-      max_minutes: 5.0
-      min_edge: 0.05
-    - min_minutes: 1.0
-      max_minutes: 3.0
-      min_edge: 0.04
-    - min_minutes: 0.0
-      max_minutes: 1.0
-      min_edge: 0.04
+  # Late-favorite shortcut disabled (was lowering edge in final minutes).
+  late_favorite_edge_bands: []
   min_confidence: 0.0
-  min_signal_agreement: 0.55
+  min_signal_agreement: 0.60
   setup_score_enabled: true
   setup_score_weight: 0.30
   entry_sweet_spot_min_seconds: 180
@@ -181,9 +169,9 @@ strategy:
   final_seconds: 360
   final_min_edge: 0.10
   late_confidence_increment: 0.10
-  late_favorite_seconds: 420
+  late_favorite_seconds: 0
   late_favorite_poll_threshold: 0.80
-  late_favorite_min_edge: 0.04
+  late_favorite_min_edge: 0.08
   late_favorite_min_model_probability: 0.88
   order_quantity: 1
   min_trade_quality_score: 70
@@ -193,6 +181,8 @@ strategy:
   min_pattern_matches: 0
   external_data_enabled: false
   entry_signal_persistence_polls: 2
+  late_entry_seconds: 420
+  late_entry_signal_persistence_polls: 3
   chop_zone_min_sigma: 0.0
   require_orderbook_depth: true
   window_regime_enabled: true
@@ -209,9 +199,14 @@ risk:
   max_flips_per_contract: 0
   cooldown_seconds: 300
   min_hold_seconds: 60
-  take_profit_bid_price: 0.90
+  take_profit_bid_price: null
   take_profit_late_seconds: 0
   take_profit_reversal_buffer_cents: 0.15
+  tiered_take_profit_enabled: true
+  partial_take_profit_gain: 0.12
+  partial_take_profit_fraction: 0.5
+  trailing_stop_cents: 0.10
+  edge_decay_min_edge: 0.04
   position_reversal_enabled: true
   position_reversal_window_seconds: 420
   position_reversal_min_hold_probability: 0.50
@@ -223,7 +218,7 @@ risk:
   kelly_fraction: 0.25
   kelly_max_fraction: 0.25
   kelly_bankroll_usd: 16.22
-  stop_loss_fraction: 0.45
+  stop_loss_fraction: 0.30
   opposite_edge_shift: 0.25
   thesis_reversal_enabled: false
   opposite_edge_exit_enabled: false

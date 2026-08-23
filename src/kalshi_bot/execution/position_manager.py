@@ -92,6 +92,8 @@ class Position:
     entry_fee: float
     opened_at: datetime
     entry_intent_id: str
+    partial_tp_taken: bool = False
+    peak_exit_bid: float | None = None
 
 
 class PositionManager:
@@ -149,6 +151,29 @@ class PositionManager:
     def position(self, contract: str) -> Position | None:
         """Return the open position for a contract, if any."""
         return self._positions.get(contract)
+
+    def bump_peak_exit_bid(self, contract: str, bid: float) -> None:
+        """Track the highest executable bid for trailing-stop runner management."""
+        position = self._positions.get(contract)
+        if position is None or not position.partial_tp_taken:
+            return
+        if not math.isfinite(bid):
+            return
+        peak = position.peak_exit_bid
+        new_peak = bid if peak is None else max(peak, bid)
+        if peak is not None and new_peak <= peak + 1e-12:
+            return
+        self._positions[contract] = Position(
+            contract=position.contract,
+            side=position.side,
+            quantity=position.quantity,
+            entry_price=position.entry_price,
+            entry_fee=position.entry_fee,
+            opened_at=position.opened_at,
+            entry_intent_id=position.entry_intent_id,
+            partial_tp_taken=position.partial_tp_taken,
+            peak_exit_bid=new_peak,
+        )
 
     def seed_position(
         self,
@@ -318,8 +343,11 @@ class PositionManager:
         timestamp: datetime,
         fee: float = 0.0,
         reason: str = "exit",
+        quantity: float | None = None,
+        mark_partial_tp: bool = False,
+        peak_exit_bid: float | None = None,
     ) -> ExitRecord:
-        """Close an entire position at an externally supplied fill price."""
+        """Close part or all of a position at an externally supplied fill price."""
         observed_at = self._begin_intent(intent_id, contract, "EXIT", timestamp)
         position = self._positions.get(contract)
         if position is None:
@@ -332,7 +360,26 @@ class PositionManager:
                 PositionConflictError,
             )
         assert position is not None
-        self._validate_fill(position.quantity, price, fee)
+        exit_qty = position.quantity if quantity is None else quantity
+        if not math.isfinite(exit_qty) or exit_qty <= 0:
+            self._reject(
+                intent_id,
+                contract,
+                "EXIT",
+                "exit quantity must be positive",
+                observed_at,
+                PositionConflictError,
+            )
+        if exit_qty - position.quantity > 1e-9:
+            self._reject(
+                intent_id,
+                contract,
+                "EXIT",
+                "exit quantity exceeds open size",
+                observed_at,
+                PositionConflictError,
+            )
+        self._validate_fill(exit_qty, price, fee)
         if observed_at < position.opened_at:
             self._reject(
                 intent_id,
@@ -342,25 +389,39 @@ class PositionManager:
                 observed_at,
                 PositionConflictError,
             )
-        pnl = (
-            (price - position.entry_price) * position.quantity
-            - position.entry_fee
-            - fee
-        )
+        fee_share = fee * (exit_qty / position.quantity)
+        entry_fee_share = position.entry_fee * (exit_qty / position.quantity)
+        pnl = (price - position.entry_price) * exit_qty - entry_fee_share - fee_share
         record = ExitRecord(
             intent_id=intent_id,
             contract=contract,
             side=position.side,
-            quantity=position.quantity,
+            quantity=exit_qty,
             entry_price=position.entry_price,
             exit_price=price,
-            entry_fee=position.entry_fee,
-            exit_fee=fee,
+            entry_fee=entry_fee_share,
+            exit_fee=fee_share,
             realized_pnl=pnl,
             timestamp=observed_at,
             reason=reason,
         )
-        del self._positions[contract]
+        remaining = position.quantity - exit_qty
+        if remaining <= 1e-12:
+            del self._positions[contract]
+        else:
+            remaining_entry_fee = position.entry_fee - entry_fee_share
+            runner_peak = peak_exit_bid if peak_exit_bid is not None else price
+            self._positions[contract] = Position(
+                contract=position.contract,
+                side=position.side,
+                quantity=remaining,
+                entry_price=position.entry_price,
+                entry_fee=remaining_entry_fee,
+                opened_at=position.opened_at,
+                entry_intent_id=position.entry_intent_id,
+                partial_tp_taken=mark_partial_tp or position.partial_tp_taken,
+                peak_exit_bid=runner_peak if mark_partial_tp else position.peak_exit_bid,
+            )
         self._exits.append(record)
         self._realized_pnl += pnl
         return record

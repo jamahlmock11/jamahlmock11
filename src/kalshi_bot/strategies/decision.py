@@ -26,7 +26,10 @@ from kalshi_bot.execution.position_reversal import (
     PositionReversalConfig,
     reversal_config_from_risk,
 )
-from kalshi_bot.execution.stop_loss import evaluate_position_exit
+from kalshi_bot.execution.stop_loss import (
+    evaluate_position_exit,
+    TieredTakeProfitConfig,
+)
 from kalshi_bot.market.orderbook import (
     InsufficientDepthError,
     depth,
@@ -173,6 +176,9 @@ class DecisionConfig:
     take_profit_late_seconds: float = 0.0
     take_profit_late_min_gain: float = 0.04
     take_profit_reversal_buffer: float = 0.15
+    tiered_take_profit: TieredTakeProfitConfig = field(
+        default_factory=TieredTakeProfitConfig
+    )
     position_reversal: PositionReversalConfig = field(default_factory=PositionReversalConfig)
     poll: PollConfig = field(default_factory=PollConfig)
     longshot: LongshotConfig = field(default_factory=LongshotConfig)
@@ -257,6 +263,13 @@ def decision_config_from_app(
         take_profit_late_seconds=config.risk.take_profit_late_seconds,
         take_profit_late_min_gain=config.risk.take_profit_late_min_gain,
         take_profit_reversal_buffer=config.risk.take_profit_reversal_buffer_cents,
+        tiered_take_profit=TieredTakeProfitConfig(
+            enabled=config.risk.tiered_take_profit_enabled,
+            partial_gain=config.risk.partial_take_profit_gain,
+            partial_fraction=config.risk.partial_take_profit_fraction,
+            trailing_stop=config.risk.trailing_stop_cents,
+            edge_decay_min_edge=config.risk.edge_decay_min_edge,
+        ),
         position_reversal=reversal_config_from_risk(config.risk),
         poll=config.poll,
         longshot=config.longshot,
@@ -663,11 +676,16 @@ class DecisionEngine:
                 take_profit_late_seconds=cfg.take_profit_late_seconds,
                 take_profit_late_min_gain=cfg.take_profit_late_min_gain,
                 take_profit_reversal_buffer=cfg.take_profit_reversal_buffer,
+                tiered_take_profit=cfg.tiered_take_profit,
                 position_reversal=cfg.position_reversal,
                 now=observed_now,
             )
             if exit_signal is not None:
-                exit_quantity = min(position.quantity, trade_quantity)
+                exit_quantity = exit_signal.exit_quantity
+                if exit_quantity is None:
+                    exit_quantity = min(position.quantity, trade_quantity)
+                else:
+                    exit_quantity = min(position.quantity, exit_quantity)
                 if self._can_exit(market, position.side, exit_quantity):
                     return DecisionResult(
                         action=DecisionAction.EXIT,
@@ -680,6 +698,8 @@ class DecisionEngine:
                         predicted_probability=forecast.p_up if position.side is ContractSide.YES else forecast.p_down,
                         quantity=exit_quantity,
                         target_edge=cfg.target_edge,
+                        exit_trigger=exit_signal.trigger,
+                        mark_partial_tp=exit_signal.mark_partial_tp,
                     )
                 return DecisionResult(
                     action=DecisionAction.HOLD,
