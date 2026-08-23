@@ -306,10 +306,16 @@ class KalshiCFBenchmarkClient:
             raise BenchmarkConfigurationError("Kalshi credentials required for BRTI passthrough")
         data = self.kalshi.get("/cfbenchmarks/values", params={"id": self.index_id})
         envelope = data.get("data", data) if isinstance(data, Mapping) else data
+        reference_now = now or self._clock()
+        if isinstance(envelope, Mapping) and envelope.get("serverTime"):
+            try:
+                reference_now = _parse_timestamp(envelope.get("serverTime"))
+            except BenchmarkPayloadError:
+                pass
         return parse_kalshi_cfbenchmarks_values_payload(
             envelope,
             index_id=self.index_id,
-            now=now or self._clock(),
+            now=reference_now,
             max_age=self.max_age,
         )
 
