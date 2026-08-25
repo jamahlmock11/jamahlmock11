@@ -17,7 +17,7 @@ if [[ -f .venv/bin/activate ]]; then
   source .venv/bin/activate
 fi
 
-CONFIG="${CONFIG_1H:-config/1h.yaml}"
+CONFIG="${CONFIG_1H:-config/1h_ws.yaml}"
 mkdir -p logs
 
 effective_dry_run() {
@@ -42,8 +42,8 @@ while true; do
     set +a
   fi
   live_flag
-  echo "[$(date -Is)] starting 1h-bot mode=${LIVE_FLAG[*]:-PAPER}"
-  python3 -m kalshi_bot "${LIVE_FLAG[@]}" --1h --config "$CONFIG" || true
-  echo "[$(date -Is)] 1h-bot exited; restarting in 5s"
+  echo "[$(date -Is)] starting 1h-ws-bot mode=${LIVE_FLAG[*]:-PAPER}"
+  PYTHONPATH=src python3 -m kalshi_bot "${LIVE_FLAG[@]}" --1h-ws --config "$CONFIG" || true
+  echo "[$(date -Is)] 1h-ws-bot exited; restarting in 5s"
   sleep 5
 done

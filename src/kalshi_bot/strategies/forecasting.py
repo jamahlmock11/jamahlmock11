@@ -113,11 +113,13 @@ class ForecastingScanner:
         self.options = options
         self.config = config
         strategy = config.strategy
+        proxy_mode = config.data.benchmark_mode == "constituent_proxy"
         self.features = features or FeatureEngine(
             FeatureEngineConfig(
-                allow_proxy=config.data.benchmark_mode == "constituent_proxy",
+                allow_proxy=proxy_mode,
                 late_momentum_window_seconds=strategy.late_seconds,
-            )
+            ),
+            persist_history=proxy_mode,
         )
         self.model = model or EnsembleProbabilityModel()
         ls = config.longshot
@@ -243,6 +245,23 @@ class ForecastingScanner:
         except Exception:
             return None
 
+    def _bootstrap_proxy_history(self, observed_at: datetime) -> None:
+        """When Kalshi credentials exist, seed proxy feature history from official BRTI."""
+        if not getattr(self.kalshi, "authenticated", False):
+            return
+        try:
+            raw = self.kalshi.get("/cfbenchmarks/values", params={"id": "BRTI"})
+            envelope = raw.get("data", raw) if isinstance(raw, dict) else raw
+            history = parse_kalshi_cfbenchmarks_history(
+                envelope,
+                now=observed_at,
+                history_seconds=self.features.config.history_seconds,
+            )
+            if history:
+                self.features.add_quotes(history)
+        except Exception:
+            return
+
     def scan(
         self,
         *,
@@ -323,6 +342,7 @@ class ForecastingScanner:
             except Exception:
                 self.features.add_quote(benchmark)
         else:
+            self._bootstrap_proxy_history(observed_at)
             self.features.add_quote(benchmark)
 
         supporting: SupportingAggregate | None = None
