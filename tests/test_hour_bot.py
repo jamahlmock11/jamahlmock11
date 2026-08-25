@@ -392,17 +392,14 @@ def test_1h_yaml_loads_without_validation_error():
     assert cfg.horizon == "1h"
     assert cfg.hour.series_ticker == "KXBTCD"
     assert cfg.longshot.enabled is False
-    assert cfg.hour.max_entry_seconds_remaining == pytest.approx(900)
-    assert cfg.strategy.minimum_dominant_poll is None
-    assert cfg.strategy.require_dominant_poll_side is False
-    assert cfg.strategy.min_entry_executable_cost == pytest.approx(0.0)
-    assert cfg.terminal_probability.max_entry_executable_cost is None
-    assert cfg.terminal_probability.signal_persistence_polls == 2
-    assert cfg.risk.stop_loss_fraction == pytest.approx(0.45)
-    assert cfg.risk.take_profit_bid_price == pytest.approx(0.90)
-    assert cfg.terminal_probability.exclude_coin_flip_band is True
-    assert cfg.orderbook_skew.ensemble_enabled is True
+    assert cfg.hour.max_entry_seconds_remaining == pytest.approx(0)
+    assert cfg.terminal_probability.enabled is False
+    assert cfg.terminal_probability.mispricing_enabled is False
+    assert cfg.execution.orders_enabled is False
+    assert cfg.execution.dry_run is True
+    assert cfg.intelligence.enabled is False
+    assert cfg.poll.mode == "disabled"
+    assert cfg.orderbook_skew.ensemble_enabled is False
+    assert cfg.risk.position_reversal_enabled is False
     assert cfg.risk.kelly_enabled is False
-    assert cfg.strategy.min_edge == pytest.approx(0.12)
-    assert cfg.strategy.late_seconds == pytest.approx(600)
-    assert cfg.risk.min_hold_seconds == pytest.approx(120)
+    assert cfg.strategy.window_regime_enabled is False
