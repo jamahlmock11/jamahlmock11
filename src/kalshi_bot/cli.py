@@ -34,6 +34,12 @@ def build_parser() -> argparse.ArgumentParser:
         dest="one_hour_ws",
         help="Run the 1-hour WebSocket + crowd-favorite bot (config/1h_ws.yaml)",
     )
+    p.add_argument(
+        "--brti-ws",
+        action="store_true",
+        dest="brti_ws",
+        help="Run the 15-minute BRTI websocket bot (config/brti_15m.yaml)",
+    )
     p.add_argument("--once", action="store_true", help="Single scan cycle then exit")
     p.add_argument("--live", action="store_true", help="Disable dry-run (requires Kalshi keys)")
     p.add_argument("--scan-only", action="store_true", help="Scan and print; never place orders")
@@ -58,12 +64,16 @@ def main(argv: list[str] | None = None) -> int:
     ensure_dirs()
     settings = load_settings()
     config_path = args.config
-    if args.one_hour_ws and config_path == "config/default.yaml":
+    if args.brti_ws and config_path == "config/default.yaml":
+        config_path = "config/brti_15m.yaml"
+    elif args.one_hour_ws and config_path == "config/default.yaml":
         config_path = "config/1h_ws.yaml"
     elif args.one_hour and config_path == "config/default.yaml":
         config_path = "config/1h.yaml"
     config = merge_runtime(load_yaml_config(config_path), settings)
-    if args.one_hour_ws:
+    if args.brti_ws:
+        journal_path = "data/journal_brti_15m.db"
+    elif args.one_hour_ws:
         journal_path = "data/journal_1h_ws.db"
     elif args.one_hour:
         journal_path = "data/journal_1h.db"
@@ -89,6 +99,21 @@ def main(argv: list[str] | None = None) -> int:
         config.execution.orders_enabled = False
 
     console = Console()
+    if args.brti_ws:
+        import asyncio
+
+        from kalshi_bot.brti_bot import BrtiTradingBot
+
+        bot = BrtiTradingBot(config, settings)
+        try:
+            asyncio.run(bot.run())
+            return 0
+        except KeyboardInterrupt:
+            console.print("\n[yellow]Stopped by user[/yellow]")
+            return 0
+        finally:
+            bot.close()
+
     if args.one_hour_ws:
         import asyncio
 

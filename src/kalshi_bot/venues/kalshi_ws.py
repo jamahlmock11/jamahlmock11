@@ -81,6 +81,20 @@ class KalshiWebSocketClient:
         await self._ws.send(json.dumps(payload))
         logger.info("Subscribed to ticker for %d markets", len(market_tickers))
 
+    async def subscribe_cfbenchmarks_value(self, index_ids: list[str]) -> None:
+        if not self._ws or not index_ids:
+            return
+        payload = {
+            "id": self._next_id(),
+            "cmd": "subscribe",
+            "params": {
+                "channels": ["cfbenchmarks_value"],
+                "index_ids": index_ids,
+            },
+        }
+        await self._ws.send(json.dumps(payload))
+        logger.info("Subscribed to cfbenchmarks_value for %s", ", ".join(index_ids))
+
     async def listen(self, handler: MessageHandler) -> None:
         if not self._ws:
             raise RuntimeError("WebSocket not connected")

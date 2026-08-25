@@ -595,6 +595,22 @@ class HourWSConfig(BaseModel):
     max_entry_seconds_remaining: float = Field(default=3600.0, ge=0.0)
 
 
+class BrtiWSConfig(BaseModel):
+    """15-minute KXBTC15M bot using Kalshi cfbenchmarks_value websocket BRTI."""
+
+    series_ticker: str = "KXBTC15M"
+    sma_window_seconds: int = Field(default=300, ge=30)
+    momentum_lag_seconds: int = Field(default=60, ge=1)
+    mid_price_lag_seconds: int = Field(default=60, ge=1)
+    brti_history_seconds: int = Field(default=1200, ge=60)
+    expiry_safeguard_seconds: int = Field(default=60, ge=0)
+    min_edge_dollars: float = Field(default=2.0, ge=0.0)
+    order_count_contracts: int = Field(default=1, ge=1)
+    max_order_price: float = Field(default=0.95, gt=0.0, le=1.0)
+    decision_loop_seconds: float = Field(default=1.0, gt=0.0)
+    order_cooldown_seconds: float = Field(default=15.0, ge=0.0)
+
+
 class AppConfig(BaseModel):
     series: list[str] = Field(default_factory=lambda: ["KXBTC15M"])
     horizon: Literal["15m", "1h"] = "15m"
@@ -620,6 +636,7 @@ class AppConfig(BaseModel):
         default_factory=TerminalProbabilityConfig
     )
     hour_ws: HourWSConfig = Field(default_factory=HourWSConfig)
+    brti_ws: BrtiWSConfig = Field(default_factory=BrtiWSConfig)
 
 
 class Settings(BaseSettings):

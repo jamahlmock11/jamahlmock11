@@ -1,0 +1,25 @@
+# 15-minute KXBTC15M bot — Kalshi websocket BRTI + trend/momentum engine
+horizon: 15m
+series:
+  - KXBTC15M
+
+brti_ws:
+  series_ticker: KXBTC15M
+  sma_window_seconds: 300
+  momentum_lag_seconds: 60
+  mid_price_lag_seconds: 60
+  brti_history_seconds: 1200
+  expiry_safeguard_seconds: 60
+  min_edge_dollars: 2.0
+  order_count_contracts: 1
+  max_order_price: 0.95
+  decision_loop_seconds: 1.0
+  order_cooldown_seconds: 15.0
+
+execution:
+  dry_run: true
+  orders_enabled: true
+  poll_interval_sec: 1.0
+
+data:
+  benchmark_mode: kalshi_passthrough
