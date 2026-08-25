@@ -76,5 +76,6 @@ def test_1h_ws_yaml_loads():
     cfg = load_yaml_config("config/1h_ws.yaml")
     assert cfg.horizon == "1h"
     assert cfg.hour_ws.min_entry_cents == pytest.approx(45)
-    assert cfg.hour_ws.crowd_max_cents == pytest.approx(86)
+    assert cfg.hour_ws.max_entry_cents == pytest.approx(95)
+    assert cfg.hour_ws.crowd_max_cents == pytest.approx(95)
     assert cfg.execution.dry_run is True

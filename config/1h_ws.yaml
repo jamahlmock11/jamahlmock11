@@ -6,9 +6,9 @@ series:
 hour_ws:
   series_ticker: KXBTCD
   min_entry_cents: 45
-  max_entry_cents: 78
+  max_entry_cents: 95
   crowd_min_cents: 55
-  crowd_max_cents: 86
+  crowd_max_cents: 95
   min_confidence: 35
   min_edge_cents: 4
   fair_value_move_cents: 5
