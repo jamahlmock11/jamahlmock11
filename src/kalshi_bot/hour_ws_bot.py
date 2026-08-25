@@ -214,13 +214,14 @@ class HourWSBot:
         if pos is None:
             return
         price = result.price_cents / 100.0
-        pnl = (
-            (price - pos.entry) * 100.0
+        pnl_dollars = (
+            (price - pos.entry)
             if pos.side == "BUY"
-            else (pos.entry - price) * 100.0
+            else (pos.entry - price)
         )
-        self.daily_pnl += pnl
-        console.print(f"\n[bold yellow]EXIT[/bold yellow] {ticker} | PnL: {pnl:.2f}¢")
+        pnl_cents = pnl_dollars * 100.0
+        self.daily_pnl += pnl_dollars
+        console.print(f"\n[bold yellow]EXIT[/bold yellow] {ticker} | PnL: {pnl_cents:.2f}¢")
         if not self.orders_enabled:
             del self.positions[ticker]
             return
@@ -230,7 +231,7 @@ class HourWSBot:
         if ok:
             del self.positions[ticker]
             self.stats.trades += 1
-            self._journal_trade(ticker, "exit", result, pnl=pnl)
+            self._journal_trade(ticker, "exit", result, pnl=pnl_cents)
 
     async def _place_order(
         self,

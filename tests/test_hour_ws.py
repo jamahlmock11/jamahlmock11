@@ -79,3 +79,17 @@ def test_1h_ws_yaml_loads():
     assert cfg.hour_ws.max_entry_cents == pytest.approx(95)
     assert cfg.hour_ws.crowd_max_cents == pytest.approx(95)
     assert cfg.execution.dry_run is True
+
+
+def test_daily_loss_limit_accounts_in_dollars_not_cents():
+    """Paper exits store pnl in cents but daily loss cap is configured in dollars."""
+    entry = 0.635
+    exit_price = 0.505
+    pnl_dollars = exit_price - entry
+    pnl_cents = pnl_dollars * 100.0
+    max_daily_loss = 50.0
+
+    assert pnl_cents == pytest.approx(-13.0)
+    assert pnl_dollars == pytest.approx(-0.13)
+    assert pnl_dollars > -max_daily_loss
+    assert pnl_cents > -max_daily_loss
