@@ -1,0 +1,198 @@
+horizon: 1h
+series:
+  - KXBTCD
+
+# 1-hour contract metadata (discovery + feature history)
+hour:
+  series_ticker: KXBTCD
+  market_type: 1h
+  contract_duration_seconds: 3600
+  min_seconds_remaining: 60
+  max_entry_seconds_remaining: 900
+  late_window_seconds: 2400
+  mid_window_seconds: 1800
+  final_seconds: 60
+  history_seconds: 3700
+  min_confidence: 0.0
+  min_signal_agreement: 0.55
+  tier_b_min_confidence: 0.0
+  tier_b_min_agreement: 0.48
+  min_data_completeness: 0.65
+  max_spread: 0.08
+  order_quantity: 1
+  poll_interval_sec: 10
+  model_version: terminal-v1
+  require_forecast_alignment: true
+  forecast_alignment_min_probability: 0.52
+  evaluate_all_active_strikes: true
+  strong_evidence_min_probability: 0.78
+  strong_evidence_min_confidence: 0.60
+  strong_evidence_min_agreement: 0.55
+
+# Blend top-of-book skew into hourly terminal forecast ensemble.
+orderbook_skew:
+  enabled: false
+  ensemble_enabled: true
+  ensemble_max_seconds_remaining: 3300
+  top_levels: 5
+  max_seconds_remaining: 600
+  min_skew: 0.20
+  min_z_distance: 1.0
+  min_edge: 0.06
+
+# Terminal expiration-probability + mispricing engine (live 1h path).
+terminal_probability:
+  enabled: true
+  mispricing_enabled: true
+  intelligence_overlay: false
+  late_window_shortcut: false
+  late_favorite_shortcut: false
+  forecast_alignment: true
+  forecast_alignment_min_probability: 0.52
+  minimum_confidence: 0.52
+  minimum_ensemble: 0.50
+  signal_persistence_polls: 2
+  probability_stability_enabled: false
+  probability_stability_max_swing: 0.12
+  require_orderbook_depth: false
+  max_spread: 0.08
+  # Favorite band disabled; longshot and coin-flip bands still blocked.
+  min_entry_executable_cost: 0.0
+  max_entry_executable_cost: null
+  exclude_longshot_band: true
+  longshot_max_executable_cost: 0.42
+  exclude_coin_flip_band: true
+  coin_flip_min_executable_cost: 0.42
+  coin_flip_max_executable_cost: 0.58
+  thesis_invalid_min_probability: 0.45
+  thesis_invalid_margin: 0.12
+  fallback_min_edge: 0.12
+  dynamic_edge_enabled: true
+  dynamic_edge_bands:
+  # Model probability minus executable price (raw mispricing edge).
+    - min_minutes: 30
+      max_minutes: 60
+      min_edge: 0.12
+    - min_minutes: 10
+      max_minutes: 30
+      min_edge: 0.12
+    - min_minutes: 5
+      max_minutes: 10
+      min_edge: 0.12
+    - min_minutes: 0
+      max_minutes: 5
+      min_edge: 0.12
+  calibration:
+    enabled: false
+    store_path: data/calibration_1h.json
+    min_samples_per_bucket: 25
+    max_calibration_gap: 0.12
+  predictions_db_path: data/predictions_1h.db
+
+intelligence:
+  enabled: false
+
+# Legacy strategy block (used for data completeness / order quantity only in terminal mode).
+strategy:
+  contract_duration_seconds: 3600
+  min_edge: 0.12
+  target_edge: 0.12
+  min_confidence: 0.52
+  min_signal_agreement: 0.50
+  min_data_completeness: 0.65
+  max_spread: 0.08
+  min_seconds_remaining: 60
+  max_entry_seconds_remaining: 900
+  late_seconds: 600
+  final_seconds: 600
+  final_min_edge: 0.10
+  late_confidence_increment: 0.0
+  late_favorite_seconds: 0
+  late_favorite_poll_threshold: 0.80
+  late_favorite_min_edge: 0.04
+  min_entry_executable_cost: 0.0
+  max_entry_executable_cost: null
+  minimum_dominant_poll: null
+  require_dominant_poll_side: false
+  order_quantity: 1
+  entry_signal_persistence_polls: 2
+  chop_zone_min_sigma: 0.0
+  require_orderbook_depth: false
+  window_regime_enabled: true
+
+longshot:
+  enabled: false
+  poll_enabled: false
+
+poll:
+  mode: disabled
+
+hour_edge:
+  minimum_edge: 0.15
+  preferred_edge: 0.15
+  strong_edge: 0.15
+  tier_b_size_mult: 0.5
+  tier_a_size_mult: 0.75
+  tier_a_plus_size_mult: 1.0
+  disable_tier_b: true
+
+execution:
+  dry_run: false
+  orders_enabled: true
+  max_position_usd: 50
+  max_contracts_per_trade: 25
+  min_trade_notional_usd: 0
+  poll_interval_sec: 10.0
+  fee_rate: 0.0
+  fee_per_contract: 0.0
+  slippage_bps: 5.0
+  slippage_per_contract: 0.0
+
+risk:
+  max_daily_loss: 100
+  max_contract_exposure: 25
+  max_position_size: 50
+  max_consecutive_losses: 4
+  max_trades_per_contract: 2
+  max_flips_per_contract: 0
+  cooldown_seconds: 120
+  min_hold_seconds: 120
+  position_reversal_enabled: true
+  position_reversal_window_seconds: 420
+  position_reversal_min_hold_probability: 0.50
+  position_reversal_late_hold_probability: 0.62
+  position_reversal_min_z_support: -0.30
+  position_reversal_wrong_side_seconds: 120
+  position_reversal_min_forecast_probability: 0.48
+  kelly_enabled: false
+  kelly_fraction: 0.25
+  kelly_max_fraction: 0.25
+  kelly_bankroll_usd: 16.22
+  take_profit_bid_price: 0.90
+  take_profit_late_seconds: 0
+  take_profit_reversal_buffer_cents: 0.15
+  stop_loss_fraction: 0.45
+  opposite_edge_shift: 0.25
+  thesis_reversal_enabled: false
+  opposite_edge_exit_enabled: false
+  recovery_hold_enabled: false
+  recovery_hold_min_probability: 0.58
+  recovery_hold_min_confidence: 0.58
+  recovery_hold_min_agreement: 0.58
+
+data:
+  benchmark_mode: kalshi_passthrough
+  cf_benchmark_url: ""
+  max_brti_age_seconds: 10
+  min_supporting_venues: 2
+  max_supporting_dispersion: 0.003
+
+pricing:
+  risk_free_rate: 0.05
+  min_iv: 0.30
+  max_iv: 1.50
+  default_iv: 0.60
+  smile_cache_sec: 60
+
+settlement:
+  reference: BRTI

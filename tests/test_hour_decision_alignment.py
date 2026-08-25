@@ -74,7 +74,7 @@ def test_poll_favorite_gate_blocks_low_probability_market():
 def test_decision_config_from_app_uses_hour_entry_window():
     from kalshi_bot.strategies.decision import decision_config_from_app
 
-    cfg = load_yaml_config("config/1h.yaml")
+    cfg = load_yaml_config("tests/fixtures/1h_terminal.yaml")
     decision_cfg = decision_config_from_app(
         cfg,
         maximum_seconds_remaining=cfg.hour.max_entry_seconds_remaining,

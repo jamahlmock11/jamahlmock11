@@ -81,7 +81,22 @@ def _entry_band_label(min_price: float, max_price: float | None) -> str:
     return f"{min_price * 100:.0f}–{max_price * 100:.0f}¢ favorites"
 
 
+def _is_blank_1h(cfg: AppConfig | None) -> bool:
+    if cfg is None:
+        return True
+    terminal = cfg.terminal_probability
+    return not terminal.enabled and not terminal.mispricing_enabled and not cfg.execution.orders_enabled
+
+
 def _rules_1h(cfg: AppConfig | None, mode: str) -> list[dict[str, str]]:
+    if _is_blank_1h(cfg):
+        return [
+            {"key": "Status", "value": "BLANK — no rules or strategies active"},
+            {"key": "Trading", "value": "OFF"},
+            {"key": "Terminal engine", "value": "OFF"},
+            {"key": "Mispricing", "value": "OFF"},
+        ]
+
     hour = cfg.hour if cfg else None
     terminal = cfg.terminal_probability if cfg else None
     strategy = cfg.strategy if cfg else None
@@ -172,11 +187,15 @@ def active_edge_rules(*, mode: str = "LIVE", account: str = "API connected") -> 
             f"BRTI + microstructure gates."
         ),
         "summary_1h": (
-            "Terminal probability across all hourly strikes in the last 15 minutes; "
-            + (
-                "mispricing gate on."
-                if cfg_1h and cfg_1h.terminal_probability.mispricing_enabled
-                else "forecast + tiered edge (mispricing off)."
+            "Blank — scan-only, no active rules or strategies."
+            if _is_blank_1h(cfg_1h)
+            else (
+                "Terminal probability across all hourly strikes in the last 15 minutes; "
+                + (
+                    "mispricing gate on."
+                    if cfg_1h and cfg_1h.terminal_probability.mispricing_enabled
+                    else "forecast + tiered edge (mispricing off)."
+                )
             )
         ),
         "config_15m": strategy.model_dump() if strategy else {},

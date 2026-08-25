@@ -293,5 +293,6 @@ def test_active_edge_rules_with_null_max_entry_band():
     assert _entry_band_label(0.0, 0.9) == "≤90¢"
 
     payload = active_edge_rules(mode="LIVE")
-    entry_band = next(r for r in payload["rules_1h"] if r["key"] == "Entry band")
-    assert entry_band["value"] == "OFF"
+    assert payload["rules_1h"][0]["key"] == "Status"
+    assert "BLANK" in payload["rules_1h"][0]["value"]
+    assert "Blank" in payload["summary_1h"]
