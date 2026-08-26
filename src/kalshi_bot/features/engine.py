@@ -8,6 +8,7 @@ import statistics
 from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from kalshi_bot.domain import (
     BenchmarkQuote,
@@ -90,9 +91,22 @@ def classify_trajectory(
 class FeatureEngine:
     """Maintain BRTI history and build snapshots using only data known at `now`."""
 
-    def __init__(self, config: FeatureEngineConfig | None = None) -> None:
+    def __init__(
+        self,
+        config: FeatureEngineConfig | None = None,
+        *,
+        history_path: Path | None = None,
+        persist_history: bool = False,
+    ) -> None:
         self.config = config or FeatureEngineConfig()
+        self._history_path = history_path
+        self._persist_history = persist_history
         self._history: list[RollingPricePoint] = []
+        if persist_history:
+            from kalshi_bot.features.history_store import DEFAULT_PATH, load_history
+
+            path = history_path or DEFAULT_PATH
+            self._history = load_history(path)
 
     @property
     def history(self) -> tuple[RollingPricePoint, ...]:
@@ -123,6 +137,10 @@ class FeatureEngine:
         newest = self._history[-1].timestamp
         cutoff = newest.timestamp() - self.config.history_seconds
         self._history = [item for item in self._history if item.timestamp.timestamp() >= cutoff]
+        if self._persist_history and self._history:
+            from kalshi_bot.features.history_store import DEFAULT_PATH, save_history
+
+            save_history(self._history, self._history_path or DEFAULT_PATH)
 
     ingest = add_quote
 

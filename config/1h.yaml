@@ -1,4 +1,6 @@
 # 1-hour KXBTCD bot — blank slate (no strategies, rules, or active trading)
+# NOTE: run_1h.sh now uses config/1h_ws.yaml + --1h-ws (crowd-favorite bot).
+# This file is kept for reference / manual --1h runs only.
 horizon: 1h
 series:
   - KXBTCD

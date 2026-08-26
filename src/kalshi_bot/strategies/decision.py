@@ -203,6 +203,11 @@ def decision_config_from_app(
         if ls.enabled
         else (maximum_seconds_remaining or strategy.max_entry_seconds_remaining)
     )
+    proxy_mode = config.data.benchmark_mode == "constituent_proxy"
+    paper_proxy = config.execution.dry_run and proxy_mode
+    minimum_data_completeness = strategy.min_data_completeness
+    if paper_proxy:
+        minimum_data_completeness = min(minimum_data_completeness, 0.375)
     return DecisionConfig(
         minimum_edge=ls.min_edge if ls.enabled else strategy.min_edge,
         target_edge=strategy.target_edge,
@@ -214,7 +219,7 @@ def decision_config_from_app(
         minimum_agreement=(
             ls.min_signal_agreement if ls.enabled else strategy.min_signal_agreement
         ),
-        minimum_data_completeness=strategy.min_data_completeness,
+        minimum_data_completeness=minimum_data_completeness,
         minimum_depth=strategy.order_quantity,
         maximum_spread=strategy.max_spread,
         fee_rate=config.execution.fee_rate,
@@ -239,6 +244,7 @@ def decision_config_from_app(
         allow_proxy_data=(
             config.execution.dry_run and config.data.benchmark_mode == "constituent_proxy"
         ),
+        proxy_minimum_edge=strategy.min_edge,
         proxy_minimum_constituents=config.data.min_supporting_venues,
         proxy_maximum_dispersion=config.data.max_supporting_dispersion,
         stop_loss_fraction=config.risk.stop_loss_fraction,
