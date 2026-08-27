@@ -63,6 +63,13 @@ except ImportError:
 
 load_dotenv()
 
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in ("1", "true", "yes", "on")
+
 # ============================================================================
 # CONFIG
 # ============================================================================
@@ -100,16 +107,19 @@ def _require_credentials() -> None:
 BTC_SERIES_TICKER = os.getenv("KALSHI_BTC_SERIES_TICKER", "KXBTC")
 
 # Strategy window (time-to-expiration gate)
-MIN_TIME_LEFT_MINUTES = float(os.getenv("MIN_TIME_LEFT_MINUTES", "5"))
-MAX_TIME_LEFT_MINUTES = float(os.getenv("MAX_TIME_LEFT_MINUTES", "58"))
+MIN_TIME_LEFT_MINUTES = float(os.getenv("MIN_TIME_LEFT_MINUTES", "8"))
+MAX_TIME_LEFT_MINUTES = float(os.getenv("MAX_TIME_LEFT_MINUTES", "45"))
 
 # Order book imbalance thresholds
-IMBALANCE_RATIO_THRESHOLD = float(os.getenv("IMBALANCE_RATIO_THRESHOLD", "2.0"))
-PRICE_BAND_LOW = int(os.getenv("PRICE_BAND_LOW", "25"))    # cents
-PRICE_BAND_HIGH = int(os.getenv("PRICE_BAND_HIGH", "75"))  # cents
+IMBALANCE_RATIO_THRESHOLD = float(os.getenv("IMBALANCE_RATIO_THRESHOLD", "2.2"))
+IMBALANCE_EXTREME_THRESHOLD = float(os.getenv("IMBALANCE_EXTREME_THRESHOLD", "3.0"))
+PRICE_BAND_LOW = int(os.getenv("PRICE_BAND_LOW", "32"))    # cents
+PRICE_BAND_HIGH = int(os.getenv("PRICE_BAND_HIGH", "62"))  # cents
 DEPTH_LEVELS = int(os.getenv("DEPTH_LEVELS", "3"))
-MOMENTUM_DELTA_CENTS = float(os.getenv("MOMENTUM_DELTA_CENTS", "1.5"))
-MIN_SIDE_DEPTH = int(os.getenv("MIN_SIDE_DEPTH", "100"))
+MOMENTUM_DELTA_CENTS = float(os.getenv("MOMENTUM_DELTA_CENTS", "2.0"))
+REQUIRE_MOMENTUM = _env_bool("REQUIRE_MOMENTUM", True)
+ALLOW_ONE_SIDED_BOOKS = _env_bool("ALLOW_ONE_SIDED_BOOKS", False)
+MIN_SIDE_DEPTH = int(os.getenv("MIN_SIDE_DEPTH", "150"))
 MAX_MARKETS_PER_SCAN = int(os.getenv("MAX_MARKETS_PER_SCAN", "40"))
 
 # Execution / polling
@@ -127,7 +137,7 @@ class RiskConfig:
     max_contracts_per_trade: int = int(os.getenv("MAX_CONTRACTS_PER_TRADE", "5"))
     max_dollars_per_trade: float = float(os.getenv("MAX_DOLLARS_PER_TRADE", "5.00"))
     daily_loss_limit_dollars: float = float(os.getenv("DAILY_LOSS_LIMIT", "25.00"))
-    max_open_positions: int = int(os.getenv("MAX_OPEN_POSITIONS", "3"))
+    max_open_positions: int = int(os.getenv("MAX_OPEN_POSITIONS", "1"))
     cooldown_seconds_after_trade: int = int(os.getenv("COOLDOWN_SECONDS", "120"))
     starting_bankroll: float = float(os.getenv("STARTING_BANKROLL", "100.00"))
 
@@ -395,13 +405,22 @@ class MarketImbalanceStrategy:
 
         return None
 
+    def _imbalance_confirmed(self, side: str, ratio: float, momentum: str | None) -> bool:
+        if not REQUIRE_MOMENTUM:
+            return True
+        if ratio >= IMBALANCE_EXTREME_THRESHOLD:
+            return True
+        return momentum == side
+
     def evaluate_market(self, ticker: str, orderbook: dict) -> Signal | None:
         yes = orderbook.get("yes") or []
         no = orderbook.get("no") or []
         if not yes and not no:
             return None
         if not yes or not no:
-            return self._evaluate_one_sided(ticker, yes, no)
+            if ALLOW_ONE_SIDED_BOOKS:
+                return self._evaluate_one_sided(ticker, yes, no)
+            return None
 
         midpoint = self._midpoint(orderbook)
         if midpoint is None:
@@ -425,16 +444,18 @@ class MarketImbalanceStrategy:
         threshold = IMBALANCE_RATIO_THRESHOLD
 
         if yes_no_ratio >= threshold and low <= midpoint <= high:
-            return Signal(
-                ticker=ticker, side="yes", limit_price=min(best_yes_bid + 1, 99),
-                reason=f"book_imbalance={yes_no_ratio:.2f}x yes, momentum={momentum}",
-            )
+            if self._imbalance_confirmed("yes", yes_no_ratio, momentum):
+                return Signal(
+                    ticker=ticker, side="yes", limit_price=min(best_yes_bid + 1, 99),
+                    reason=f"book_imbalance={yes_no_ratio:.2f}x yes, momentum={momentum}",
+                )
 
         if no_yes_ratio >= threshold and low <= (100 - midpoint) <= high:
-            return Signal(
-                ticker=ticker, side="no", limit_price=min(best_no_bid + 1, 99),
-                reason=f"book_imbalance={no_yes_ratio:.2f}x no, momentum={momentum}",
-            )
+            if self._imbalance_confirmed("no", no_yes_ratio, momentum):
+                return Signal(
+                    ticker=ticker, side="no", limit_price=min(best_no_bid + 1, 99),
+                    reason=f"book_imbalance={no_yes_ratio:.2f}x no, momentum={momentum}",
+                )
 
         return None
 
