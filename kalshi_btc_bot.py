@@ -1299,11 +1299,12 @@ def run_cycle(
 def main():
     _require_credentials()
     control = HourBotControl.load()
-    if control.mode not in ("paper", "live"):
-        control.mode = TRADING_MODE
+    control.mode = TRADING_MODE
     control.save()
 
-    mode = control.mode
+    mode = TRADING_MODE
+    if mode == "live":
+        log_main.warning("LIVE MODE — real orders will be sent to Kalshi (max $%.2f/trade).", RISK.max_dollars_per_trade)
     log_main.info("Starting Kalshi hourly-BTC bot in %s mode.", mode.upper())
     log_main.info(
         "Risk config: max_contracts=%d max_$=%.2f daily_loss_limit=%.2f cooldown=%ds max_open=%d",
