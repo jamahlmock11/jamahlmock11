@@ -132,7 +132,7 @@ def default_status() -> HourBotStatus:
         updatedAt=datetime.now(timezone.utc).isoformat(),
         guardrails={
             "dailyLossLimit": float(os.getenv("DAILY_LOSS_LIMIT", "25")),
-            "maxOpenPositions": int(os.getenv("MAX_OPEN_POSITIONS", "3")),
+            "maxOpenPositions": int(os.getenv("MAX_OPEN_POSITIONS", "4")),
             "maxCapitalDeployed": float(os.getenv("MAX_DOLLARS_PER_TRADE", "5")) * 3,
             "dailyEntryBudget": int(os.getenv("DAILY_ENTRY_BUDGET", "20")),
             "openPositionsCount": 0,

@@ -139,7 +139,7 @@ class RiskConfig:
     max_contracts_per_trade: int = int(os.getenv("MAX_CONTRACTS_PER_TRADE", "5"))
     max_dollars_per_trade: float = float(os.getenv("MAX_DOLLARS_PER_TRADE", "5.00"))
     daily_loss_limit_dollars: float = float(os.getenv("DAILY_LOSS_LIMIT", "25.00"))
-    max_open_positions: int = int(os.getenv("MAX_OPEN_POSITIONS", "1"))
+    max_open_positions: int = int(os.getenv("MAX_OPEN_POSITIONS", "4"))
     cooldown_seconds_after_trade: int = int(os.getenv("COOLDOWN_SECONDS", "120"))
     starting_bankroll: float = float(os.getenv("STARTING_BANKROLL", "100.00"))
 
