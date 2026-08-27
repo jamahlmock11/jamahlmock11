@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import kalshi_btc_bot as bot
-from kalshi_btc_bot import MarketImbalanceStrategy
+from kalshi_btc_bot import DashboardRecorder, MarketImbalanceStrategy
 
 
 def test_extreme_imbalance_generates_signal_without_momentum(monkeypatch):
@@ -94,3 +94,43 @@ def test_one_sided_no_book_in_band_generates_signal_when_enabled(monkeypatch):
     assert signal is not None
     assert signal.side == "no"
     assert "one_sided_no" in signal.reason
+
+
+def test_settlement_journal_records_win_outcome():
+    dash = DashboardRecorder(mode="paper")
+    dash.record_settlement(
+        "KXBTC-TEST-B78750",
+        "yes",
+        2.35,
+        True,
+        market_result="yes",
+        count=5,
+        entry_price=27,
+        cost_basis=1.35,
+        payout=5.0,
+    )
+    entry = dash.journal[0]
+    assert entry["kind"] == "settle"
+    assert entry["won"] is True
+    assert entry["outcome"] == "WIN"
+    assert entry["detail"]["marketResult"] == "yes"
+    assert entry["detail"]["pnl"] == 2.35
+
+
+def test_settlement_journal_records_loss_outcome():
+    dash = DashboardRecorder(mode="paper")
+    dash.record_settlement(
+        "KXBTC-TEST-B78750",
+        "yes",
+        -1.35,
+        False,
+        market_result="no",
+        count=5,
+        entry_price=27,
+        cost_basis=1.35,
+        payout=0.0,
+    )
+    entry = dash.journal[0]
+    assert entry["won"] is False
+    assert entry["outcome"] == "LOSS"
+    assert entry["detail"]["marketResult"] == "no"

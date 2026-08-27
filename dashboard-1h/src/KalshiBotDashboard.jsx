@@ -47,7 +47,35 @@ const LOG_STYLES = {
   reject: { dot: "bg-[#F0A93D]", text: "text-[#F0A93D]" },
   fill: { dot: "bg-[#33D693]", text: "text-[#33D693]" },
   settle: { dot: "bg-[#33D693]", text: "text-[#B7F3DB]" },
+  settle_win: { dot: "bg-[#33D693]", text: "text-[#33D693]" },
+  settle_loss: { dot: "bg-[#F2495C]", text: "text-[#F2495C]" },
 };
+
+function rowStyle(row) {
+  if (row.kind === "settle") {
+    const won = row.won ?? row.detail?.won;
+    if (won === true) return LOG_STYLES.settle_win;
+    if (won === false) return LOG_STYLES.settle_loss;
+  }
+  return LOG_STYLES[row.kind] ?? LOG_STYLES.scan;
+}
+
+function SettlementOutcome({ row }) {
+  if (row.kind !== "settle") return <span className="text-[#767C86]">—</span>;
+  const won = row.won ?? row.detail?.won;
+  const outcome = row.outcome || row.detail?.outcome || (won === true ? "WIN" : won === false ? "LOSS" : "");
+  if (!outcome) return <span className="text-[#767C86]">—</span>;
+  const isWin = won === true || outcome === "WIN";
+  return (
+    <span
+      className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide ${
+        isWin ? "bg-[#33D693]/15 text-[#33D693]" : "bg-[#F2495C]/15 text-[#F2495C]"
+      }`}
+    >
+      {isWin ? "Win" : "Loss"}
+    </span>
+  );
+}
 
 function emptyState() {
   return {
@@ -268,29 +296,51 @@ function LivePricesTable({ markets }) {
   );
 }
 
-function DetailJournal({ journal, logs }) {
+function DetailJournal({ journal, logs, winsToday, lossesToday }) {
   const [filter, setFilter] = useState("all");
   const [expanded, setExpanded] = useState(null);
   const rows = (journal?.length ? journal : logs) || [];
-  const filtered = rows.filter((row) => filter === "all" || row.kind === filter);
-  const filters = ["all", "signal", "fill", "reject", "settle", "scan"];
+  const settlements = rows.filter((row) => row.kind === "settle");
+  const settleWins = settlements.filter((row) => row.won ?? row.detail?.won).length;
+  const settleLosses = settlements.filter((row) => {
+    const won = row.won ?? row.detail?.won;
+    return won === false;
+  }).length;
+  const filtered = rows.filter((row) => {
+    if (filter === "all") return true;
+    if (filter === "win") return row.kind === "settle" && (row.won ?? row.detail?.won) === true;
+    if (filter === "loss") return row.kind === "settle" && (row.won ?? row.detail?.won) === false;
+    return row.kind === filter;
+  });
+  const filters = ["all", "signal", "fill", "settle", "win", "loss", "reject", "scan"];
 
   return (
     <div className="flex flex-col h-full min-h-[320px]">
-      <div className="flex flex-wrap gap-2 px-4 pt-3 pb-2 border-b border-[#24272C]">
-        {filters.map((f) => (
-          <button
-            key={f}
-            onClick={() => setFilter(f)}
-            className={`px-2.5 py-1 rounded-full text-[10px] uppercase tracking-wide border transition-colors ${
-              filter === f
-                ? "border-[#4CC9F0]/50 bg-[#4CC9F0]/10 text-[#4CC9F0]"
-                : "border-[#24272C] text-[#767C86] hover:border-[#3A3E45]"
-            }`}
-          >
-            {f}
-          </button>
-        ))}
+      <div className="flex flex-wrap items-center justify-between gap-3 px-4 pt-3 pb-2 border-b border-[#24272C]">
+        <div className="flex flex-wrap gap-2">
+          {filters.map((f) => (
+            <button
+              key={f}
+              onClick={() => setFilter(f)}
+              className={`px-2.5 py-1 rounded-full text-[10px] uppercase tracking-wide border transition-colors ${
+                filter === f
+                  ? "border-[#4CC9F0]/50 bg-[#4CC9F0]/10 text-[#4CC9F0]"
+                  : "border-[#24272C] text-[#767C86] hover:border-[#3A3E45]"
+              }`}
+            >
+              {f}
+            </button>
+          ))}
+        </div>
+        <div className="flex items-center gap-3 text-[10px] font-[IBM_Plex_Mono]">
+          <span className="text-[#33D693]">{settleWins}W</span>
+          <span className="text-[#767C86]">/</span>
+          <span className="text-[#F2495C]">{settleLosses}L</span>
+          <span className="text-[#767C86]">settlements</span>
+          {(winsToday > 0 || lossesToday > 0) && (
+            <span className="text-[#767C86]">· today {winsToday}W/{lossesToday}L</span>
+          )}
+        </div>
       </div>
       <div className="flex-1 overflow-y-auto px-4 pb-4">
         <table className="w-full text-xs">
@@ -298,6 +348,7 @@ function DetailJournal({ journal, logs }) {
             <tr className="text-[#767C86] border-b border-[#24272C]">
               <th className="text-left py-2 pr-2 font-normal">Time</th>
               <th className="text-left py-2 pr-2 font-normal">Kind</th>
+              <th className="text-left py-2 pr-2 font-normal">Outcome</th>
               <th className="text-left py-2 pr-2 font-normal">Ticker</th>
               <th className="text-left py-2 pr-2 font-normal">Side</th>
               <th className="text-right py-2 pr-2 font-normal">Px</th>
@@ -307,15 +358,16 @@ function DetailJournal({ journal, logs }) {
           <tbody>
             {!filtered.length && (
               <tr>
-                <td colSpan={6} className="text-[#767C86] py-8 text-center">
+                <td colSpan={7} className="text-[#767C86] py-8 text-center">
                   No journal entries for this filter.
                 </td>
               </tr>
             )}
             {filtered.map((row) => {
-              const style = LOG_STYLES[row.kind] ?? LOG_STYLES.scan;
+              const style = rowStyle(row);
               const when = new Date(row.time);
               const open = expanded === row.id;
+              const pnl = row.detail?.pnl;
               return (
                 <React.Fragment key={row.id}>
                   <tr
@@ -332,6 +384,9 @@ function DetailJournal({ journal, logs }) {
                         {row.kind}
                       </span>
                     </td>
+                    <td className="py-2 pr-2 align-top">
+                      <SettlementOutcome row={row} />
+                    </td>
                     <td className="py-2 pr-2 align-top text-[#E9E7E2]">
                       {row.ticker ? row.ticker.split("-").slice(-1)[0] : "—"}
                     </td>
@@ -339,11 +394,21 @@ function DetailJournal({ journal, logs }) {
                     <td className="py-2 pr-2 align-top text-right text-[#E9E7E2]">
                       {row.price != null ? `${row.price}¢` : "—"}
                     </td>
-                    <td className={`py-2 align-top ${style.text}`}>{row.text}</td>
+                    <td className={`py-2 align-top ${style.text}`}>
+                      {row.text}
+                      {row.kind === "settle" && pnl != null && (
+                        <span className={`ml-2 font-semibold ${pnl >= 0 ? "text-[#33D693]" : "text-[#F2495C]"}`}>
+                          ({pnl >= 0 ? "+" : ""}${Number(pnl).toFixed(2)})
+                        </span>
+                      )}
+                      {row.kind === "settle" && row.detail?.marketResult && (
+                        <span className="ml-2 text-[#767C86]">→ market {row.detail.marketResult}</span>
+                      )}
+                    </td>
                   </tr>
                   {open && row.detail && Object.keys(row.detail).length > 0 && (
                     <tr className="bg-[#0D0F12]">
-                      <td colSpan={6} className="py-2 px-2 text-[10px] text-[#9AA0A8] font-[IBM_Plex_Mono]">
+                      <td colSpan={7} className="py-2 px-2 text-[10px] text-[#9AA0A8] font-[IBM_Plex_Mono]">
                         <pre className="whitespace-pre-wrap break-all">{JSON.stringify(row.detail, null, 2)}</pre>
                       </td>
                     </tr>
@@ -858,7 +923,7 @@ export default function KalshiBotDashboard() {
         </Panel>
 
         <Panel title="Detail journal" eyebrow="Signals · fills · settlements" className="xl:col-span-3 min-h-[360px]">
-          <DetailJournal journal={journal} logs={logs} />
+          <DetailJournal journal={journal} logs={logs} winsToday={winsToday} lossesToday={lossesToday} />
         </Panel>
 
         <Panel title="Live scan log" eyebrow="Recent cycles" className="xl:col-span-3">
@@ -873,7 +938,7 @@ export default function KalshiBotDashboard() {
                   </tr>
                 )}
                 {logs?.map((l) => {
-                  const style = LOG_STYLES[l.kind] ?? LOG_STYLES.scan;
+                  const style = rowStyle(l);
                   const when = new Date(l.time);
                   return (
                     <tr key={l.id} className="border-b border-[#1A1D22] last:border-0">
@@ -882,7 +947,8 @@ export default function KalshiBotDashboard() {
                       </td>
                       <td className="py-1.5 align-top">
                         <span className={`inline-block w-1.5 h-1.5 rounded-full mr-2 ${style.dot}`} />
-                        <span className={style.text}>{l.text}</span>
+                        {l.kind === "settle" && <SettlementOutcome row={l} />}
+                        <span className={`${l.kind === "settle" ? "ml-2 " : ""}${style.text}`}>{l.text}</span>
                       </td>
                     </tr>
                   );

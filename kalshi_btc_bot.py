@@ -597,6 +597,8 @@ class DashboardRecorder:
         side: str = "",
         price: int | None = None,
         count: int | None = None,
+        won: bool | None = None,
+        outcome: str = "",
         detail: dict | None = None,
         journal_only: bool = False,
     ) -> None:
@@ -609,6 +611,8 @@ class DashboardRecorder:
             "side": side,
             "price": price,
             "count": count,
+            "won": won,
+            "outcome": outcome,
             "detail": detail or {},
         }
         if not journal_only:
@@ -648,7 +652,19 @@ class DashboardRecorder:
             detail={"signalReason": signal_reason, "quote": quote or {}},
         )
 
-    def record_settlement(self, ticker: str, side: str, pnl: float, won: bool):
+    def record_settlement(
+        self,
+        ticker: str,
+        side: str,
+        pnl: float,
+        won: bool,
+        *,
+        market_result: str = "",
+        count: int = 0,
+        entry_price: int = 0,
+        cost_basis: float = 0.0,
+        payout: float = 0.0,
+    ):
         fee = 0.01
         self.fees_paid_today += fee
         self.fees_paid_total += fee
@@ -661,12 +677,30 @@ class DashboardRecorder:
             self.losses_today += 1
             self.sum_loss_dollars += max(-pnl, 0)
         self.position_meta.pop(ticker, None)
+        outcome = "WIN" if won else "LOSS"
         self.add_log(
             "settle",
-            f"SETTLED {ticker} {side} — {'WON' if won else 'LOST'} — pnl {pnl:+.2f}",
+            (
+                f"SETTLED {ticker} {side} — {outcome} — "
+                f"market settled {market_result or '?'} — pnl {pnl:+.2f}"
+            ),
             ticker=ticker,
             side=side,
-            detail={"pnl": round(pnl, 2), "won": won},
+            price=entry_price or None,
+            count=count or None,
+            won=won,
+            outcome=outcome,
+            detail={
+                "won": won,
+                "outcome": outcome,
+                "marketResult": market_result,
+                "heldSide": side,
+                "pnl": round(pnl, 2),
+                "count": count,
+                "entryPrice": entry_price,
+                "costBasis": round(cost_basis, 2),
+                "payout": round(payout, 2),
+            },
         )
 
     @staticmethod
@@ -990,14 +1024,25 @@ def check_settlements(client: KalshiClient, risk: RiskManager, dashboard: Dashbo
             continue
         if market.get("status") == "finalized" and market.get("result") in ("yes", "no"):
             held_side = risk.open_positions[ticker].side
-            won = held_side == market.get("result")
+            market_result = str(market.get("result"))
+            won = held_side == market_result
             fill = risk.open_positions[ticker]
             cost = (fill.price_cents * fill.count) / 100.0
             proceeds = fill.count * 1.0 if won else 0.0
             pnl = proceeds - cost
             risk.record_settlement(ticker, won=won)
             if dashboard:
-                dashboard.record_settlement(ticker, held_side, pnl, won)
+                dashboard.record_settlement(
+                    ticker,
+                    held_side,
+                    pnl,
+                    won,
+                    market_result=market_result,
+                    count=fill.count,
+                    entry_price=fill.price_cents,
+                    cost_basis=cost,
+                    payout=proceeds,
+                )
 
 
 def _expiration_ms(market: dict) -> int:
