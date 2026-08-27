@@ -21,7 +21,7 @@ import { fetchHourBotStatus, postHourBotControl } from "./api";
 
 const FONT_LINK_ID = "kbd-fonts";
 const START_BANKROLL = 100;
-const POLL_MS = 2200;
+const DEFAULT_POLL_MS = 500;
 
 function useInjectFonts() {
   useEffect(() => {
@@ -82,6 +82,9 @@ function emptyState() {
       capitalDeployed: 0,
     },
     currentHour: { active: false, message: "Waiting for bot status…" },
+    journal: [],
+    pollIntervalMs: DEFAULT_POLL_MS,
+    updatedAt: "",
   };
 }
 
@@ -209,15 +212,148 @@ function TickerTape({ markets }) {
         {row.map((m, i) => (
           <span key={i} className="text-[12px] font-[IBM_Plex_Mono] text-[#9AA0A8] flex items-center gap-2">
             <span className="text-[#E9E7E2]">{m.ticker.split("-").slice(-1)[0]}</span>
-            <span className="text-[#33D693]">Y{m.yesBid}¢</span>
-            <span className="text-[#F2495C]">N{100 - m.yesAsk}¢</span>
-            <span className="text-[#767C86]">{((m.yesBid + m.yesAsk) / 2).toFixed(0)}% impl.</span>
+            <span className="text-[#33D693]">Y{m.yesBid ?? 0}/{m.yesAsk ?? 0}¢</span>
+            <span className="text-[#F2495C]">N{m.noBid ?? 0}/{m.noAsk ?? 0}¢</span>
+            <span className="text-[#767C86]">{Number(m.impliedProb || 0).toFixed(0)}% impl</span>
           </span>
         ))}
       </div>
       <style>{`
         @keyframes tape { from { transform: translateX(0); } to { transform: translateX(-33.333%); } }
       `}</style>
+    </div>
+  );
+}
+
+function LivePricesTable({ markets }) {
+  if (!markets?.length) {
+    return <div className="text-[#767C86] text-xs py-6 text-center">No live quotes yet.</div>;
+  }
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-[11px] font-[IBM_Plex_Mono]">
+        <thead>
+          <tr className="text-[#767C86] border-b border-[#24272C]">
+            <th className="text-left py-2 pr-3 font-normal">Contract</th>
+            <th className="text-right py-2 px-2 font-normal">Yes bid</th>
+            <th className="text-right py-2 px-2 font-normal">Yes ask</th>
+            <th className="text-right py-2 px-2 font-normal">No bid</th>
+            <th className="text-right py-2 px-2 font-normal">No ask</th>
+            <th className="text-right py-2 px-2 font-normal">Spread</th>
+            <th className="text-right py-2 px-2 font-normal">Impl %</th>
+            <th className="text-right py-2 pl-2 font-normal">Depth Y/N</th>
+          </tr>
+        </thead>
+        <tbody>
+          {markets.map((m) => (
+            <tr key={m.ticker} className="border-b border-[#1A1D22] last:border-0 hover:bg-[#0D0F12]">
+              <td className="py-2 pr-3 text-[#E9E7E2]">
+                <div className="font-medium">{m.ticker.split("-").slice(-1)[0]}</div>
+                {m.subtitle && <div className="text-[10px] text-[#767C86] truncate max-w-[180px]">{m.subtitle}</div>}
+              </td>
+              <td className="py-2 px-2 text-right text-[#33D693]">{m.yesBid ?? "—"}¢</td>
+              <td className="py-2 px-2 text-right text-[#33D693]">{m.yesAsk ?? "—"}¢</td>
+              <td className="py-2 px-2 text-right text-[#F2495C]">{m.noBid ?? "—"}¢</td>
+              <td className="py-2 px-2 text-right text-[#F2495C]">{m.noAsk ?? "—"}¢</td>
+              <td className="py-2 px-2 text-right text-[#B7BAC0]">{m.spread ?? 0}¢</td>
+              <td className="py-2 px-2 text-right text-[#4CC9F0]">{Number(m.impliedProb || 0).toFixed(1)}%</td>
+              <td className="py-2 pl-2 text-right text-[#767C86]">
+                {m.depthYes ?? 0}/{m.depthNo ?? 0}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function DetailJournal({ journal, logs }) {
+  const [filter, setFilter] = useState("all");
+  const [expanded, setExpanded] = useState(null);
+  const rows = (journal?.length ? journal : logs) || [];
+  const filtered = rows.filter((row) => filter === "all" || row.kind === filter);
+  const filters = ["all", "signal", "fill", "reject", "settle", "scan"];
+
+  return (
+    <div className="flex flex-col h-full min-h-[320px]">
+      <div className="flex flex-wrap gap-2 px-4 pt-3 pb-2 border-b border-[#24272C]">
+        {filters.map((f) => (
+          <button
+            key={f}
+            onClick={() => setFilter(f)}
+            className={`px-2.5 py-1 rounded-full text-[10px] uppercase tracking-wide border transition-colors ${
+              filter === f
+                ? "border-[#4CC9F0]/50 bg-[#4CC9F0]/10 text-[#4CC9F0]"
+                : "border-[#24272C] text-[#767C86] hover:border-[#3A3E45]"
+            }`}
+          >
+            {f}
+          </button>
+        ))}
+      </div>
+      <div className="flex-1 overflow-y-auto px-4 pb-4">
+        <table className="w-full text-xs">
+          <thead className="sticky top-0 bg-[#131519]">
+            <tr className="text-[#767C86] border-b border-[#24272C]">
+              <th className="text-left py-2 pr-2 font-normal">Time</th>
+              <th className="text-left py-2 pr-2 font-normal">Kind</th>
+              <th className="text-left py-2 pr-2 font-normal">Ticker</th>
+              <th className="text-left py-2 pr-2 font-normal">Side</th>
+              <th className="text-right py-2 pr-2 font-normal">Px</th>
+              <th className="text-left py-2 font-normal">Detail</th>
+            </tr>
+          </thead>
+          <tbody>
+            {!filtered.length && (
+              <tr>
+                <td colSpan={6} className="text-[#767C86] py-8 text-center">
+                  No journal entries for this filter.
+                </td>
+              </tr>
+            )}
+            {filtered.map((row) => {
+              const style = LOG_STYLES[row.kind] ?? LOG_STYLES.scan;
+              const when = new Date(row.time);
+              const open = expanded === row.id;
+              return (
+                <React.Fragment key={row.id}>
+                  <tr
+                    className="border-b border-[#1A1D22] hover:bg-[#0D0F12] cursor-pointer"
+                    onClick={() => setExpanded(open ? null : row.id)}
+                  >
+                    <td className="py-2 pr-2 whitespace-nowrap text-[#767C86] align-top">
+                      {when.toLocaleTimeString([], { hour12: false })}
+                      <div className="text-[10px]">{when.toLocaleDateString()}</div>
+                    </td>
+                    <td className="py-2 pr-2 align-top">
+                      <span className={`inline-flex items-center gap-1 ${style.text}`}>
+                        <span className={`w-1.5 h-1.5 rounded-full ${style.dot}`} />
+                        {row.kind}
+                      </span>
+                    </td>
+                    <td className="py-2 pr-2 align-top text-[#E9E7E2]">
+                      {row.ticker ? row.ticker.split("-").slice(-1)[0] : "—"}
+                    </td>
+                    <td className="py-2 pr-2 align-top uppercase text-[#B7BAC0]">{row.side || "—"}</td>
+                    <td className="py-2 pr-2 align-top text-right text-[#E9E7E2]">
+                      {row.price != null ? `${row.price}¢` : "—"}
+                    </td>
+                    <td className={`py-2 align-top ${style.text}`}>{row.text}</td>
+                  </tr>
+                  {open && row.detail && Object.keys(row.detail).length > 0 && (
+                    <tr className="bg-[#0D0F12]">
+                      <td colSpan={6} className="py-2 px-2 text-[10px] text-[#9AA0A8] font-[IBM_Plex_Mono]">
+                        <pre className="whitespace-pre-wrap break-all">{JSON.stringify(row.detail, null, 2)}</pre>
+                      </td>
+                    </tr>
+                  )}
+                </React.Fragment>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
@@ -229,13 +365,18 @@ export default function KalshiBotDashboard() {
   const [estopArmed, setEstopArmed] = useState(false);
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState(null);
+  const [lastFetchMs, setLastFetchMs] = useState(0);
+
+  const pollMs = data.pollIntervalMs || DEFAULT_POLL_MS;
 
   const refresh = useCallback(async () => {
+    const started = Date.now();
     try {
       const payload = await fetchHourBotStatus();
       setData((prev) => ({ ...prev, ...payload }));
       setConnected(true);
       setError(null);
+      setLastFetchMs(Date.now() - started);
     } catch (err) {
       setConnected(false);
       setError(err.message);
@@ -244,9 +385,9 @@ export default function KalshiBotDashboard() {
 
   useEffect(() => {
     refresh();
-    const id = setInterval(refresh, POLL_MS);
+    const id = setInterval(refresh, pollMs);
     return () => clearInterval(id);
-  }, [refresh]);
+  }, [refresh, pollMs]);
 
   const sendControl = async (payload) => {
     await postHourBotControl(payload);
@@ -278,7 +419,12 @@ export default function KalshiBotDashboard() {
     logs,
     guardrails,
     currentHour,
+    journal,
+    updatedAt,
+    pollIntervalMs,
   } = data;
+
+  const dataAgeMs = updatedAt ? Math.max(0, Date.now() - new Date(updatedAt).getTime()) : null;
 
   const netEquity = bankroll + unrealized;
   const equityFmt = (v) => `$${Number(v || 0).toFixed(2)}`;
@@ -307,6 +453,12 @@ export default function KalshiBotDashboard() {
           {!connected && (
             <span className="text-[11px] text-[#F0A93D]">
               {error ? `offline — ${error}` : "connecting…"}
+            </span>
+          )}
+          {connected && (
+            <span className="text-[10px] text-[#767C86] font-[IBM_Plex_Mono]">
+              refresh {pollIntervalMs || DEFAULT_POLL_MS}ms · fetch {lastFetchMs}ms
+              {dataAgeMs != null ? ` · data ${dataAgeMs < 1000 ? `${dataAgeMs}ms` : `${(dataAgeMs / 1000).toFixed(1)}s`} old` : ""}
             </span>
           )}
         </div>
@@ -550,19 +702,22 @@ export default function KalshiBotDashboard() {
           </div>
         </Panel>
 
-        <Panel title="Open positions" eyebrow={`${positions?.length || 0} held`} className="xl:col-span-3">
-          <div className="p-4 grid grid-cols-1 lg:grid-cols-2 gap-3">
+        <Panel title="Open positions" eyebrow={`${positions?.length || 0} held · live marks`} className="xl:col-span-3">
+          <div className="p-4 grid grid-cols-1 gap-3">
             {!positions?.length && (
-              <div className="text-[#767C86] text-xs py-6 text-center col-span-2">No open positions right now.</div>
+              <div className="text-[#767C86] text-xs py-6 text-center">No open positions right now.</div>
             )}
             {positions?.map((p) => {
-              const unrealizedPnl = ((p.currentMark - p.entryPrice) * p.count) / 100;
+              const unrealizedPnl = p.unrealizedPnl ?? ((p.currentMark - p.entryPrice) * p.count) / 100;
               const breakevenDelta = p.currentMark - p.entryPrice;
               const spotDelta = btcSpot - p.strikeBtc;
               const timeHeldMs = Date.now() - p.entryTime;
+              const markSide = p.side === "yes"
+                ? { bid: p.yesBid, ask: p.yesAsk }
+                : { bid: p.noBid, ask: p.noAsk };
               return (
-                <div key={p.id} className="bg-[#0D0F12] border border-[#24272C] rounded-lg p-3">
-                  <div className="flex items-center justify-between">
+                <div key={p.id} className="bg-[#0D0F12] border border-[#4CC9F0]/20 rounded-lg p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
                     <div className="flex items-center gap-2">
                       <span
                         className={`text-[10px] uppercase font-semibold px-1.5 py-0.5 rounded ${
@@ -571,27 +726,55 @@ export default function KalshiBotDashboard() {
                       >
                         {p.side}
                       </span>
-                      <span className="text-xs text-[#E9E7E2] font-medium">{p.ticker}</span>
+                      <div>
+                        <div className="text-sm text-[#E9E7E2] font-medium">{p.ticker}</div>
+                        {p.subtitle && <div className="text-[10px] text-[#767C86]">{p.subtitle}</div>}
+                      </div>
                     </div>
                     <CountdownRing expiresAt={p.expiresAt} windowMin={60} />
                   </div>
-                  <div className="grid grid-cols-3 gap-2 mt-3 text-[11px]">
+
+                  {p.signalReason && (
+                    <div className="mt-3 text-[11px] text-[#4CC9F0] bg-[#4CC9F0]/5 border border-[#4CC9F0]/20 rounded px-2 py-1.5">
+                      Entry signal: {p.signalReason}
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3 mt-4 text-[11px]">
                     <div>
-                      <div className="text-[#767C86]">Entry / mark</div>
+                      <div className="text-[#767C86]">Entry → mark</div>
+                      <div className="text-[#E9E7E2] mt-0.5 font-medium">
+                        {p.entryPrice}¢ → {p.currentMark}¢ <DeltaTag value={breakevenDelta} />
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-[#767C86]">Live {p.side} bid/ask</div>
                       <div className="text-[#E9E7E2] mt-0.5">
-                        {p.entryPrice}¢ <span className="text-[#767C86]">→</span> {p.currentMark}¢
+                        {markSide.bid ?? "—"}¢ / {markSide.ask ?? "—"}¢
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-[#767C86]">Yes / No quotes</div>
+                      <div className="text-[#E9E7E2] mt-0.5">
+                        Y {p.yesBid ?? "—"}/{p.yesAsk ?? "—"}¢ · N {p.noBid ?? "—"}/{p.noAsk ?? "—"}¢
                       </div>
                     </div>
                     <div>
                       <div className="text-[#767C86]">Unrealized P&L</div>
-                      <div className={`mt-0.5 ${unrealizedPnl >= 0 ? "text-[#33D693]" : "text-[#F2495C]"}`}>
-                        {unrealizedPnl >= 0 ? "+" : ""}${unrealizedPnl.toFixed(2)}
+                      <div className={`mt-0.5 font-medium ${unrealizedPnl >= 0 ? "text-[#33D693]" : "text-[#F2495C]"}`}>
+                        {unrealizedPnl >= 0 ? "+" : ""}${Number(unrealizedPnl).toFixed(2)}
                       </div>
                     </div>
                     <div>
-                      <div className="text-[#767C86]">To breakeven</div>
-                      <div className="mt-0.5 text-[#E9E7E2]">
-                        <DeltaTag value={breakevenDelta} />
+                      <div className="text-[#767C86]">Cost / value</div>
+                      <div className="text-[#E9E7E2] mt-0.5">
+                        ${Number(p.costBasis ?? 0).toFixed(2)} → ${Number(p.marketValue ?? 0).toFixed(2)}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-[#767C86]">Size / time left</div>
+                      <div className="text-[#E9E7E2] mt-0.5">
+                        {p.count} ct · {p.minutesRemaining ?? "—"}m
                       </div>
                     </div>
                     <div>
@@ -601,12 +784,26 @@ export default function KalshiBotDashboard() {
                       </div>
                     </div>
                     <div>
-                      <div className="text-[#767C86]">Size</div>
-                      <div className="mt-0.5 text-[#E9E7E2]">{p.count} contracts</div>
+                      <div className="text-[#767C86]">Implied / spread</div>
+                      <div className="text-[#E9E7E2] mt-0.5">
+                        {Number(p.impliedProb || 0).toFixed(1)}% · {p.spread ?? 0}¢
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-[#767C86]">Book depth Y/N</div>
+                      <div className="text-[#E9E7E2] mt-0.5">
+                        {p.depthYes ?? 0} / {p.depthNo ?? 0}
+                      </div>
                     </div>
                     <div>
                       <div className="text-[#767C86]">Time held</div>
-                      <div className="mt-0.5 text-[#E9E7E2]">{fmtElapsed(timeHeldMs)}</div>
+                      <div className="text-[#E9E7E2] mt-0.5">{fmtElapsed(timeHeldMs)}</div>
+                    </div>
+                    <div>
+                      <div className="text-[#767C86]">Mark updated</div>
+                      <div className="text-[#767C86] mt-0.5 text-[10px]">
+                        {p.markUpdatedAt ? new Date(p.markUpdatedAt).toLocaleTimeString([], { hour12: false }) : "—"}
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -615,7 +812,13 @@ export default function KalshiBotDashboard() {
           </div>
         </Panel>
 
-        <Panel title="Active 1-hour markets" eyebrow="Ticker feed" className="xl:col-span-3">
+        <Panel title="Live contract prices" eyebrow="Bid / ask / depth" className="xl:col-span-3">
+          <div className="p-4">
+            <LivePricesTable markets={markets} />
+          </div>
+        </Panel>
+
+        <Panel title="Active 1-hour markets" eyebrow="Cards" className="xl:col-span-3">
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 p-4">
             {!markets?.length && (
               <div className="text-[#767C86] text-xs py-6 text-center col-span-3">
@@ -623,7 +826,7 @@ export default function KalshiBotDashboard() {
               </div>
             )}
             {markets?.map((m) => {
-              const impliedProb = Math.round((m.yesBid + m.yesAsk) / 2);
+              const impliedProb = Number(m.impliedProb || (m.yesBid + m.yesAsk) / 2 || 0);
               const ratio = m.depthNo > 0 ? m.depthYes / m.depthNo : 0;
               const skew = ratio >= 1 ? `${ratio.toFixed(1)}x yes` : `${(1 / (ratio || 1)).toFixed(1)}x no`;
               return (
@@ -634,10 +837,11 @@ export default function KalshiBotDashboard() {
                   <CountdownRing expiresAt={m.expiresAt} />
                   <div className="flex-1 min-w-0">
                     <div className="text-xs text-[#E9E7E2] font-medium truncate">{m.ticker}</div>
-                    <div className="flex items-center gap-3 mt-1 text-[11px]">
-                      <span className="text-[#33D693]">Yes {m.yesBid}¢</span>
-                      <span className="text-[#F2495C]">No {100 - m.yesAsk}¢</span>
-                      <span className="text-[#767C86]">{impliedProb}% impl.</span>
+                    <div className="flex flex-wrap items-center gap-3 mt-1 text-[11px]">
+                      <span className="text-[#33D693]">Y {m.yesBid}/{m.yesAsk}¢</span>
+                      <span className="text-[#F2495C]">N {m.noBid}/{m.noAsk}¢</span>
+                      <span className="text-[#767C86]">{impliedProb.toFixed(1)}% impl</span>
+                      <span className="text-[#767C86]">{m.spread ?? 0}¢ spread</span>
                     </div>
                     <div className="mt-1.5 h-1 rounded-full bg-[#1A1D22] overflow-hidden">
                       <div
@@ -653,8 +857,12 @@ export default function KalshiBotDashboard() {
           </div>
         </Panel>
 
-        <Panel title="Execution & decision log" eyebrow="Audit trail" className="xl:col-span-3">
-          <div className="h-64 overflow-y-auto px-4 pb-4">
+        <Panel title="Detail journal" eyebrow="Signals · fills · settlements" className="xl:col-span-3 min-h-[360px]">
+          <DetailJournal journal={journal} logs={logs} />
+        </Panel>
+
+        <Panel title="Live scan log" eyebrow="Recent cycles" className="xl:col-span-3">
+          <div className="h-48 overflow-y-auto px-4 pb-4">
             <table className="w-full text-xs">
               <tbody>
                 {!logs?.length && (
@@ -686,7 +894,8 @@ export default function KalshiBotDashboard() {
       </div>
 
       <div className="px-5 py-3 text-[10px] text-[#767C86] border-t border-[#24272C]">
-        Live data from <Mono>/api/1h-bot/status</Mono> — start <Mono>kalshi_btc_bot.py</Mono> and refresh every ~2s.
+        Live data from <Mono>/api/1h-bot/status</Mono> — dashboard polls every {pollIntervalMs || DEFAULT_POLL_MS}ms;
+        bot refreshes quotes every ~{2}s when positions are open.
       </div>
     </div>
   );

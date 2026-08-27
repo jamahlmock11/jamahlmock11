@@ -124,7 +124,9 @@ MAX_MARKETS_PER_SCAN = int(os.getenv("MAX_MARKETS_PER_SCAN", "40"))
 
 # Execution / polling
 POLL_INTERVAL_SECONDS = float(os.getenv("POLL_INTERVAL_SECONDS", "15"))
+QUOTE_REFRESH_SECONDS = float(os.getenv("QUOTE_REFRESH_SECONDS", "2"))
 ORDER_TYPE = os.getenv("ORDER_TYPE", "limit")  # "limit" or "market"
+HOUR_BOT_POLL_MS = int(os.getenv("HOUR_BOT_POLL_MS", "500"))
 
 # Logging
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
@@ -570,6 +572,7 @@ class DashboardRecorder:
 
     mode: str
     logs: list[dict] = field(default_factory=list)
+    journal: list[dict] = field(default_factory=list)
     equity_history: list[dict] = field(default_factory=list)
     wins_today: int = 0
     losses_today: int = 0
@@ -582,28 +585,68 @@ class DashboardRecorder:
     daily_entries: int = 0
     peak_equity: float = field(default_factory=lambda: RISK.starting_bankroll)
     position_meta: dict[str, dict] = field(default_factory=dict)
+    last_publish_ctx: dict = field(default_factory=dict)
     _tick: int = 0
 
-    def add_log(self, kind: str, text: str) -> None:
-        self.logs.insert(
-            0,
-            {
-                "id": new_log_id(),
-                "time": datetime.now(timezone.utc).isoformat(),
-                "kind": kind,
-                "text": text,
-            },
-        )
-        self.logs = self.logs[:60]
+    def add_log(
+        self,
+        kind: str,
+        text: str,
+        *,
+        ticker: str = "",
+        side: str = "",
+        price: int | None = None,
+        count: int | None = None,
+        detail: dict | None = None,
+        journal_only: bool = False,
+    ) -> None:
+        entry = {
+            "id": new_log_id(),
+            "time": datetime.now(timezone.utc).isoformat(),
+            "kind": kind,
+            "text": text,
+            "ticker": ticker,
+            "side": side,
+            "price": price,
+            "count": count,
+            "detail": detail or {},
+        }
+        if not journal_only:
+            self.logs.insert(0, entry)
+            self.logs = self.logs[:100]
+        if kind != "scan" or detail:
+            self.journal.insert(0, entry)
+            self.journal = self.journal[:300]
 
-    def record_entry(self, ticker: str, side: str, count: int, price_cents: int, *, expires_at_ms: int, strike_btc: int):
+    def record_entry(
+        self,
+        ticker: str,
+        side: str,
+        count: int,
+        price_cents: int,
+        *,
+        expires_at_ms: int,
+        strike_btc: int,
+        signal_reason: str = "",
+        quote: dict | None = None,
+    ):
         self.daily_entries += 1
         self.position_meta[ticker] = {
             "expiresAt": expires_at_ms,
             "strikeBtc": strike_btc,
             "entryTime": int(time.time() * 1000),
+            "signalReason": signal_reason,
+            "entryQuote": quote or {},
         }
-        self.add_log("fill", f"FILL {ticker} {side} x{count} @ {price_cents}c")
+        self.add_log(
+            "fill",
+            f"FILL {ticker} {side} x{count} @ {price_cents}c — {signal_reason}".strip(" —"),
+            ticker=ticker,
+            side=side,
+            price=price_cents,
+            count=count,
+            detail={"signalReason": signal_reason, "quote": quote or {}},
+        )
 
     def record_settlement(self, ticker: str, side: str, pnl: float, won: bool):
         fee = 0.01
@@ -621,7 +664,48 @@ class DashboardRecorder:
         self.add_log(
             "settle",
             f"SETTLED {ticker} {side} — {'WON' if won else 'LOST'} — pnl {pnl:+.2f}",
+            ticker=ticker,
+            side=side,
+            detail={"pnl": round(pnl, 2), "won": won},
         )
+
+    @staticmethod
+    def _quote_from_book(orderbook: dict | None) -> dict:
+        if not orderbook:
+            return {
+                "yesBid": 0,
+                "yesAsk": 0,
+                "noBid": 0,
+                "noAsk": 0,
+                "spread": 0,
+                "impliedProb": 0,
+                "depthYes": 0,
+                "depthNo": 0,
+            }
+        yes = orderbook.get("yes") or []
+        no = orderbook.get("no") or []
+        yes_bid = int(yes[0][0]) if yes else 0
+        no_bid = int(no[0][0]) if no else 0
+        yes_ask = int(100 - no_bid) if no_bid > 0 else 0
+        no_ask = int(100 - yes_bid) if yes_bid > 0 else 0
+        if yes_bid > 0 and yes_ask <= 0:
+            yes_ask = min(99, yes_bid + 2)
+        if no_bid > 0 and no_ask <= 0:
+            no_ask = min(99, no_bid + 2)
+        if yes_bid > 0 and yes_ask > 0 and yes_ask < yes_bid:
+            yes_ask = min(99, yes_bid + 1)
+        implied = round((yes_bid + yes_ask) / 2, 1) if yes_bid > 0 and yes_ask > 0 else yes_bid or yes_ask
+        spread = max(0, yes_ask - yes_bid) if yes_bid > 0 and yes_ask > 0 else 0
+        return {
+            "yesBid": yes_bid,
+            "yesAsk": yes_ask,
+            "noBid": no_bid,
+            "noAsk": no_ask,
+            "spread": spread,
+            "impliedProb": implied,
+            "depthYes": sum(int(lvl[1]) for lvl in yes[:DEPTH_LEVELS]),
+            "depthNo": sum(int(lvl[1]) for lvl in no[:DEPTH_LEVELS]),
+        }
 
     def _market_row(self, market: dict, orderbook: dict | None) -> dict:
         ticker = market.get("ticker", "")
@@ -633,46 +717,56 @@ class DashboardRecorder:
         except Exception:
             expires_at = int(time.time() * 1000) + 3_600_000
 
-        yes_bid = int(market.get("yes_bid") or 0)
-        yes_ask = int(market.get("yes_ask") or 0)
-        depth_yes = 0
-        depth_no = 0
-        if orderbook:
-            yes = orderbook.get("yes") or []
-            no = orderbook.get("no") or []
-            if yes:
-                yes_bid = int(yes[0][0])
-            if no:
-                implied_yes_ask = int(100 - no[0][0])
-                yes_ask = implied_yes_ask if yes_ask <= 0 else yes_ask
-                if yes_bid <= 0 and yes_ask > 0:
-                    yes_bid = max(1, yes_ask - 2)
-            depth_yes = sum(int(lvl[1]) for lvl in yes[:DEPTH_LEVELS])
-            depth_no = sum(int(lvl[1]) for lvl in no[:DEPTH_LEVELS])
-        if yes_ask <= 0 and yes_bid > 0:
-            yes_ask = min(99, yes_bid + 2)
+        quote = self._quote_from_book(orderbook)
+        if quote["yesBid"] <= 0:
+            quote["yesBid"] = int(market.get("yes_bid") or 0)
+        if quote["yesAsk"] <= 0:
+            quote["yesAsk"] = int(market.get("yes_ask") or 0)
+        if quote["yesBid"] > 0 and quote["yesAsk"] <= 0:
+            quote["yesAsk"] = min(99, quote["yesBid"] + 2)
+        if quote["yesBid"] > 0 and quote["yesAsk"] > 0:
+            quote["impliedProb"] = round((quote["yesBid"] + quote["yesAsk"]) / 2, 1)
+            quote["spread"] = max(0, quote["yesAsk"] - quote["yesBid"])
 
+        floor_strike = market.get("floor_strike")
+        cap_strike = market.get("cap_strike")
         return {
             "ticker": ticker,
             "expiresAt": expires_at,
-            "yesBid": yes_bid,
-            "yesAsk": yes_ask,
-            "depthYes": depth_yes,
-            "depthNo": depth_no,
+            "strike": _strike_from_market(market),
+            "subtitle": str(market.get("subtitle") or ""),
+            "lastPrice": int(market.get("last_price") or 0),
+            **quote,
         }
 
-    def _position_rows(self, risk: RiskManager, client: KalshiClient) -> list[dict]:
+    def _position_rows(
+        self,
+        risk: RiskManager,
+        client: KalshiClient,
+        market_books: dict[str, dict],
+    ) -> list[dict]:
         rows: list[dict] = []
+        now_ms = int(time.time() * 1000)
         for ticker, fill in risk.open_positions.items():
             meta = self.position_meta.get(ticker, {})
-            current_mark = fill.price_cents
             market = client.get_market(ticker)
-            if market:
-                if fill.side == "yes":
-                    current_mark = int(market.get("yes_bid") or fill.price_cents)
-                else:
-                    current_mark = int(market.get("no_bid") or fill.price_cents)
-            strike = int(meta.get("strikeBtc") or market.get("floor_strike") or 0) if market else int(meta.get("strikeBtc") or 0)
+            book = market_books.get(ticker) or client.get_orderbook(ticker)
+            if book:
+                market_books[ticker] = book
+            quote = self._quote_from_book(book)
+
+            if fill.side == "yes":
+                current_mark = quote["yesBid"] or quote["yesAsk"] or fill.price_cents
+            else:
+                current_mark = quote["noBid"] or quote["noAsk"] or fill.price_cents
+
+            strike = int(meta.get("strikeBtc") or _strike_from_market(market or {}))
+            expires_at = int(meta.get("expiresAt") or now_ms + 3_600_000)
+            minutes_remaining = max(0.0, (expires_at - now_ms) / 60_000)
+            cost_basis = round((fill.price_cents * fill.count) / 100.0, 2)
+            market_value = round((current_mark * fill.count) / 100.0, 2)
+            unrealized_pnl = round(market_value - cost_basis, 2)
+
             rows.append(
                 {
                     "id": ticker,
@@ -682,8 +776,19 @@ class DashboardRecorder:
                     "currentMark": current_mark,
                     "count": fill.count,
                     "entryTime": int(meta.get("entryTime") or fill.timestamp * 1000),
-                    "expiresAt": int(meta.get("expiresAt") or int(time.time() * 1000) + 3_600_000),
+                    "expiresAt": expires_at,
                     "strikeBtc": strike,
+                    "floorStrike": market.get("floor_strike") if market else None,
+                    "capStrike": market.get("cap_strike") if market else None,
+                    "subtitle": str(market.get("subtitle") or "") if market else "",
+                    "signalReason": str(meta.get("signalReason") or ""),
+                    "entryQuote": meta.get("entryQuote") or {},
+                    "minutesRemaining": round(minutes_remaining, 1),
+                    "costBasis": cost_basis,
+                    "marketValue": market_value,
+                    "unrealizedPnl": unrealized_pnl,
+                    "markUpdatedAt": datetime.now(timezone.utc).isoformat(),
+                    **quote,
                 }
             )
         return rows
@@ -700,19 +805,40 @@ class DashboardRecorder:
         current_hour: dict | None = None,
     ) -> None:
         self._tick += 1
-        unrealized = 0.0
-        capital_deployed = 0.0
-        for ticker, fill in risk.open_positions.items():
-            pos = next((p for p in self._position_rows(risk, client) if p["ticker"] == ticker), None)
-            if pos:
-                unrealized += ((pos["currentMark"] - pos["entryPrice"]) * pos["count"]) / 100.0
-            capital_deployed += (fill.price_cents * fill.count) / 100.0
+        self.last_publish_ctx = {
+            "markets": markets,
+            "market_books": dict(market_books),
+            "btc_spot": btc_spot,
+            "current_hour": current_hour or {},
+            "control": control,
+        }
+
+        position_rows = self._position_rows(risk, client, market_books)
+        unrealized = sum(p["unrealizedPnl"] for p in position_rows)
+        capital_deployed = sum(p["costBasis"] for p in position_rows)
 
         net_equity = risk.bankroll + unrealized
         self.peak_equity = max(self.peak_equity, net_equity)
         if self._tick % 2 == 0:
             self.equity_history.append({"t": self._tick, "v": round(net_equity, 2)})
-            self.equity_history = self.equity_history[-60:]
+            self.equity_history = self.equity_history[-120:]
+
+        watched_tickers = {m.get("ticker") for m in markets if m.get("ticker")}
+        watched_tickers.update(risk.open_positions.keys())
+        market_rows = []
+        seen: set[str] = set()
+        for market in markets:
+            ticker = market.get("ticker", "")
+            if not ticker or ticker in seen:
+                continue
+            seen.add(ticker)
+            market_rows.append(self._market_row(market, market_books.get(ticker)))
+        for ticker in risk.open_positions:
+            if ticker in seen:
+                continue
+            market = client.get_market(ticker)
+            if market:
+                market_rows.append(self._market_row(market, market_books.get(ticker)))
 
         status = HourBotStatus(
             mode=control.mode,
@@ -734,9 +860,10 @@ class DashboardRecorder:
             cumPnlInception=round(self.cum_pnl_inception, 2),
             pnlBySide=dict(self.pnl_by_side),
             peakEquity=round(self.peak_equity, 2),
-            markets=[self._market_row(m, market_books.get(m.get("ticker", ""))) for m in markets[:12]],
-            positions=self._position_rows(risk, client),
+            markets=market_rows[:24],
+            positions=position_rows,
             logs=self.logs,
+            journal=self.journal,
             guardrails={
                 "dailyLossLimit": RISK.daily_loss_limit_dollars,
                 "maxOpenPositions": RISK.max_open_positions,
@@ -746,8 +873,34 @@ class DashboardRecorder:
                 "capitalDeployed": round(capital_deployed, 2),
             },
             currentHour=current_hour or {},
+            pollIntervalMs=HOUR_BOT_POLL_MS,
         )
         status.save()
+
+    def publish_fast_quotes(self, *, risk: RiskManager, client: KalshiClient, control: HourBotControl) -> None:
+        if not self.last_publish_ctx:
+            return
+        ctx = self.last_publish_ctx
+        market_books = dict(ctx.get("market_books") or {})
+        tickers_to_refresh = list(risk.open_positions.keys())
+        for market in (ctx.get("markets") or [])[:12]:
+            ticker = market.get("ticker")
+            if ticker and ticker not in tickers_to_refresh:
+                tickers_to_refresh.append(ticker)
+        for ticker in tickers_to_refresh:
+            book = client.get_orderbook(ticker)
+            if book:
+                market_books[ticker] = book
+                time.sleep(0.05)
+        self.publish(
+            risk=risk,
+            client=client,
+            markets=ctx.get("markets") or [],
+            market_books=market_books,
+            control=control,
+            btc_spot=float(ctx.get("btc_spot") or 0),
+            current_hour=ctx.get("current_hour") or {},
+        )
 
 
 # ============================================================================
@@ -1043,7 +1196,14 @@ def run_cycle(
         if not approved:
             log_main.info("Signal on %s rejected by risk manager: %s", signal.ticker, reason)
             if dashboard:
-                dashboard.add_log("reject", f"{signal.ticker} rejected by risk manager — {reason}")
+                dashboard.add_log(
+                    "reject",
+                    f"{signal.ticker} rejected by risk manager — {reason}",
+                    ticker=signal.ticker,
+                    side=signal.side,
+                    price=signal.limit_price,
+                    detail={"reason": reason},
+                )
             continue
 
         log_main.info(
@@ -1054,12 +1214,18 @@ def run_cycle(
             dashboard.add_log(
                 "signal",
                 f"SIGNAL {signal.ticker} side={signal.side} price={signal.limit_price}c | {signal.reason}",
+                ticker=signal.ticker,
+                side=signal.side,
+                price=signal.limit_price,
+                count=size,
+                detail={"reason": signal.reason, "minutesLeft": round(mins_left, 1)},
             )
 
         order_res = broker.place_order(signal.ticker, signal.side, size, signal.limit_price, ORDER_TYPE)
         if order_res:
             risk.record_fill(signal.ticker, signal.side, size, signal.limit_price)
             if dashboard:
+                entry_quote = dashboard._quote_from_book(book)
                 dashboard.record_entry(
                     signal.ticker,
                     signal.side,
@@ -1067,6 +1233,8 @@ def run_cycle(
                     signal.limit_price,
                     expires_at_ms=_expiration_ms(market),
                     strike_btc=_strike_from_market(market),
+                    signal_reason=signal.reason,
+                    quote=entry_quote,
                 )
             log_main.info(risk.status_line())
             break
@@ -1111,7 +1279,15 @@ def main():
             control = HourBotControl.load()
             check_settlements(client, risk, dashboard)
             run_cycle(client, broker, strategy, risk, dashboard=dashboard, control=control)
-            time.sleep(POLL_INTERVAL_SECONDS)
+
+            next_scan = time.time() + POLL_INTERVAL_SECONDS
+            while time.time() < next_scan:
+                control = HourBotControl.load()
+                check_settlements(client, risk, dashboard)
+                if dashboard and risk.open_positions:
+                    dashboard.publish_fast_quotes(risk=risk, client=client, control=control)
+                sleep_for = min(QUOTE_REFRESH_SECONDS, max(0.1, next_scan - time.time()))
+                time.sleep(sleep_for)
     except KeyboardInterrupt:
         log_main.info("Shutting down. Final status: %s", risk.status_line())
 
