@@ -6,60 +6,15 @@ series:
 hour:
   series_ticker: KXBTCD
   market_type: 1h
-  contract_duration_seconds: 3600
-  min_seconds_remaining: 60
-  max_entry_seconds_remaining: 0
-  history_seconds: 3700
   poll_interval_sec: 10
-  order_quantity: 1
-  evaluate_all_active_strikes: false
-  require_forecast_alignment: false
-
-terminal_probability:
-  enabled: false
-  mispricing_enabled: false
-  dynamic_edge_enabled: false
-  forecast_alignment: false
-  calibration:
-    enabled: false
 
 intelligence:
   enabled: false
 
-strategy:
-  window_regime_enabled: false
-  entry_signal_persistence_polls: 1
-
-orderbook_skew:
-  enabled: false
-  ensemble_enabled: false
-
-longshot:
-  enabled: false
-  poll_enabled: false
-
 poll:
   mode: disabled
-
-hour_edge:
-  disable_tier_b: true
 
 execution:
   dry_run: true
   orders_enabled: false
   poll_interval_sec: 10.0
-
-risk:
-  position_reversal_enabled: false
-  kelly_enabled: false
-  thesis_reversal_enabled: false
-  opposite_edge_exit_enabled: false
-  recovery_hold_enabled: false
-  take_profit_bid_price: 0
-  stop_loss_fraction: 0
-
-data:
-  benchmark_mode: kalshi_passthrough
-
-settlement:
-  reference: BRTI

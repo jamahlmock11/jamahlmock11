@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from kalshi_bot.config import AppConfig, load_yaml_config
+from kalshi_bot.config import AppConfig, is_blank_1h, load_yaml_config
 
 WORKSPACE = Path(__file__).resolve().parents[3]
 
@@ -81,15 +81,8 @@ def _entry_band_label(min_price: float, max_price: float | None) -> str:
     return f"{min_price * 100:.0f}–{max_price * 100:.0f}¢ favorites"
 
 
-def _is_blank_1h(cfg: AppConfig | None) -> bool:
-    if cfg is None:
-        return True
-    terminal = cfg.terminal_probability
-    return not terminal.enabled and not terminal.mispricing_enabled and not cfg.execution.orders_enabled
-
-
 def _rules_1h(cfg: AppConfig | None, mode: str) -> list[dict[str, str]]:
-    if _is_blank_1h(cfg):
+    if cfg is None or is_blank_1h(cfg):
         return [
             {"key": "Status", "value": "BLANK — no rules or strategies active"},
             {"key": "Trading", "value": "OFF"},
@@ -188,7 +181,7 @@ def active_edge_rules(*, mode: str = "LIVE", account: str = "API connected") -> 
         ),
         "summary_1h": (
             "Blank — scan-only, no active rules or strategies."
-            if _is_blank_1h(cfg_1h)
+            if cfg_1h is None or is_blank_1h(cfg_1h)
             else (
                 "Terminal probability across all hourly strikes in the last 15 minutes; "
                 + (
