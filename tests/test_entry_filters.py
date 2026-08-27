@@ -15,7 +15,11 @@ from kalshi_bot.domain import (
     TrajectoryState,
 )
 from kalshi_bot.models.ensemble import EnsembleProbabilityModel
-from kalshi_bot.strategies.decision import DecisionConfig, DecisionEngine
+from kalshi_bot.strategies.decision import (
+    DecisionConfig,
+    DecisionEngine,
+    required_signal_agreement,
+)
 from kalshi_bot.strategies.entry_filters import (
     EntrySignalTracker,
     WindowRegimeKind,
@@ -48,6 +52,75 @@ def _features(
 def test_chop_zone_blocks_near_strike_entries():
     assert is_in_chop_zone(_features(z_distance=0.20), 0.35)
     assert not is_in_chop_zone(_features(z_distance=0.50), 0.35)
+
+
+def test_required_signal_agreement_unanimous_vs_split():
+    assert required_signal_agreement(1.0, 0.60, 0.53) == 0.60
+    assert required_signal_agreement(0.556, 0.60, 0.53) == 0.53
+    assert required_signal_agreement(0.778, 0.60, 0.53) == 0.53
+
+
+def test_split_ensemble_passes_relaxed_agreement_floor():
+    engine = DecisionEngine(
+        DecisionConfig(
+            minimum_agreement=0.60,
+            minimum_agreement_split=0.53,
+            chop_zone_min_sigma=0.0,
+            require_orderbook_depth=False,
+            allow_proxy_data=False,
+            mispricing_enabled=False,
+            dynamic_edge_enabled=False,
+        )
+    )
+    split_forecast = replace(
+        forecast(0.72),
+        signal_agreement=0.556,
+    )
+    result = engine.decide(
+        market(),
+        split_forecast,
+        features(),
+        benchmark(),
+    )
+    assert not any(failure.gate == "agreement" for failure in result.gate_failures)
+
+
+def test_unanimous_ensemble_uses_higher_agreement_floor():
+    engine = DecisionEngine(
+        DecisionConfig(
+            minimum_agreement=0.60,
+            minimum_agreement_split=0.53,
+            chop_zone_min_sigma=0.0,
+            require_orderbook_depth=False,
+            allow_proxy_data=False,
+            mispricing_enabled=False,
+            dynamic_edge_enabled=False,
+        )
+    )
+    split_pass = replace(
+        forecast(0.72),
+        signal_agreement=0.556,
+    )
+    split_fail = replace(
+        forecast(0.72),
+        signal_agreement=0.52,
+    )
+    pass_result = engine.decide(
+        market(),
+        split_pass,
+        features(),
+        benchmark(),
+    )
+    fail_result = engine.decide(
+        market(),
+        split_fail,
+        features(),
+        benchmark(),
+    )
+    assert not any(
+        failure.gate == "agreement" for failure in pass_result.gate_failures
+    )
+    assert any(failure.gate == "agreement" for failure in fail_result.gate_failures)
 
 
 def test_classify_window_regime_detects_chop_from_conflicting_trends():

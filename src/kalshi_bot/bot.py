@@ -16,7 +16,7 @@ from kalshi_bot.data.cf_benchmark import create_benchmark_feed
 from kalshi_bot.data.ibit_options import IBITOptionsProvider
 from kalshi_bot.data.spot_hub import SpotPriceHub
 from kalshi_bot.data.supporting_feeds import SupportingFeeds
-from kalshi_bot.domain import ContractSide, DecisionAction, MarketPosition, OpenOrder, Regime
+from kalshi_bot.domain import ContractSide, DecisionAction, MarketPosition, MarketSnapshot, OpenOrder, Regime
 from kalshi_bot.execution.engine import ExecutionEngine, ExecutionReport
 from kalshi_bot.execution.position_reversal import (
     evaluate_position_reversal,
@@ -31,6 +31,7 @@ from kalshi_bot.learning.signal_weights import SignalWeightTracker
 from kalshi_bot.learning.trade_recorder import TradeRecorder
 from kalshi_bot.learning.pattern_matcher import PatternMatcher
 from kalshi_bot.models.strike_gravity import assess_strike_gravity
+from kalshi_bot.execution.stop_loss import executable_exit_price
 from kalshi_bot.strategies.alt_runner import AltStrategyRunner
 from kalshi_bot.strategies.forecasting import ForecastCycle, ForecastingScanner
 from kalshi_bot.strategies.decision import format_edge_gap
@@ -39,7 +40,7 @@ from kalshi_bot.strategies.lag_reversal import ReversalContextTracker, evaluate_
 from kalshi_bot.strategies.reversal_score import ReversalScoreAssessment, ReversalTier
 from kalshi_bot.strategies.forecast_setup import ForecastSetupAssessment
 from kalshi_bot.agents.pipeline import RomaPipeline, format_roma_report
-from kalshi_bot.venues.kalshi import KalshiClient
+from kalshi_bot.venues.kalshi import KalshiClient, parse_balance_dollars
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -116,6 +117,7 @@ class TradingBot:
             ),
         )
         self._hydrate_positions()
+        self._hydrate_bankroll()
         self.engine = ExecutionEngine(
             self.kalshi,
             self.risk,
@@ -132,6 +134,7 @@ class TradingBot:
             position_lookup=self._position_lookup,
             orders_lookup=self._orders_lookup,
             intelligence=self.intelligence,
+            pre_decide_hook=self._bump_runner_peaks,
         )
         self.spot_hub = SpotPriceHub(
             poll_interval_sec=config.spot_lag.poll_interval_sec,
@@ -201,6 +204,25 @@ class TradingBot:
             self.risk.lock(f"position verification failed: {exc}")
             logger.error("Could not safely hydrate positions: %s", exc)
 
+    def _hydrate_bankroll(self) -> None:
+        if not self.config.risk.use_live_bankroll:
+            return
+        if not self.kalshi.authenticated:
+            logger.warning("Live bankroll sync skipped: Kalshi client not authenticated")
+            return
+        try:
+            balance_usd = parse_balance_dollars(self.kalshi.get_balance())
+            applied = self.risk.apply_live_bankroll(balance_usd)
+            cap_usd = self.config.risk.max_position_size
+            logger.info(
+                "Live bankroll $%.2f → Kelly bankroll $%.2f, per-trade cap $%.2f",
+                balance_usd,
+                applied,
+                cap_usd,
+            )
+        except Exception as exc:
+            logger.error("Could not hydrate live bankroll: %s", exc)
+
     def _position_lookup(self, ticker: str) -> MarketPosition | None:
         position = self.positions.position(ticker)
         if position is None:
@@ -210,7 +232,22 @@ class TradingBot:
             quantity=position.quantity,
             average_price=position.entry_price,
             opened_at=position.opened_at,
+            partial_tp_taken=position.partial_tp_taken,
+            peak_exit_bid=position.peak_exit_bid,
         )
+
+    def _bump_runner_peaks(self, market: MarketSnapshot) -> None:
+        """Update trailing-stop peak bid for runner legs after partial take-profit."""
+        position = self.positions.position(market.ticker)
+        if position is None or not position.partial_tp_taken:
+            return
+        bid = executable_exit_price(
+            market.orderbook,
+            position.side,
+            position.quantity,
+        )
+        if bid is not None:
+            self.positions.bump_peak_exit_bid(market.ticker, bid)
 
     def _orders_lookup(self, ticker: str) -> tuple[OpenOrder, ...]:
         if not self.kalshi.authenticated:
@@ -357,6 +394,7 @@ class TradingBot:
                 "min_seconds_remaining": self.config.strategy.min_seconds_remaining,
                 "max_entry_seconds_remaining": self.config.strategy.max_entry_seconds_remaining,
                 "min_signal_agreement": self.config.strategy.min_signal_agreement,
+                "min_signal_agreement_split": self.config.strategy.min_signal_agreement_split,
                 "min_data_completeness": self.config.strategy.min_data_completeness,
                 "late_confidence_increment": self.config.strategy.late_confidence_increment,
                 "min_entry_executable_cost": self.config.strategy.min_entry_executable_cost,

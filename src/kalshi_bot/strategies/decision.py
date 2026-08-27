@@ -26,7 +26,10 @@ from kalshi_bot.execution.position_reversal import (
     PositionReversalConfig,
     reversal_config_from_risk,
 )
-from kalshi_bot.execution.stop_loss import evaluate_position_exit
+from kalshi_bot.execution.stop_loss import (
+    evaluate_position_exit,
+    TieredTakeProfitConfig,
+)
 from kalshi_bot.market.orderbook import (
     InsufficientDepthError,
     depth,
@@ -59,6 +62,37 @@ logger = logging.getLogger(__name__)
 ABSOLUTE_MINIMUM_EDGE = Decimal("0.10")
 EDGE_TOLERANCE = Decimal("0.000000000001")
 DEFAULT_MINIMUM_EDGE = float(ABSOLUTE_MINIMUM_EDGE)
+
+
+def required_signal_agreement(
+    signal_agreement: float,
+    minimum_agreement: float,
+    minimum_agreement_split: float,
+) -> float:
+    """Unanimous ensemble uses the higher floor; any dissent uses the split floor."""
+    if signal_agreement + 1e-12 >= 1.0:
+        return minimum_agreement
+    return minimum_agreement_split
+
+
+def format_signed_edge_cents(edge_decimal: float | None) -> str:
+    """Format net edge in Kalshi cents with an explicit minus when negative."""
+    if edge_decimal is None:
+        return "—"
+    cents = float(edge_decimal) * 100.0
+    if abs(cents) < 1.0:
+        return f"{cents:.1f}¢"
+    rounded = int(round(cents))
+    if rounded < 0:
+        return f"-{abs(rounded)}¢"
+    return f"{rounded}¢"
+
+
+def format_signed_edge_percent(edge_decimal: float | None) -> str:
+    """Format net edge as signed percentage points, e.g. -26.4%."""
+    if edge_decimal is None:
+        return "—"
+    return f"{float(edge_decimal) * 100.0:.1f}%"
 
 
 def edge_gap_details(decision: DecisionResult | None) -> dict[str, float | None]:
@@ -106,9 +140,7 @@ def format_edge_gap(decision: DecisionResult | None) -> str:
         return "Edge unavailable (no executable quote)"
 
     def cents(value: float) -> str:
-        if abs(value) < 1.0:
-            return f"{value:.1f}"
-        return f"{value:.0f}"
+        return format_signed_edge_cents(value / 100.0).replace("¢", "")
 
     if gap is None or gap <= 0.05:
         surplus = observed - required
@@ -130,6 +162,7 @@ class DecisionConfig:
     maximum_seconds_remaining: float = 15 * 60.0
     minimum_confidence: float = 0.60
     minimum_agreement: float = 0.60
+    minimum_agreement_split: float = 0.53
     minimum_data_completeness: float = 0.75
     minimum_depth: float = 1.0
     maximum_spread: float = 0.12
@@ -173,6 +206,9 @@ class DecisionConfig:
     take_profit_late_seconds: float = 0.0
     take_profit_late_min_gain: float = 0.04
     take_profit_reversal_buffer: float = 0.15
+    tiered_take_profit: TieredTakeProfitConfig = field(
+        default_factory=TieredTakeProfitConfig
+    )
     position_reversal: PositionReversalConfig = field(default_factory=PositionReversalConfig)
     poll: PollConfig = field(default_factory=PollConfig)
     longshot: LongshotConfig = field(default_factory=LongshotConfig)
@@ -213,6 +249,9 @@ def decision_config_from_app(
         minimum_confidence=ls.min_confidence if ls.enabled else strategy.min_confidence,
         minimum_agreement=(
             ls.min_signal_agreement if ls.enabled else strategy.min_signal_agreement
+        ),
+        minimum_agreement_split=(
+            ls.min_signal_agreement if ls.enabled else strategy.min_signal_agreement_split
         ),
         minimum_data_completeness=strategy.min_data_completeness,
         minimum_depth=strategy.order_quantity,
@@ -257,6 +296,13 @@ def decision_config_from_app(
         take_profit_late_seconds=config.risk.take_profit_late_seconds,
         take_profit_late_min_gain=config.risk.take_profit_late_min_gain,
         take_profit_reversal_buffer=config.risk.take_profit_reversal_buffer_cents,
+        tiered_take_profit=TieredTakeProfitConfig(
+            enabled=config.risk.tiered_take_profit_enabled,
+            partial_gain=config.risk.partial_take_profit_gain,
+            partial_fraction=config.risk.partial_take_profit_fraction,
+            trailing_stop=config.risk.trailing_stop_cents,
+            edge_decay_min_edge=config.risk.edge_decay_min_edge,
+        ),
         position_reversal=reversal_config_from_risk(config.risk),
         poll=config.poll,
         longshot=config.longshot,
@@ -530,13 +576,22 @@ class DecisionEngine:
                         late_confidence,
                     )
                 )
-        if forecast.signal_agreement < cfg.minimum_agreement:
+        if forecast.signal_agreement < required_signal_agreement(
+            forecast.signal_agreement,
+            cfg.minimum_agreement,
+            cfg.minimum_agreement_split,
+        ):
+            required_agreement = required_signal_agreement(
+                forecast.signal_agreement,
+                cfg.minimum_agreement,
+                cfg.minimum_agreement_split,
+            )
             failures.append(
                 _failure(
                     "agreement",
                     "ensemble components do not agree",
                     forecast.signal_agreement,
-                    cfg.minimum_agreement,
+                    required_agreement,
                 )
             )
         for side in (ContractSide.YES, ContractSide.NO):
@@ -663,11 +718,16 @@ class DecisionEngine:
                 take_profit_late_seconds=cfg.take_profit_late_seconds,
                 take_profit_late_min_gain=cfg.take_profit_late_min_gain,
                 take_profit_reversal_buffer=cfg.take_profit_reversal_buffer,
+                tiered_take_profit=cfg.tiered_take_profit,
                 position_reversal=cfg.position_reversal,
                 now=observed_now,
             )
             if exit_signal is not None:
-                exit_quantity = min(position.quantity, trade_quantity)
+                exit_quantity = exit_signal.exit_quantity
+                if exit_quantity is None:
+                    exit_quantity = min(position.quantity, trade_quantity)
+                else:
+                    exit_quantity = min(position.quantity, exit_quantity)
                 if self._can_exit(market, position.side, exit_quantity):
                     return DecisionResult(
                         action=DecisionAction.EXIT,
@@ -680,6 +740,8 @@ class DecisionEngine:
                         predicted_probability=forecast.p_up if position.side is ContractSide.YES else forecast.p_down,
                         quantity=exit_quantity,
                         target_edge=cfg.target_edge,
+                        exit_trigger=exit_signal.trigger,
+                        mark_partial_tp=exit_signal.mark_partial_tp,
                     )
                 return DecisionResult(
                     action=DecisionAction.HOLD,

@@ -288,6 +288,15 @@ class StrategyConfig(BaseModel):
     )
     min_confidence: float = Field(default=0.60, ge=0.0, le=1.0)
     min_signal_agreement: float = Field(default=0.60, ge=0.0, le=1.0)
+    min_signal_agreement_split: float = Field(
+        default=0.53,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Lower ensemble agreement floor when directional components disagree "
+            "(signal_agreement < 100%)."
+        ),
+    )
     min_data_completeness: float = Field(default=0.75, ge=0.0, le=1.0)
     max_spread: float = Field(default=0.12, ge=0.0, le=1.0)
     min_seconds_remaining: float = Field(
@@ -358,6 +367,16 @@ class StrategyConfig(BaseModel):
         default=3,
         ge=1,
         description="Consecutive polls where side+edge must hold before entry.",
+    )
+    late_entry_seconds: float = Field(
+        default=420.0,
+        ge=0.0,
+        description="Final N seconds where late_entry_signal_persistence_polls applies.",
+    )
+    late_entry_signal_persistence_polls: int = Field(
+        default=3,
+        ge=1,
+        description="Persistence polls required inside late_entry_seconds window.",
     )
     chop_zone_min_sigma: float = Field(
         default=0.35,
@@ -445,6 +464,34 @@ class RiskConfig(BaseModel):
         le=1.0,
         description="Skip position-reversal exits when bid is within this many dollars of take-profit.",
     )
+    tiered_take_profit_enabled: bool = Field(
+        default=True,
+        description="Sell half at partial gain, breakeven runner, trail remainder.",
+    )
+    partial_take_profit_gain: float = Field(
+        default=0.12,
+        ge=0.0,
+        le=1.0,
+        description="First take-profit when bid is entry + this many dollars.",
+    )
+    partial_take_profit_fraction: float = Field(
+        default=0.5,
+        gt=0.0,
+        le=1.0,
+        description="Fraction of position to sell on first take-profit leg.",
+    )
+    trailing_stop_cents: float = Field(
+        default=0.10,
+        ge=0.0,
+        le=1.0,
+        description="Trail runner: exit when bid falls this far below peak.",
+    )
+    edge_decay_min_edge: float = Field(
+        default=0.04,
+        ge=0.0,
+        le=1.0,
+        description="Exit when live edge (model prob − bid) drops below this floor.",
+    )
     position_reversal_enabled: bool = True
     position_reversal_window_seconds: float = Field(default=420.0, ge=0.0)
     position_reversal_min_hold_probability: float = Field(default=0.50, ge=0.0, le=1.0)
@@ -469,6 +516,13 @@ class RiskConfig(BaseModel):
         default=None,
         gt=0.0,
         description="Bankroll for Kelly sizing; defaults to max_position_size.",
+    )
+    use_live_bankroll: bool = Field(
+        default=False,
+        description=(
+            "Fetch Kalshi cash balance at startup and apply to Kelly bankroll "
+            "and per-trade exposure caps."
+        ),
     )
 
 

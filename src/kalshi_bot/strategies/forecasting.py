@@ -48,6 +48,7 @@ from kalshi_bot.market.discovery import DiscoveryConfig, MarketDiscovery
 from kalshi_bot.models.ensemble import EnsembleProbabilityModel
 from kalshi_bot.models.regime import classify_regime
 from kalshi_bot.strategies.decision import DecisionConfig, DecisionEngine
+from kalshi_bot.execution.stop_loss import TieredTakeProfitConfig
 from kalshi_bot.strategies.entry_filters import (
     EntrySignalTracker,
     apply_signal_persistence_gate,
@@ -87,6 +88,7 @@ class ForecastCycle:
 
 PositionLookup = Callable[[str], MarketPosition | None]
 OrdersLookup = Callable[[str], tuple[OpenOrder, ...]]
+PreDecideHook = Callable[[MarketSnapshot], None]
 
 
 class ForecastingScanner:
@@ -106,6 +108,7 @@ class ForecastingScanner:
         intelligence: IntelligenceOrchestrator | None = None,
         position_lookup: PositionLookup | None = None,
         orders_lookup: OrdersLookup | None = None,
+        pre_decide_hook: PreDecideHook | None = None,
     ) -> None:
         self.kalshi = kalshi
         self.benchmark = benchmark
@@ -193,6 +196,14 @@ class ForecastingScanner:
                 take_profit_bid_price=config.risk.take_profit_bid_price,
                 take_profit_late_seconds=config.risk.take_profit_late_seconds,
                 take_profit_late_min_gain=config.risk.take_profit_late_min_gain,
+                take_profit_reversal_buffer=config.risk.take_profit_reversal_buffer_cents,
+                tiered_take_profit=TieredTakeProfitConfig(
+                    enabled=config.risk.tiered_take_profit_enabled,
+                    partial_gain=config.risk.partial_take_profit_gain,
+                    partial_fraction=config.risk.partial_take_profit_fraction,
+                    trailing_stop=config.risk.trailing_stop_cents,
+                    edge_decay_min_edge=config.risk.edge_decay_min_edge,
+                ),
                 position_reversal=reversal_config_from_risk(config.risk),
                 poll=config.poll,
                 longshot=config.longshot,
@@ -206,6 +217,7 @@ class ForecastingScanner:
         )
         self.position_lookup = position_lookup or (lambda _ticker: None)
         self.orders_lookup = orders_lookup or (lambda _ticker: ())
+        self.pre_decide_hook = pre_decide_hook
         self.intelligence = intelligence or IntelligenceOrchestrator(
             confidence_threshold=ls.min_confidence if ls.enabled else config.strategy.min_confidence,
         )
@@ -419,6 +431,15 @@ class ForecastingScanner:
             if self.config.strategy.pattern_matching_enabled
             else None
         )
+
+        seconds_remaining = (market.expiration - observed_at).total_seconds()
+        if seconds_remaining <= self.config.strategy.late_entry_seconds:
+            self.entry_tracker.required_polls = self.config.strategy.late_entry_signal_persistence_polls
+        else:
+            self.entry_tracker.required_polls = self.config.strategy.entry_signal_persistence_polls
+
+        if self.pre_decide_hook is not None:
+            self.pre_decide_hook(market)
 
         decision = self.decision_engine.decide(
             market,

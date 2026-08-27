@@ -120,41 +120,42 @@ longshot:
 
 strategy:
   contract_duration_seconds: 900
-  min_edge: 0.11
-  target_edge: 0.11
+  # Fallback when no band matches; lowest tier floor for risk hard-min.
+  min_edge: 0.06
+  target_edge: 0.10
   mispricing_enabled: true
   dynamic_edge_enabled: true
+  # Time-tiered net edge (model prob − executable). Higher early, lower near expiry.
   dynamic_edge_bands:
-    - min_minutes: 10.0
+    - min_minutes: 12.0
       max_minutes: 15.0
       min_edge: 0.11
+    - min_minutes: 10.0
+      max_minutes: 12.0
+      min_edge: 0.10
     - min_minutes: 7.0
       max_minutes: 10.0
-      min_edge: 0.11
-    - min_minutes: 5.0
-      max_minutes: 7.0
-      min_edge: 0.11
-    - min_minutes: 3.0
-      max_minutes: 5.0
-      min_edge: 0.11
-    - min_minutes: 1.0
-      max_minutes: 3.0
-      min_edge: 0.11
-    - min_minutes: 0.0
-      max_minutes: 1.0
-      min_edge: 0.11
-  late_favorite_edge_bands:
+      min_edge: 0.09
     - min_minutes: 5.0
       max_minutes: 7.0
       min_edge: 0.08
     - min_minutes: 3.0
       max_minutes: 5.0
-      min_edge: 0.08
-    - min_minutes: 0.0
+      min_edge: 0.07
+    - min_minutes: 2.0
       max_minutes: 3.0
       min_edge: 0.06
+    - min_minutes: 1.0
+      max_minutes: 2.0
+      min_edge: 0.05
+    - min_minutes: 0.0
+      max_minutes: 1.0
+      min_edge: 0.05
+  # Late-favorite shortcut disabled (was lowering edge in final minutes).
+  late_favorite_edge_bands: []
   min_confidence: 0.0
-  min_signal_agreement: 0.55
+  min_signal_agreement: 0.60
+  min_signal_agreement_split: 0.53
   setup_score_enabled: true
   setup_score_weight: 0.30
   entry_sweet_spot_min_seconds: 180
@@ -169,9 +170,9 @@ strategy:
   final_seconds: 360
   final_min_edge: 0.10
   late_confidence_increment: 0.10
-  late_favorite_seconds: 420
+  late_favorite_seconds: 0
   late_favorite_poll_threshold: 0.80
-  late_favorite_min_edge: 0.06
+  late_favorite_min_edge: 0.08
   late_favorite_min_model_probability: 0.88
   order_quantity: 1
   min_trade_quality_score: 70
@@ -181,6 +182,8 @@ strategy:
   min_pattern_matches: 0
   external_data_enabled: false
   entry_signal_persistence_polls: 2
+  late_entry_seconds: 420
+  late_entry_signal_persistence_polls: 3
   chop_zone_min_sigma: 0.0
   require_orderbook_depth: true
   window_regime_enabled: true
@@ -193,13 +196,18 @@ risk:
   max_contract_exposure: 1.50
   max_position_size: 1.50
   max_consecutive_losses: 4
-  max_trades_per_contract: 1
+  max_trades_per_contract: 2
   max_flips_per_contract: 0
   cooldown_seconds: 300
   min_hold_seconds: 60
-  take_profit_bid_price: 0.90
+  take_profit_bid_price: null
   take_profit_late_seconds: 0
   take_profit_reversal_buffer_cents: 0.15
+  tiered_take_profit_enabled: true
+  partial_take_profit_gain: 0.12
+  partial_take_profit_fraction: 0.5
+  trailing_stop_cents: 0.10
+  edge_decay_min_edge: 0.04
   position_reversal_enabled: true
   position_reversal_window_seconds: 420
   position_reversal_min_hold_probability: 0.50
@@ -207,11 +215,12 @@ risk:
   position_reversal_min_z_support: -0.30
   position_reversal_wrong_side_seconds: 120
   position_reversal_min_forecast_probability: 0.48
-  kelly_enabled: false
+  kelly_enabled: true
   kelly_fraction: 0.25
   kelly_max_fraction: 0.25
-  kelly_bankroll_usd: 16.22
-  stop_loss_fraction: 0.45
+  use_live_bankroll: true
+  kelly_bankroll_usd: null
+  stop_loss_fraction: 0.30
   opposite_edge_shift: 0.25
   thesis_reversal_enabled: false
   opposite_edge_exit_enabled: false
@@ -221,8 +230,9 @@ risk:
   recovery_hold_min_agreement: 0.58
 
 data:
+  # Official CME CF BRTI via Kalshi → CF Benchmarks passthrough (see cfbenchmarks.com/data/indices/BRTI).
   benchmark_mode: kalshi_passthrough
-  cf_benchmark_url: ""
+  cf_benchmark_url: kalshi://BRTI
   cf_benchmark_api_key: ""
   cf_benchmark_api_key_header: Authorization
   cf_benchmark_api_key_prefix: Bearer

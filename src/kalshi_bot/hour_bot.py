@@ -31,7 +31,7 @@ from kalshi_bot.learning.signal_weights import SignalWeightTracker
 from kalshi_bot.hour.mispricing import terminal_hard_min_edge
 from kalshi_bot.hour.scanner import HourForecastCycle, HourForecastingScanner
 from kalshi_bot.strategies.decision import format_edge_gap
-from kalshi_bot.venues.kalshi import KalshiClient
+from kalshi_bot.venues.kalshi import KalshiClient, parse_balance_dollars
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -96,6 +96,7 @@ class HourTradingBot:
             ),
         )
         self._hydrate_positions()
+        self._hydrate_bankroll()
         self.engine = ExecutionEngine(
             self.kalshi,
             self.risk,
@@ -140,6 +141,25 @@ class HourTradingBot:
         except Exception as exc:
             self.risk.lock(f"position verification failed: {exc}")
             logger.error("Could not hydrate hour bot positions: %s", exc)
+
+    def _hydrate_bankroll(self) -> None:
+        if not self.config.risk.use_live_bankroll:
+            return
+        if not self.kalshi.authenticated:
+            logger.warning("Live bankroll sync skipped: Kalshi client not authenticated")
+            return
+        try:
+            balance_usd = parse_balance_dollars(self.kalshi.get_balance())
+            applied = self.risk.apply_live_bankroll(balance_usd)
+            cap_usd = self.config.risk.max_position_size
+            logger.info(
+                "Live bankroll $%.2f → Kelly bankroll $%.2f, per-trade cap $%.2f",
+                balance_usd,
+                applied,
+                cap_usd,
+            )
+        except Exception as exc:
+            logger.error("Could not hydrate live bankroll: %s", exc)
 
     def _position_lookup(self, ticker: str) -> MarketPosition | None:
         position = self.positions.position(ticker)

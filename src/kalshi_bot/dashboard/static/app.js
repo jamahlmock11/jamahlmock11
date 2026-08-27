@@ -40,6 +40,27 @@
     return `${v > 0 ? "+" : ""}${money(v)}`;
   }
 
+  function formatEdgeCents(cents) {
+    if (cents == null || cents === "") return "—";
+    const n = Number(cents);
+    if (!Number.isFinite(n)) return "—";
+    const abs = Math.abs(n);
+    const body = abs < 1 ? n.toFixed(1) : String(Math.round(n));
+    return `${body}¢`;
+  }
+
+  function formatEdgePct(pct) {
+    if (pct == null || pct === "") return "—";
+    const n = Number(pct);
+    if (!Number.isFinite(n)) return "—";
+    return `${n.toFixed(1)}%`;
+  }
+
+  function edgeClass(cents) {
+    if (cents == null) return "";
+    return Number(cents) < 0 ? "negative-edge" : "";
+  }
+
   function formatAction(action) {
     return (action || "NO_TRADE").toUpperCase().replace(/_/g, " ");
   }
@@ -118,7 +139,10 @@
     const signal = row.signal || "notrade";
     const tau = row.tau_left_min != null ? `${row.tau_left_min}m left` : "—";
     const netEdge =
-      row.net_edge_cents != null ? `${row.net_edge_cents}¢` : "—";
+      row.net_edge_cents != null ? formatEdgeCents(row.net_edge_cents) : "—";
+    const netEdgePct =
+      row.net_edge_pct != null ? formatEdgePct(row.net_edge_pct) : null;
+    const netEdgeClass = edgeClass(row.net_edge_cents);
     const ensemble =
       row.ensemble_pct != null ? `${Number(row.ensemble_pct).toFixed(0)}%` : "—";
     const confidence =
@@ -197,7 +221,7 @@
         <div class="hero-metrics">
           <div class="hero-metric">
             <span>${row.mispricing_enabled === false ? "Side prob" : "Net edge"}</span>
-            <strong>${netEdge}</strong>
+            <strong class="${netEdgeClass}">${netEdge}${netEdgePct ? ` · ${netEdgePct}` : ""}</strong>
           </div>
           <div class="hero-metric">
             <span>Need / gap</span>
@@ -334,7 +358,9 @@
           d.seconds_remaining != null
             ? `${(d.seconds_remaining / 60).toFixed(1)}m`
             : "—";
-        const edge = d.edge != null ? `${(d.edge * 100).toFixed(0)}¢` : "—";
+        const edge =
+          d.edge != null ? formatEdgeCents(d.edge * 100) : "—";
+        const edgeClassName = edgeClass(d.edge != null ? d.edge * 100 : null);
         const blocker = d.primary_blocker || d.blocking_summary || "—";
         return `
       <tr>
@@ -342,7 +368,7 @@
         <td class="mono">${d.horizon || "15m"}</td>
         <td>${d.action || "—"}</td>
         <td class="mono">${tau}</td>
-        <td class="mono">${edge}</td>
+        <td class="mono ${edgeClassName}">${edge}</td>
         <td class="blocker-cell">${blocker}</td>
       </tr>`;
       })

@@ -10,6 +10,25 @@ from kalshi_bot.config import AppConfig, load_yaml_config
 WORKSPACE = Path(__file__).resolve().parents[3]
 
 
+def _format_edge_tiers(bands: list) -> str:
+    """Build dashboard chip text from dynamic edge bands (half-open minute ranges)."""
+    if not bands:
+        return "OFF"
+    parts: list[str] = []
+    for band in bands:
+        lo = float(band.min_minutes)
+        hi = float(band.max_minutes)
+        cents = int(round(float(band.min_edge) * 100))
+        if lo <= 0:
+            label = f"<{hi:.0f}m"
+        elif hi >= 15:
+            label = f"{hi:.0f}–{lo:.0f}m"
+        else:
+            label = f"{hi:.0f}–{lo:.0f}m"
+        parts.append(f"{label}:{cents}¢")
+    return " · ".join(parts)
+
+
 def _load_config(path: str) -> AppConfig | None:
     full = WORKSPACE / path
     if not full.exists():
@@ -25,6 +44,9 @@ def _rules_15m(cfg: AppConfig | None, mode: str, account: str) -> list[dict[str,
     risk = cfg.risk if cfg else None
     min_edge = strategy.min_edge if strategy else 0.20
     min_agreement = strategy.min_signal_agreement if strategy else 0.48
+    min_agreement_split = (
+        strategy.min_signal_agreement_split if strategy else 0.53
+    )
     max_spread = strategy.max_spread if strategy else 0.12
     min_price = strategy.min_entry_executable_cost if strategy else 0.08
     late_fav_secs = strategy.late_favorite_seconds if strategy else 420
@@ -36,9 +58,11 @@ def _rules_15m(cfg: AppConfig | None, mode: str, account: str) -> list[dict[str,
     bankroll = risk.max_position_size if risk else 50
     exposure = risk.max_contract_exposure if risk else 25
     depth = strategy.order_quantity if strategy else 1
+    stop_loss = risk.stop_loss_fraction if risk else 0.30
+    tiered_tp = risk.tiered_take_profit_enabled if risk else True
     edge_tiers = (
-        "15–10m:10¢ · 10–7m:10¢ · 7–5m:8¢ · 5–3m:8¢ · <3m:6¢"
-        if strategy and strategy.dynamic_edge_enabled
+        _format_edge_tiers(strategy.dynamic_edge_bands)
+        if strategy and strategy.dynamic_edge_enabled and strategy.dynamic_edge_bands
         else "OFF (forecast only)"
     )
 
@@ -58,14 +82,40 @@ def _rules_15m(cfg: AppConfig | None, mode: str, account: str) -> list[dict[str,
         {
             "key": "Late favorite",
             "value": (
-                f"≤{late_fav_secs / 60:.0f}m · poll ≥{late_fav_poll * 100:.0f}% · "
-                f"model ≥{late_fav_model * 100:.0f}% · {persistence} polls → 6–8¢"
+                "OFF"
+                if not strategy or strategy.late_favorite_seconds <= 0
+                else (
+                    f"≤{late_fav_secs / 60:.0f}m · poll ≥{late_fav_poll * 100:.0f}% · "
+                    f"model ≥{late_fav_model * 100:.0f}% · {persistence} polls → "
+                    f"{_format_edge_tiers(strategy.late_favorite_edge_bands)}"
+                )
             ),
         },
-        {"key": "Ensemble", "value": f"≥{min_agreement * 100:.0f}%"},
+        {"key": "Ensemble", "value": (
+            f"≥{min_agreement * 100:.0f}% unanimous · "
+            f"≥{min_agreement_split * 100:.0f}% split"
+        )},
         {"key": "Price floor", "value": f"≥{min_price * 100:.0f}¢"},
         {"key": "Spread", "value": f"≤{max_spread * 100:.0f}¢"},
         {"key": "Depth", "value": f"≥{depth:.0f} ct"},
+        {
+            "key": "Take profit",
+            "value": (
+                f"½ at +{risk.partial_take_profit_gain * 100:.0f}¢ · "
+                f"BE runner · trail {risk.trailing_stop_cents * 100:.0f}¢"
+                if risk and tiered_tp
+                else "OFF"
+            ),
+        },
+        {
+            "key": "Edge decay exit",
+            "value": (
+                f"<{risk.edge_decay_min_edge * 100:.0f}¢ live edge"
+                if risk and risk.edge_decay_min_edge > 0
+                else "OFF"
+            ),
+        },
+        {"key": "Stop loss", "value": f"{stop_loss * 100:.0f}% premium"},
         {"key": "Bankroll", "value": f"${bankroll:.0f} / ${exposure:.0f} cap"},
     ]
 
@@ -171,6 +221,9 @@ def active_edge_rules(*, mode: str = "LIVE", account: str = "API connected") -> 
     strategy = cfg_15m.strategy if cfg_15m else None
     min_edge = strategy.min_edge if strategy else 0.20
     min_agreement = strategy.min_signal_agreement if strategy else 0.48
+    min_agreement_split = (
+        strategy.min_signal_agreement_split if strategy else 0.53
+    )
 
     summary = (
         f"15m: {min_edge * 100:.0f}¢ edge, ≥{min_agreement * 100:.0f}% ensemble. "

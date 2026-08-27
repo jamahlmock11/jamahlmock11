@@ -6,9 +6,15 @@ import json
 import math
 from typing import Any
 
+from kalshi_bot.strategies.decision import (
+    format_signed_edge_cents,
+    required_signal_agreement,
+)
+
 DEFAULT_THRESHOLDS: dict[str, Any] = {
     "min_edge": 0.15,
     "min_signal_agreement": 0.48,
+    "min_signal_agreement_split": 0.53,
     "min_data_completeness": 0.65,
     "min_seconds_remaining": 60.0,
     "max_entry_seconds_remaining": 900.0,
@@ -231,13 +237,15 @@ def _edge_gap_text(observed: float | None, required: float | None) -> str:
     observed_cents = observed * 100.0
     required_cents = required * 100.0
     gap = max(0.0, required_cents - observed_cents)
+    observed_text = format_signed_edge_cents(observed)
+    required_text = format_signed_edge_cents(required)
     if gap <= 0.05:
         surplus = observed_cents - required_cents
         if surplus > 0.05:
-            return f"met (+{surplus:.0f}¢ above {required_cents:.0f}¢ min)"
-        return f"{observed_cents:.0f}¢ have · {required_cents:.0f}¢ need"
+            return f"met (+{surplus:.0f}¢ above {required_text} min)"
+        return f"{observed_text} have · {required_text} need"
     shortfall = math.ceil(gap - 1e-9)
-    return f"need {shortfall:.0f}¢ more ({observed_cents:.0f}¢ have · {required_cents:.0f}¢ need)"
+    return f"need {shortfall:.0f}¢ more ({observed_text} have · {required_text} need)"
 
 
 def _format_gate_failure(failure: dict[str, Any]) -> str:
@@ -416,17 +424,27 @@ def build_trade_requirements(row: dict[str, Any]) -> dict[str, Any]:
     )
 
     min_agreement = float(thresholds["min_signal_agreement"])
-    agreement_ok = agreement is not None and float(agreement) >= min_agreement
+    min_agreement_split = float(thresholds.get("min_signal_agreement_split", 0.53))
+    if agreement is not None:
+        required_agreement = required_signal_agreement(
+            float(agreement),
+            min_agreement,
+            min_agreement_split,
+        )
+        agreement_ok = float(agreement) >= required_agreement
+        agreement_detail = (
+            f"{_pct(agreement)} · need ≥{_pct(required_agreement)}"
+            + (" (split)" if required_agreement < min_agreement else " (unanimous)")
+        )
+    else:
+        agreement_ok = False
+        agreement_detail = "unavailable"
     requirements.append(
         _req(
             "signal_agreement",
             "Ensemble agreement",
             status="pass" if agreement_ok and not blocked("signal_agreement") else "fail",
-            detail=(
-                f"{_pct(agreement)} · need ≥{_pct(min_agreement)}"
-                if agreement is not None
-                else "unavailable"
-            ),
+            detail=agreement_detail,
             blocking=blocked("signal_agreement"),
         )
     )
