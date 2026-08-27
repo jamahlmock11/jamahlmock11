@@ -100,14 +100,17 @@ def _require_credentials() -> None:
 BTC_SERIES_TICKER = os.getenv("KALSHI_BTC_SERIES_TICKER", "KXBTC")
 
 # Strategy window (time-to-expiration gate)
-MIN_TIME_LEFT_MINUTES = float(os.getenv("MIN_TIME_LEFT_MINUTES", "10"))
-MAX_TIME_LEFT_MINUTES = float(os.getenv("MAX_TIME_LEFT_MINUTES", "50"))
+MIN_TIME_LEFT_MINUTES = float(os.getenv("MIN_TIME_LEFT_MINUTES", "5"))
+MAX_TIME_LEFT_MINUTES = float(os.getenv("MAX_TIME_LEFT_MINUTES", "58"))
 
 # Order book imbalance thresholds
-IMBALANCE_RATIO_THRESHOLD = float(os.getenv("IMBALANCE_RATIO_THRESHOLD", "3.0"))
-PRICE_BAND_LOW = int(os.getenv("PRICE_BAND_LOW", "40"))    # cents
-PRICE_BAND_HIGH = int(os.getenv("PRICE_BAND_HIGH", "55"))  # cents
+IMBALANCE_RATIO_THRESHOLD = float(os.getenv("IMBALANCE_RATIO_THRESHOLD", "2.0"))
+PRICE_BAND_LOW = int(os.getenv("PRICE_BAND_LOW", "25"))    # cents
+PRICE_BAND_HIGH = int(os.getenv("PRICE_BAND_HIGH", "75"))  # cents
 DEPTH_LEVELS = int(os.getenv("DEPTH_LEVELS", "3"))
+MOMENTUM_DELTA_CENTS = float(os.getenv("MOMENTUM_DELTA_CENTS", "1.5"))
+MIN_SIDE_DEPTH = int(os.getenv("MIN_SIDE_DEPTH", "100"))
+MAX_MARKETS_PER_SCAN = int(os.getenv("MAX_MARKETS_PER_SCAN", "40"))
 
 # Execution / polling
 POLL_INTERVAL_SECONDS = float(os.getenv("POLL_INTERVAL_SECONDS", "15"))
@@ -354,20 +357,51 @@ class MarketImbalanceStrategy:
 
     def _momentum_direction(self, ticker: str) -> str | None:
         hist = self._midpoint_history.get(ticker)
-        if not hist or len(hist) < 3:
+        if not hist or len(hist) < 2:
             return None
         delta = hist[-1] - hist[0]
-        if delta >= 3:
+        if delta >= MOMENTUM_DELTA_CENTS:
             return "yes"
-        if delta <= -3:
+        if delta <= -MOMENTUM_DELTA_CENTS:
             return "no"
+        return None
+
+    def _evaluate_one_sided(self, ticker: str, yes: list, no: list) -> Signal | None:
+        """Trade resting liquidity when Kalshi only returns bids on one side."""
+        low, high = PRICE_BAND_LOW, PRICE_BAND_HIGH
+        depth_n = DEPTH_LEVELS
+
+        if yes and not no:
+            best = yes[0][0]
+            depth = sum(lvl[1] for lvl in yes[:depth_n])
+            if low <= best <= high and depth >= MIN_SIDE_DEPTH:
+                return Signal(
+                    ticker=ticker,
+                    side="yes",
+                    limit_price=min(best + 1, 99),
+                    reason=f"one_sided_yes depth={depth} @ {best}\u00a2",
+                )
+
+        if no and not yes:
+            best = no[0][0]
+            depth = sum(lvl[1] for lvl in no[:depth_n])
+            if low <= best <= high and depth >= MIN_SIDE_DEPTH:
+                return Signal(
+                    ticker=ticker,
+                    side="no",
+                    limit_price=min(best + 1, 99),
+                    reason=f"one_sided_no depth={depth} @ {best}\u00a2",
+                )
+
         return None
 
     def evaluate_market(self, ticker: str, orderbook: dict) -> Signal | None:
         yes = orderbook.get("yes") or []
         no = orderbook.get("no") or []
-        if not yes or not no:
+        if not yes and not no:
             return None
+        if not yes or not no:
+            return self._evaluate_one_sided(ticker, yes, no)
 
         midpoint = self._midpoint(orderbook)
         if midpoint is None:
@@ -390,19 +424,17 @@ class MarketImbalanceStrategy:
         low, high = PRICE_BAND_LOW, PRICE_BAND_HIGH
         threshold = IMBALANCE_RATIO_THRESHOLD
 
-        if yes_no_ratio >= threshold and low <= best_yes_bid <= high:
-            if momentum == "yes" or yes_no_ratio >= threshold + 1.0:
-                return Signal(
-                    ticker=ticker, side="yes", limit_price=min(best_yes_bid + 1, 99),
-                    reason=f"book_imbalance={yes_no_ratio:.2f}x yes, momentum={momentum}",
-                )
+        if yes_no_ratio >= threshold and low <= midpoint <= high:
+            return Signal(
+                ticker=ticker, side="yes", limit_price=min(best_yes_bid + 1, 99),
+                reason=f"book_imbalance={yes_no_ratio:.2f}x yes, momentum={momentum}",
+            )
 
-        if no_yes_ratio >= threshold and low <= best_no_bid <= high:
-            if momentum == "no" or no_yes_ratio >= threshold + 1.0:
-                return Signal(
-                    ticker=ticker, side="no", limit_price=min(best_no_bid + 1, 99),
-                    reason=f"book_imbalance={no_yes_ratio:.2f}x no, momentum={momentum}",
-                )
+        if no_yes_ratio >= threshold and low <= (100 - midpoint) <= high:
+            return Signal(
+                ticker=ticker, side="no", limit_price=min(best_no_bid + 1, 99),
+                reason=f"book_imbalance={no_yes_ratio:.2f}x no, momentum={momentum}",
+            )
 
         return None
 
@@ -802,10 +834,80 @@ def _expiration_ms(market: dict) -> int:
 
 
 def _strike_from_market(market: dict) -> int:
+    ticker = str(market.get("ticker") or "")
+    if "-B" in ticker:
+        suffix = ticker.rsplit("-B", 1)[-1]
+        if suffix.startswith("T"):
+            try:
+                return int(round(float(suffix[1:])))
+            except ValueError:
+                pass
+        else:
+            try:
+                return int(suffix)
+            except ValueError:
+                pass
+    floor = market.get("floor_strike")
+    cap = market.get("cap_strike")
+    if floor is not None and cap is not None:
+        return int(round((float(floor) + float(cap)) / 2))
     for key in ("floor_strike", "strike", "cap_strike"):
         if market.get(key) is not None:
             return int(market[key])
     return 0
+
+
+def _event_prefix(market: dict) -> str:
+    event = market.get("event_ticker")
+    if event:
+        return str(event)
+    ticker = str(market.get("ticker") or "")
+    parts = ticker.split("-")
+    if len(parts) >= 2:
+        return f"{parts[0]}-{parts[1]}"
+    return ticker
+
+
+def _btc_spot_from_markets(markets: list[dict], *, event_prefix: str = "") -> float:
+    """Use the threshold (T) contract from the active hourly event as spot reference."""
+    best = 0.0
+    for market in markets:
+        ticker = str(market.get("ticker") or "")
+        if event_prefix and not ticker.startswith(event_prefix):
+            continue
+        if "-T" not in ticker:
+            continue
+        try:
+            price = float(ticker.rsplit("-T", 1)[-1])
+        except ValueError:
+            continue
+        if price > best:
+            best = price
+    return best
+
+
+def sort_tradeable_for_scan(
+    tradeable: list[tuple[float, dict]],
+    *,
+    btc_spot: float,
+) -> list[tuple[float, dict]]:
+    """Scan the contested OTM band first, then fall back to strikes near spot."""
+    if btc_spot <= 0:
+        return tradeable
+
+    band_center = btc_spot - 10_000
+    band_lo = btc_spot - 12_000
+    band_hi = btc_spot - 8_000
+
+    def sort_key(row: tuple[float, dict]) -> tuple[int, float, float]:
+        mins_left, market = row
+        strike = _strike_from_market(market)
+        in_band = band_lo <= strike <= band_hi
+        zone = 0 if in_band else 1
+        anchor = band_center if in_band else btc_spot
+        return (zone, abs(strike - anchor), mins_left)
+
+    return sorted(tradeable, key=sort_key)
 
 
 def run_cycle(
@@ -819,10 +921,12 @@ def run_cycle(
 ) -> None:
     markets = client.get_btc_hourly_markets()
     tradeable = markets_in_trading_window(markets)
+    event_prefix = _event_prefix(tradeable[0][1]) if tradeable else ""
+    btc_spot = _btc_spot_from_markets(markets, event_prefix=event_prefix)
+    scan_queue = sort_tradeable_for_scan(tradeable, btc_spot=btc_spot)[:MAX_MARKETS_PER_SCAN]
     current_hour = current_hour_snapshot(tradeable, total_markets=len(markets))
     display_markets = [m for _, m in tradeable[:12]] or markets[:12]
     market_books: dict[str, dict] = {}
-    btc_spot = 0.0
 
     for market in display_markets:
         ticker = market.get("ticker")
@@ -831,9 +935,10 @@ def run_cycle(
         book = client.get_orderbook(ticker)
         if book:
             market_books[ticker] = book
-        strike = _strike_from_market(market)
-        if strike:
-            btc_spot = strike
+        if not btc_spot:
+            strike = _strike_from_market(market)
+            if strike:
+                btc_spot = float(strike)
         time.sleep(0.15)
 
     if dashboard:
@@ -881,7 +986,7 @@ def run_cycle(
             )
         return
 
-    for mins_left, market in tradeable:
+    for mins_left, market in scan_queue:
         ticker = market.get("ticker")
         if not ticker:
             continue

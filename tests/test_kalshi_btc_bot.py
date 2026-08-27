@@ -5,6 +5,20 @@ from __future__ import annotations
 from kalshi_btc_bot import MarketImbalanceStrategy
 
 
+def test_imbalance_without_momentum_generates_signal():
+    strategy = MarketImbalanceStrategy()
+    book = {
+        "yes": [[45, 300], [44, 100], [43, 50]],
+        "no": [[45, 50], [44, 30], [43, 20]],
+    }
+
+    signal = strategy.evaluate_market("TEST", book)
+
+    assert signal is not None
+    assert signal.side == "yes"
+    assert "book_imbalance" in signal.reason
+
+
 def test_imbalance_with_momentum_generates_yes_signal():
     strategy = MarketImbalanceStrategy()
     book = {
@@ -30,3 +44,17 @@ def test_balanced_book_returns_no_signal():
     }
 
     assert strategy.evaluate_market("TEST", book) is None
+
+
+def test_one_sided_no_book_in_band_generates_signal():
+    strategy = MarketImbalanceStrategy()
+    book = {
+        "yes": [],
+        "no": [[45, 500], [44, 100], [43, 50]],
+    }
+
+    signal = strategy.evaluate_market("TEST", book)
+
+    assert signal is not None
+    assert signal.side == "no"
+    assert "one_sided_no" in signal.reason
