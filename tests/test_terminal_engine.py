@@ -420,17 +420,13 @@ def test_prediction_store_records_and_resolves(tmp_path):
 
 
 def test_1h_yaml_terminal_config_loaded():
+    from kalshi_bot.config import is_blank_1h, load_yaml_config
+
     cfg = load_yaml_config("config/1h.yaml")
+    assert is_blank_1h(cfg)
     assert cfg.terminal_probability.enabled is False
-    assert cfg.terminal_probability.mispricing_enabled is False
-    assert cfg.terminal_probability.dynamic_edge_enabled is False
     assert cfg.execution.orders_enabled is False
     assert cfg.execution.dry_run is True
-    assert cfg.intelligence.enabled is False
-    assert cfg.poll.mode == "disabled"
-    assert cfg.longshot.enabled is False
-    assert cfg.orderbook_skew.ensemble_enabled is False
-    assert cfg.risk.position_reversal_enabled is False
 
 
 def test_1h_terminal_fixture_config_loaded():

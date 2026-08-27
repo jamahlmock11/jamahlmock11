@@ -12,7 +12,7 @@ from rich.console import Console
 from rich.table import Table
 
 from kalshi_bot.bot import BotStats
-from kalshi_bot.config import AppConfig, Settings
+from kalshi_bot.config import AppConfig, Settings, is_blank_1h
 from kalshi_bot.data.cf_benchmark import create_benchmark_feed
 from kalshi_bot.data.ibit_options import IBITOptionsProvider
 from kalshi_bot.data.supporting_feeds import SupportingFeeds
@@ -337,8 +337,10 @@ class HourTradingBot:
     def run_forever(self) -> None:
         interval = self.config.hour.poll_interval_sec
         mode = "DRY-RUN" if self.engine.dry_run else "LIVE"
+        blank = is_blank_1h(self.config)
+        state = "BLANK SLATE" if blank else mode
         console.print(
-            f"[bold]Kalshi BTC 1-hour bot starting[/bold] mode={mode} "
+            f"[bold]Kalshi BTC 1-hour bot starting[/bold] mode={state} "
             f"series={self.config.hour.series_ticker} poll={interval}s"
         )
         try:

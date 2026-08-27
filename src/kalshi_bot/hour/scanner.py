@@ -6,7 +6,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Callable
 
-from kalshi_bot.config import AppConfig
+from kalshi_bot.config import AppConfig, is_blank_1h
 from kalshi_bot.data.cf_benchmark import (
     BenchmarkDataError,
     CFBenchmarkClient,
@@ -684,6 +684,14 @@ class HourForecastingScanner:
         risk_manager: RiskManager | None = None,
     ) -> HourForecastCycle:
         observed_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+        if is_blank_1h(self.config):
+            reason = "blank slate — no rules or strategies active"
+            return HourForecastCycle(
+                observed_at,
+                "BLANK",
+                reason,
+                decision=self._no_trade(reason, "blank_slate"),
+            )
         series = self.config.hour.series_ticker
         try:
             markets = self.kalshi.get_markets(series, status="open", limit=200)

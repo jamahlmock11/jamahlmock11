@@ -669,6 +669,23 @@ def merge_runtime(config: AppConfig, settings: Settings) -> AppConfig:
     return cfg
 
 
+def is_blank_1h(config: AppConfig) -> bool:
+    """True when the 1-hour bot has no active rules, strategies, or order placement."""
+    if config.execution.orders_enabled:
+        return False
+    if config.terminal_probability.enabled:
+        return False
+    if config.longshot.enabled:
+        return False
+    if config.orderbook_skew.enabled or config.orderbook_skew.ensemble_enabled:
+        return False
+    if config.intelligence.enabled:
+        return False
+    if config.poll.mode != "disabled":
+        return False
+    return True
+
+
 def ensure_dirs() -> None:
     Path("logs").mkdir(exist_ok=True)
     Path("secrets").mkdir(exist_ok=True)
