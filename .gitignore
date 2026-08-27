@@ -8,6 +8,7 @@ __pycache__/
 secrets/
 logs/
 kalshi_bot.log
+dashboard-1h/node_modules/
 data/*.json
 data/*.csv
 data/*.db

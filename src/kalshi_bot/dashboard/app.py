@@ -9,15 +9,24 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel, Field
 
 from kalshi_bot.dashboard.analytics import analytics_to_dict, build_analytics
 from kalshi_bot.dashboard.assessments import assessments_by_horizon, build_assessment, latest_assessments
+from kalshi_bot.dashboard.hour_bot_status import HourBotStatus, apply_control_update, default_status
 from kalshi_bot.dashboard.requirements import enrich_decision
 from kalshi_bot.dashboard.rules import active_edge_rules
 from kalshi_bot.journal import CombinedTradeJournal, TradeJournal
 
 BASE = Path(__file__).resolve().parent
+HOUR_DASHBOARD_DIST = BASE / "static" / "1h"
 templates = Jinja2Templates(directory=str(BASE / "templates"))
+
+
+class HourBotControlRequest(BaseModel):
+    running: bool | None = None
+    mode: str | None = Field(default=None, pattern="^(paper|live)$")
+    estop: bool | None = None
 
 
 def create_app(
@@ -35,7 +44,7 @@ def create_app(
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
-        allow_methods=["GET"],
+        allow_methods=["GET", "POST"],
         allow_headers=["*"],
     )
     app.mount("/static", StaticFiles(directory=str(BASE / "static")), name="static")
@@ -192,6 +201,31 @@ def create_app(
     @app.get("/api/status")
     def status() -> dict:
         return health()
+
+    @app.get("/api/1h-bot/status")
+    def hour_bot_status() -> dict:
+        payload = HourBotStatus.load().to_dict()
+        if not payload.get("updatedAt"):
+            payload = default_status().to_dict()
+        return payload
+
+    @app.post("/api/1h-bot/control")
+    def hour_bot_control(body: HourBotControlRequest) -> dict:
+        control = apply_control_update(
+            running=body.running,
+            mode=body.mode,
+            estop=body.estop,
+        )
+        return control.__dict__
+
+    if HOUR_DASHBOARD_DIST.exists():
+        app.mount("/1h/assets", StaticFiles(directory=str(HOUR_DASHBOARD_DIST / "assets")), name="hour-assets")
+
+        @app.get("/1h", response_class=HTMLResponse)
+        @app.get("/1h/", response_class=HTMLResponse)
+        def hour_dashboard() -> HTMLResponse:
+            index = HOUR_DASHBOARD_DIST / "index.html"
+            return HTMLResponse(index.read_text())
 
     return app
 

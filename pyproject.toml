@@ -36,7 +36,7 @@ edge-desk = "kalshi_bot.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-kalshi_bot = ["dashboard/templates/*", "dashboard/static/*"]
+kalshi_bot = ["dashboard/templates/*", "dashboard/static/*", "dashboard/static/1h/**/*"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

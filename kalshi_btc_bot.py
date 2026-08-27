@@ -26,6 +26,7 @@ Paper-trade before risking real money.
 from __future__ import annotations
 
 import base64
+import json
 import logging
 import os
 import sys
@@ -41,6 +42,24 @@ import requests
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding as asym_padding
 from dotenv import load_dotenv
+
+try:
+    from kalshi_bot.dashboard.hour_bot_status import (
+        HourBotControl,
+        HourBotStatus,
+        default_status,
+        new_log_id,
+    )
+except ImportError:
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
+    from kalshi_bot.dashboard.hour_bot_status import (
+        HourBotControl,
+        HourBotStatus,
+        default_status,
+        new_log_id,
+    )
 
 load_dotenv()
 
@@ -97,6 +116,7 @@ ORDER_TYPE = os.getenv("ORDER_TYPE", "limit")  # "limit" or "market"
 # Logging
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 LOG_FILE = os.getenv("LOG_FILE", "kalshi_bot.log")
+DAILY_ENTRY_BUDGET = int(os.getenv("DAILY_ENTRY_BUDGET", "20"))
 
 
 @dataclass
@@ -479,6 +499,185 @@ class RiskManager:
         )
 
 
+@dataclass
+class DashboardRecorder:
+    """Tracks bot state for the 1-hour React dashboard."""
+
+    mode: str
+    logs: list[dict] = field(default_factory=list)
+    equity_history: list[dict] = field(default_factory=list)
+    wins_today: int = 0
+    losses_today: int = 0
+    sum_win_dollars: float = 0.0
+    sum_loss_dollars: float = 0.0
+    fees_paid_today: float = 0.0
+    fees_paid_total: float = 0.0
+    cum_pnl_inception: float = 0.0
+    pnl_by_side: dict[str, float] = field(default_factory=lambda: {"yes": 0.0, "no": 0.0})
+    daily_entries: int = 0
+    peak_equity: float = field(default_factory=lambda: RISK.starting_bankroll)
+    position_meta: dict[str, dict] = field(default_factory=dict)
+    _tick: int = 0
+
+    def add_log(self, kind: str, text: str) -> None:
+        self.logs.insert(
+            0,
+            {
+                "id": new_log_id(),
+                "time": datetime.now(timezone.utc).isoformat(),
+                "kind": kind,
+                "text": text,
+            },
+        )
+        self.logs = self.logs[:60]
+
+    def record_entry(self, ticker: str, side: str, count: int, price_cents: int, *, expires_at_ms: int, strike_btc: int):
+        self.daily_entries += 1
+        self.position_meta[ticker] = {
+            "expiresAt": expires_at_ms,
+            "strikeBtc": strike_btc,
+            "entryTime": int(time.time() * 1000),
+        }
+        self.add_log("fill", f"FILL {ticker} {side} x{count} @ {price_cents}c")
+
+    def record_settlement(self, ticker: str, side: str, pnl: float, won: bool):
+        fee = 0.01
+        self.fees_paid_today += fee
+        self.fees_paid_total += fee
+        self.cum_pnl_inception += pnl
+        self.pnl_by_side[side] = round(self.pnl_by_side.get(side, 0.0) + pnl, 2)
+        if won:
+            self.wins_today += 1
+            self.sum_win_dollars += max(pnl, 0)
+        else:
+            self.losses_today += 1
+            self.sum_loss_dollars += max(-pnl, 0)
+        self.position_meta.pop(ticker, None)
+        self.add_log(
+            "settle",
+            f"SETTLED {ticker} {side} — {'WON' if won else 'LOST'} — pnl {pnl:+.2f}",
+        )
+
+    def _market_row(self, market: dict, orderbook: dict | None) -> dict:
+        ticker = market.get("ticker", "")
+        expiration_time = market.get("expiration_time") or market.get("close_time") or ""
+        try:
+            expires_at = int(
+                datetime.fromisoformat(expiration_time.replace("Z", "+00:00")).timestamp() * 1000
+            )
+        except Exception:
+            expires_at = int(time.time() * 1000) + 3_600_000
+
+        yes_bid = int(market.get("yes_bid") or 0)
+        yes_ask = int(market.get("yes_ask") or 0)
+        depth_yes = 0
+        depth_no = 0
+        if orderbook:
+            yes = orderbook.get("yes") or []
+            no = orderbook.get("no") or []
+            if yes:
+                yes_bid = int(yes[0][0])
+            if no:
+                yes_ask = int(100 - no[0][0])
+            depth_yes = sum(int(lvl[1]) for lvl in yes[:DEPTH_LEVELS])
+            depth_no = sum(int(lvl[1]) for lvl in no[:DEPTH_LEVELS])
+
+        return {
+            "ticker": ticker,
+            "expiresAt": expires_at,
+            "yesBid": yes_bid,
+            "yesAsk": yes_ask,
+            "depthYes": depth_yes,
+            "depthNo": depth_no,
+        }
+
+    def _position_rows(self, risk: RiskManager, client: KalshiClient) -> list[dict]:
+        rows: list[dict] = []
+        for ticker, fill in risk.open_positions.items():
+            meta = self.position_meta.get(ticker, {})
+            current_mark = fill.price_cents
+            market = client.get_market(ticker)
+            if market:
+                if fill.side == "yes":
+                    current_mark = int(market.get("yes_bid") or fill.price_cents)
+                else:
+                    current_mark = int(market.get("no_bid") or fill.price_cents)
+            strike = int(meta.get("strikeBtc") or market.get("floor_strike") or 0) if market else int(meta.get("strikeBtc") or 0)
+            rows.append(
+                {
+                    "id": ticker,
+                    "ticker": ticker,
+                    "side": fill.side,
+                    "entryPrice": fill.price_cents,
+                    "currentMark": current_mark,
+                    "count": fill.count,
+                    "entryTime": int(meta.get("entryTime") or fill.timestamp * 1000),
+                    "expiresAt": int(meta.get("expiresAt") or int(time.time() * 1000) + 3_600_000),
+                    "strikeBtc": strike,
+                }
+            )
+        return rows
+
+    def publish(
+        self,
+        *,
+        risk: RiskManager,
+        client: KalshiClient,
+        markets: list[dict],
+        market_books: dict[str, dict],
+        control: HourBotControl,
+        btc_spot: float,
+    ) -> None:
+        self._tick += 1
+        unrealized = 0.0
+        capital_deployed = 0.0
+        for ticker, fill in risk.open_positions.items():
+            pos = next((p for p in self._position_rows(risk, client) if p["ticker"] == ticker), None)
+            if pos:
+                unrealized += ((pos["currentMark"] - pos["entryPrice"]) * pos["count"]) / 100.0
+            capital_deployed += (fill.price_cents * fill.count) / 100.0
+
+        net_equity = risk.bankroll + unrealized
+        self.peak_equity = max(self.peak_equity, net_equity)
+        if self._tick % 2 == 0:
+            self.equity_history.append({"t": self._tick, "v": round(net_equity, 2)})
+            self.equity_history = self.equity_history[-60:]
+
+        status = HourBotStatus(
+            mode=control.mode,
+            running=control.running and not control.estop,
+            estop=control.estop,
+            series=BTC_SERIES_TICKER,
+            btcSpot=round(btc_spot, 2),
+            bankroll=round(risk.bankroll, 2),
+            dayPnl=round(risk.realized_pnl_today, 2),
+            unrealized=round(unrealized, 2),
+            equityHistory=self.equity_history,
+            dailyEntriesUsed=self.daily_entries,
+            winsToday=self.wins_today,
+            lossesToday=self.losses_today,
+            sumWinDollars=round(self.sum_win_dollars, 2),
+            sumLossDollars=round(self.sum_loss_dollars, 2),
+            feesPaidToday=round(self.fees_paid_today, 2),
+            feesPaidTotal=round(self.fees_paid_total, 2),
+            cumPnlInception=round(self.cum_pnl_inception, 2),
+            pnlBySide=dict(self.pnl_by_side),
+            peakEquity=round(self.peak_equity, 2),
+            markets=[self._market_row(m, market_books.get(m.get("ticker", ""))) for m in markets[:12]],
+            positions=self._position_rows(risk, client),
+            logs=self.logs,
+            guardrails={
+                "dailyLossLimit": RISK.daily_loss_limit_dollars,
+                "maxOpenPositions": RISK.max_open_positions,
+                "maxCapitalDeployed": RISK.max_dollars_per_trade * RISK.max_open_positions,
+                "dailyEntryBudget": DAILY_ENTRY_BUDGET,
+                "openPositionsCount": len(risk.open_positions),
+                "capitalDeployed": round(capital_deployed, 2),
+            },
+        )
+        status.save()
+
+
 # ============================================================================
 # MAIN LOOP
 # ============================================================================
@@ -503,7 +702,7 @@ class PaperBroker:
         return {"order_id": f"paper-{ticker}-{int(time.time())}", "status": "filled"}
 
 
-def check_settlements(client: KalshiClient, risk: RiskManager):
+def check_settlements(client: KalshiClient, risk: RiskManager, dashboard: DashboardRecorder | None = None):
     for ticker in list(risk.open_positions.keys()):
         market = client.get_market(ticker)
         if not market:
@@ -511,12 +710,76 @@ def check_settlements(client: KalshiClient, risk: RiskManager):
         if market.get("status") == "finalized" and market.get("result") in ("yes", "no"):
             held_side = risk.open_positions[ticker].side
             won = held_side == market.get("result")
+            fill = risk.open_positions[ticker]
+            cost = (fill.price_cents * fill.count) / 100.0
+            proceeds = fill.count * 1.0 if won else 0.0
+            pnl = proceeds - cost
             risk.record_settlement(ticker, won=won)
+            if dashboard:
+                dashboard.record_settlement(ticker, held_side, pnl, won)
 
 
-def run_cycle(client: KalshiClient, broker, strategy: MarketImbalanceStrategy, risk: RiskManager):
+def _expiration_ms(expiration_time: str) -> int:
+    return int(datetime.fromisoformat(expiration_time.replace("Z", "+00:00")).timestamp() * 1000)
+
+
+def _strike_from_market(market: dict) -> int:
+    for key in ("floor_strike", "strike", "cap_strike"):
+        if market.get(key) is not None:
+            return int(market[key])
+    return 0
+
+
+def run_cycle(
+    client: KalshiClient,
+    broker,
+    strategy: MarketImbalanceStrategy,
+    risk: RiskManager,
+    *,
+    dashboard: DashboardRecorder | None = None,
+    control: HourBotControl | None = None,
+) -> None:
     markets = client.get_btc_hourly_markets()
+    market_books: dict[str, dict] = {}
+    btc_spot = 0.0
+
+    for market in markets[:12]:
+        ticker = market.get("ticker")
+        if not ticker:
+            continue
+        book = client.get_orderbook(ticker)
+        if book:
+            market_books[ticker] = book
+        strike = _strike_from_market(market)
+        if strike:
+            btc_spot = strike
+
+    if dashboard:
+        dashboard.publish(
+            risk=risk,
+            client=client,
+            markets=markets,
+            market_books=market_books,
+            control=control or HourBotControl(),
+            btc_spot=btc_spot,
+        )
+
+    if control and (control.estop or not control.running):
+        if dashboard:
+            dashboard.add_log("reject", "Scanning paused — bot halted by dashboard control")
+            dashboard.publish(
+                risk=risk,
+                client=client,
+                markets=markets,
+                market_books=market_books,
+                control=control,
+                btc_spot=btc_spot,
+            )
+        return
+
     if not markets:
+        if dashboard:
+            dashboard.add_log("scan", "No open BTC hourly markets found this cycle")
         log_main.debug("No open BTC hourly markets found this cycle.")
         return
 
@@ -532,16 +795,28 @@ def run_cycle(client: KalshiClient, broker, strategy: MarketImbalanceStrategy, r
             log_main.warning("Could not parse expiration_time for %s: %r", ticker, expiration_time)
             continue
 
+        book = market_books.get(ticker) or client.get_orderbook(ticker)
+        if book:
+            yes = book.get("yes") or []
+            no = book.get("no") or []
+            depth_yes = sum(int(lvl[1]) for lvl in yes[:DEPTH_LEVELS]) if yes else 0
+            depth_no = sum(int(lvl[1]) for lvl in no[:DEPTH_LEVELS]) if no else 0
+            if dashboard:
+                dashboard.add_log(
+                    "scan",
+                    f"scanned {ticker} — book yes:{depth_yes} no:{depth_no}, "
+                    f"{mins_left:.1f}m left",
+                )
+
         if mins_left <= 0:
             continue
         if not (MIN_TIME_LEFT_MINUTES <= mins_left <= MAX_TIME_LEFT_MINUTES):
             continue
 
-        orderbook = client.get_orderbook(ticker)
-        if not orderbook:
+        if not book:
             continue
 
-        signal = strategy.evaluate_market(ticker, orderbook)
+        signal = strategy.evaluate_market(ticker, book)
         if not signal:
             continue
 
@@ -552,25 +827,55 @@ def run_cycle(client: KalshiClient, broker, strategy: MarketImbalanceStrategy, r
         approved, reason = risk.approve_trade(signal.ticker, size, signal.limit_price)
         if not approved:
             log_main.info("Signal on %s rejected by risk manager: %s", signal.ticker, reason)
+            if dashboard:
+                dashboard.add_log("reject", f"{signal.ticker} rejected by risk manager — {reason}")
             continue
 
         log_main.info(
             "SIGNAL %s side=%s price=%d\u00a2 size=%d | %s | %.1fm to expiry",
             signal.ticker, signal.side, signal.limit_price, size, signal.reason, mins_left,
         )
+        if dashboard:
+            dashboard.add_log(
+                "signal",
+                f"SIGNAL {signal.ticker} side={signal.side} price={signal.limit_price}c | {signal.reason}",
+            )
 
         order_res = broker.place_order(signal.ticker, signal.side, size, signal.limit_price, ORDER_TYPE)
         if order_res:
             risk.record_fill(signal.ticker, signal.side, size, signal.limit_price)
+            if dashboard:
+                dashboard.record_entry(
+                    signal.ticker,
+                    signal.side,
+                    size,
+                    signal.limit_price,
+                    expires_at_ms=_expiration_ms(expiration_time),
+                    strike_btc=_strike_from_market(market),
+                )
             log_main.info(risk.status_line())
-            # One trade per cycle: keeps things simple and avoids stacking new
-            # positions faster than the cooldown allows.
             break
+
+    if dashboard:
+        dashboard.publish(
+            risk=risk,
+            client=client,
+            markets=markets,
+            market_books=market_books,
+            control=control or HourBotControl(),
+            btc_spot=btc_spot,
+        )
 
 
 def main():
     _require_credentials()
-    log_main.info("Starting Kalshi hourly-BTC bot in %s mode.", TRADING_MODE.upper())
+    control = HourBotControl.load()
+    if control.mode not in ("paper", "live"):
+        control.mode = TRADING_MODE
+    control.save()
+
+    mode = control.mode
+    log_main.info("Starting Kalshi hourly-BTC bot in %s mode.", mode.upper())
     log_main.info(
         "Risk config: max_contracts=%d max_$=%.2f daily_loss_limit=%.2f cooldown=%ds max_open=%d",
         RISK.max_contracts_per_trade, RISK.max_dollars_per_trade,
@@ -580,13 +885,16 @@ def main():
     client = KalshiClient()
     strategy = MarketImbalanceStrategy()
     risk = RiskManager()
+    dashboard = DashboardRecorder(mode=mode)
+    dashboard.add_log("scan", f"Bot started in {mode.upper()} mode")
 
-    broker = PaperBroker(client) if TRADING_MODE == "paper" else client
+    broker = PaperBroker(client) if mode == "paper" else client
 
     try:
         while True:
-            check_settlements(client, risk)
-            run_cycle(client, broker, strategy, risk)
+            control = HourBotControl.load()
+            check_settlements(client, risk, dashboard)
+            run_cycle(client, broker, strategy, risk, dashboard=dashboard, control=control)
             time.sleep(POLL_INTERVAL_SECONDS)
     except KeyboardInterrupt:
         log_main.info("Shutting down. Final status: %s", risk.status_line())
