@@ -590,9 +590,14 @@ class DashboardRecorder:
             if yes:
                 yes_bid = int(yes[0][0])
             if no:
-                yes_ask = int(100 - no[0][0])
+                implied_yes_ask = int(100 - no[0][0])
+                yes_ask = implied_yes_ask if yes_ask <= 0 else yes_ask
+                if yes_bid <= 0 and yes_ask > 0:
+                    yes_bid = max(1, yes_ask - 2)
             depth_yes = sum(int(lvl[1]) for lvl in yes[:DEPTH_LEVELS])
             depth_no = sum(int(lvl[1]) for lvl in no[:DEPTH_LEVELS])
+        if yes_ask <= 0 and yes_bid > 0:
+            yes_ask = min(99, yes_bid + 2)
 
         return {
             "ticker": ticker,
@@ -639,6 +644,7 @@ class DashboardRecorder:
         market_books: dict[str, dict],
         control: HourBotControl,
         btc_spot: float,
+        current_hour: dict | None = None,
     ) -> None:
         self._tick += 1
         unrealized = 0.0
@@ -686,6 +692,7 @@ class DashboardRecorder:
                 "openPositionsCount": len(risk.open_positions),
                 "capitalDeployed": round(capital_deployed, 2),
             },
+            currentHour=current_hour or {},
         )
         status.save()
 
@@ -726,6 +733,37 @@ def markets_in_trading_window(markets: list[dict]) -> list[tuple[float, dict]]:
             rows.append((mins_left, market))
     rows.sort(key=lambda row: row[0])
     return rows
+
+
+def current_hour_snapshot(
+    tradeable: list[tuple[float, dict]],
+    *,
+    total_markets: int,
+) -> dict:
+    if not tradeable:
+        return {
+            "active": False,
+            "message": (
+                f"No contracts in the {MIN_TIME_LEFT_MINUTES:.0f}-"
+                f"{MAX_TIME_LEFT_MINUTES:.0f} minute trading window"
+            ),
+            "contractsInWindow": 0,
+            "marketsScanned": total_markets,
+        }
+    mins_left, market = tradeable[0]
+    ticker = str(market.get("ticker") or "")
+    event = str(market.get("event_ticker") or ticker.rsplit("-", 1)[0])
+    close_time = market_close_time_str(market) or ""
+    return {
+        "active": True,
+        "eventTicker": event,
+        "sampleTicker": ticker,
+        "minutesRemaining": round(mins_left, 1),
+        "closeTime": close_time,
+        "contractsInWindow": len(tradeable),
+        "marketsScanned": total_markets,
+        "message": f"{event} · {mins_left:.1f}m to close · {len(tradeable)} strikes in window",
+    }
 
 
 class PaperBroker:
@@ -781,6 +819,7 @@ def run_cycle(
 ) -> None:
     markets = client.get_btc_hourly_markets()
     tradeable = markets_in_trading_window(markets)
+    current_hour = current_hour_snapshot(tradeable, total_markets=len(markets))
     display_markets = [m for _, m in tradeable[:12]] or markets[:12]
     market_books: dict[str, dict] = {}
     btc_spot = 0.0
@@ -805,6 +844,7 @@ def run_cycle(
             market_books=market_books,
             control=control or HourBotControl(),
             btc_spot=btc_spot,
+            current_hour=current_hour,
         )
 
     if control and (control.estop or not control.running):
@@ -817,6 +857,7 @@ def run_cycle(
                 market_books=market_books,
                 control=control,
                 btc_spot=btc_spot,
+                current_hour=current_hour,
             )
         return
 
@@ -836,6 +877,7 @@ def run_cycle(
                 market_books=market_books,
                 control=control or HourBotControl(),
                 btc_spot=btc_spot,
+                current_hour=current_hour,
             )
         return
 
@@ -911,6 +953,7 @@ def run_cycle(
             market_books=market_books,
             control=control or HourBotControl(),
             btc_spot=btc_spot,
+            current_hour=current_hour,
         )
 
 

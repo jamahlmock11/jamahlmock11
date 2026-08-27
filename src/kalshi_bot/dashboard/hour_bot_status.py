@@ -102,6 +102,7 @@ class HourBotStatus:
     positions: list[dict[str, Any]] = field(default_factory=list)
     logs: list[dict[str, Any]] = field(default_factory=list)
     guardrails: dict[str, float | int] = field(default_factory=dict)
+    currentHour: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

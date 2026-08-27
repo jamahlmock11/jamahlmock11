@@ -81,6 +81,7 @@ function emptyState() {
       openPositionsCount: 0,
       capitalDeployed: 0,
     },
+    currentHour: { active: false, message: "Waiting for bot status…" },
   };
 }
 
@@ -276,6 +277,7 @@ export default function KalshiBotDashboard() {
     positions,
     logs,
     guardrails,
+    currentHour,
   } = data;
 
   const netEquity = bankroll + unrealized;
@@ -380,6 +382,34 @@ export default function KalshiBotDashboard() {
           Emergency stop active — scanning halted.
         </div>
       )}
+
+      <div className="px-5 py-3 border-b border-[#24272C] bg-[#0D0F12]">
+        <div className="text-[10px] tracking-[0.18em] uppercase text-[#767C86] font-[IBM_Plex_Mono] mb-1">
+          Current hour
+        </div>
+        {currentHour?.active ? (
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
+            <span className="font-[Space_Grotesk] font-semibold text-[#E9E7E2]">
+              {currentHour.eventTicker}
+            </span>
+            <span className="text-[#4CC9F0] font-[IBM_Plex_Mono] text-xs">
+              {currentHour.minutesRemaining}m to close
+            </span>
+            <span className="text-[#767C86] font-[IBM_Plex_Mono] text-xs">
+              {currentHour.contractsInWindow} strikes in window · scanned {currentHour.marketsScanned}
+            </span>
+            {currentHour.sampleTicker && (
+              <span className="text-[#767C86] font-[IBM_Plex_Mono] text-xs truncate max-w-md">
+                nearest: {currentHour.sampleTicker}
+              </span>
+            )}
+          </div>
+        ) : (
+          <div className="text-sm text-[#F0A93D] font-[IBM_Plex_Mono]">
+            {currentHour?.message || "No active hourly window right now"}
+          </div>
+        )}
+      </div>
 
       <div className="flex-1 grid grid-cols-1 xl:grid-cols-3 gap-4 p-4">
         <Panel title="P&L & equity curve" eyebrow="Real-time" className="xl:col-span-2 min-h-[320px]">

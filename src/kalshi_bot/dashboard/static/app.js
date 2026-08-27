@@ -363,6 +363,26 @@
     $("feedPulse").className = `feed-pulse on ${mode.toLowerCase()}`;
   }
 
+  async function refreshHourBotBanner() {
+    const el = $("hourBotBannerStatus");
+    if (!el) return;
+    try {
+      const status = await fetch("/api/1h-bot/status").then((r) => {
+        if (!r.ok) throw new Error(`status HTTP ${r.status}`);
+        return r.json();
+      });
+      const hour = status.currentHour || {};
+      const mode = (status.mode || "paper").toUpperCase();
+      if (hour.active) {
+        el.textContent = `${mode} · ${hour.eventTicker} · ${hour.minutesRemaining}m left · ${hour.contractsInWindow} in window`;
+      } else {
+        el.textContent = `${mode} · ${hour.message || "bot running"}`;
+      }
+    } catch (_err) {
+      el.textContent = "standalone bot offline — start kalshi_btc_bot.py";
+    }
+  }
+
   async function refresh() {
     const btn = $("scanBtn");
     btn.disabled = true;
@@ -375,6 +395,7 @@
         fetch("/api/trades?limit=50").then((r) => (r.ok ? r.json() : { trades: [] })),
         fetch("/api/decisions?limit=30").then((r) => (r.ok ? r.json() : { decisions: [] })),
       ]);
+      refreshHourBotBanner();
 
       $("offlineBanner").hidden = true;
       const row15m = desk.assessment_15m || null;
@@ -388,7 +409,7 @@
       renderBotHero(
         "hero1h",
         row1h,
-        "Waiting for 1h bot scan… (KXBTCD terminal engine polls every ~10s)"
+        "Waiting for 1h bot scan… — use /1h for kalshi_btc_bot.py"
       );
       renderBotRules("rules15m", desk.rules_15m || []);
       renderBotRules("rules1h", desk.rules_1h || []);
