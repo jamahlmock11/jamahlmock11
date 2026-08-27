@@ -246,9 +246,21 @@ class KalshiClient:
         data = self._request("GET", f"/markets/{ticker}/orderbook", params={"depth": depth})
         if not data:
             return None
-        book = data.get("orderbook", {})
-        yes_levels = sorted(book.get("yes") or [], key=lambda lvl: -lvl[0])
-        no_levels = sorted(book.get("no") or [], key=lambda lvl: -lvl[0])
+        book = data.get("orderbook") or {}
+        yes_levels = book.get("yes") or []
+        no_levels = book.get("no") or []
+        if not yes_levels and not no_levels:
+            fp = data.get("orderbook_fp") or {}
+            yes_levels = [
+                [int(round(float(price) * 100)), int(float(qty))]
+                for price, qty in (fp.get("yes_dollars") or [])
+            ]
+            no_levels = [
+                [int(round(float(price) * 100)), int(float(qty))]
+                for price, qty in (fp.get("no_dollars") or [])
+            ]
+        yes_levels = sorted(yes_levels, key=lambda lvl: -lvl[0])
+        no_levels = sorted(no_levels, key=lambda lvl: -lvl[0])
         return {"yes": yes_levels, "no": no_levels}
 
     def get_market(self, ticker: str) -> Optional[dict]:
@@ -560,7 +572,7 @@ class DashboardRecorder:
 
     def _market_row(self, market: dict, orderbook: dict | None) -> dict:
         ticker = market.get("ticker", "")
-        expiration_time = market.get("expiration_time") or market.get("close_time") or ""
+        expiration_time = market_close_time_str(market) or ""
         try:
             expires_at = int(
                 datetime.fromisoformat(expiration_time.replace("Z", "+00:00")).timestamp() * 1000
@@ -691,6 +703,31 @@ def minutes_to_expiration(expiration_time_str: str) -> float:
     return (expiry - now).total_seconds() / 60.0
 
 
+def market_close_time_str(market: dict) -> str | None:
+    """Hourly contracts settle on close_time, not the series expiration_time."""
+    for field in ("close_time", "expected_expiration_time", "expiration_time"):
+        value = market.get(field)
+        if value:
+            return str(value)
+    return None
+
+
+def markets_in_trading_window(markets: list[dict]) -> list[tuple[float, dict]]:
+    rows: list[tuple[float, dict]] = []
+    for market in markets:
+        close_time = market_close_time_str(market)
+        if not close_time:
+            continue
+        try:
+            mins_left = minutes_to_expiration(close_time)
+        except ValueError:
+            continue
+        if MIN_TIME_LEFT_MINUTES <= mins_left <= MAX_TIME_LEFT_MINUTES:
+            rows.append((mins_left, market))
+    rows.sort(key=lambda row: row[0])
+    return rows
+
+
 class PaperBroker:
     """Simulates fills against the real order book without sending real orders."""
 
@@ -719,8 +756,11 @@ def check_settlements(client: KalshiClient, risk: RiskManager, dashboard: Dashbo
                 dashboard.record_settlement(ticker, held_side, pnl, won)
 
 
-def _expiration_ms(expiration_time: str) -> int:
-    return int(datetime.fromisoformat(expiration_time.replace("Z", "+00:00")).timestamp() * 1000)
+def _expiration_ms(market: dict) -> int:
+    close_time = market_close_time_str(market)
+    if not close_time:
+        return int(time.time() * 1000) + 3_600_000
+    return int(datetime.fromisoformat(close_time.replace("Z", "+00:00")).timestamp() * 1000)
 
 
 def _strike_from_market(market: dict) -> int:
@@ -740,10 +780,12 @@ def run_cycle(
     control: HourBotControl | None = None,
 ) -> None:
     markets = client.get_btc_hourly_markets()
+    tradeable = markets_in_trading_window(markets)
+    display_markets = [m for _, m in tradeable[:12]] or markets[:12]
     market_books: dict[str, dict] = {}
     btc_spot = 0.0
 
-    for market in markets[:12]:
+    for market in display_markets:
         ticker = market.get("ticker")
         if not ticker:
             continue
@@ -753,12 +795,13 @@ def run_cycle(
         strike = _strike_from_market(market)
         if strike:
             btc_spot = strike
+        time.sleep(0.15)
 
     if dashboard:
         dashboard.publish(
             risk=risk,
             client=client,
-            markets=markets,
+            markets=display_markets,
             market_books=market_books,
             control=control or HourBotControl(),
             btc_spot=btc_spot,
@@ -770,29 +813,35 @@ def run_cycle(
             dashboard.publish(
                 risk=risk,
                 client=client,
-                markets=markets,
+                markets=display_markets,
                 market_books=market_books,
                 control=control,
                 btc_spot=btc_spot,
             )
         return
 
-    if not markets:
+    if not tradeable:
         if dashboard:
-            dashboard.add_log("scan", "No open BTC hourly markets found this cycle")
-        log_main.debug("No open BTC hourly markets found this cycle.")
+            dashboard.add_log(
+                "scan",
+                f"No markets in {MIN_TIME_LEFT_MINUTES:.0f}-{MAX_TIME_LEFT_MINUTES:.0f}m window "
+                f"(checked {len(markets)} contracts)",
+            )
+        log_main.debug("No markets in trading window this cycle.")
+        if dashboard:
+            dashboard.publish(
+                risk=risk,
+                client=client,
+                markets=display_markets,
+                market_books=market_books,
+                control=control or HourBotControl(),
+                btc_spot=btc_spot,
+            )
         return
 
-    for market in markets:
+    for mins_left, market in tradeable:
         ticker = market.get("ticker")
-        expiration_time = market.get("expiration_time")
-        if not ticker or not expiration_time:
-            continue
-
-        try:
-            mins_left = minutes_to_expiration(expiration_time)
-        except ValueError:
-            log_main.warning("Could not parse expiration_time for %s: %r", ticker, expiration_time)
+        if not ticker:
             continue
 
         book = market_books.get(ticker) or client.get_orderbook(ticker)
@@ -809,8 +858,6 @@ def run_cycle(
                 )
 
         if mins_left <= 0:
-            continue
-        if not (MIN_TIME_LEFT_MINUTES <= mins_left <= MAX_TIME_LEFT_MINUTES):
             continue
 
         if not book:
@@ -850,7 +897,7 @@ def run_cycle(
                     signal.side,
                     size,
                     signal.limit_price,
-                    expires_at_ms=_expiration_ms(expiration_time),
+                    expires_at_ms=_expiration_ms(market),
                     strike_btc=_strike_from_market(market),
                 )
             log_main.info(risk.status_line())
@@ -860,7 +907,7 @@ def run_cycle(
         dashboard.publish(
             risk=risk,
             client=client,
-            markets=markets,
+            markets=display_markets,
             market_books=market_books,
             control=control or HourBotControl(),
             btc_spot=btc_spot,
