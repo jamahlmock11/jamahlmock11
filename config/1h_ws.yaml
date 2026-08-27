@@ -1,0 +1,32 @@
+# 1-hour KXBTCD WebSocket + crowd-favorite bot
+horizon: 1h
+series:
+  - KXBTCD
+
+hour_ws:
+  series_ticker: KXBTCD
+  min_entry_cents: 45
+  max_entry_cents: 78
+  crowd_min_cents: 55
+  crowd_max_cents: 86
+  min_confidence: 35
+  min_edge_cents: 4
+  fair_value_move_cents: 5
+  crowd_boost_factor: 0.30
+  min_price_history: 20
+  max_position_size: 100
+  max_daily_loss: 50
+  order_quantity: 1
+  reconnect_delay_sec: 5
+  market_refresh_sec: 300
+  min_seconds_remaining: 60
+  max_entry_seconds_remaining: 3600
+
+execution:
+  dry_run: true
+  orders_enabled: true
+  poll_interval_sec: 1.0
+
+risk:
+  max_daily_loss: 50
+  max_position_size: 100
