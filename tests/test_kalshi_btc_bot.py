@@ -134,3 +134,40 @@ def test_settlement_journal_records_loss_outcome():
     assert entry["won"] is False
     assert entry["outcome"] == "LOSS"
     assert entry["detail"]["marketResult"] == "no"
+
+
+def test_restore_persisted_state_reloads_journal_and_filters_scans(tmp_path, monkeypatch):
+    status_path = tmp_path / "1h_bot_status.json"
+    status_path.write_text(
+        """
+        {
+          "journal": [{"id": "j1", "kind": "fill", "text": "filled"}],
+          "logs": [
+            {"id": "l1", "kind": "fill", "text": "filled"},
+            {"id": "l2", "kind": "scan", "text": "noise"}
+          ],
+          "equityHistory": [{"t": 42, "v": 21.5}],
+          "winsToday": 2,
+          "lossesToday": 1,
+          "dayPnl": 1.25,
+          "bankroll": 21.25,
+          "peakEquity": 22.0,
+          "positions": []
+        }
+        """
+    )
+    monkeypatch.setattr(bot, "_status_file_path", lambda: status_path)
+
+    risk = bot.RiskManager()
+    dash = DashboardRecorder(mode="paper")
+    bot.restore_persisted_state(risk, dash, client=object(), mode="paper")
+
+    assert len(dash.journal) == 1
+    assert dash.journal[0]["kind"] == "fill"
+    assert [row["kind"] for row in dash.logs] == ["fill"]
+    assert dash.equity_history == [{"t": 42, "v": 21.5}]
+    assert dash.wins_today == 2
+    assert dash.losses_today == 1
+    assert risk.realized_pnl_today == 1.25
+    assert risk.bankroll == 21.25
+    assert dash.peak_equity == 22.0

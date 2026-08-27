@@ -20,7 +20,7 @@ import {
 import { fetchHourBotStatus, postHourBotControl } from "./api";
 
 const FONT_LINK_ID = "kbd-fonts";
-const START_BANKROLL = 100;
+const DEFAULT_START_BANKROLL = 20;
 const DEFAULT_POLL_MS = 500;
 
 function useInjectFonts() {
@@ -84,7 +84,8 @@ function emptyState() {
     estop: false,
     series: "KXBTC",
     btcSpot: 0,
-    bankroll: START_BANKROLL,
+    bankroll: DEFAULT_START_BANKROLL,
+    startingBankroll: DEFAULT_START_BANKROLL,
     dayPnl: 0,
     unrealized: 0,
     equityHistory: [],
@@ -97,7 +98,7 @@ function emptyState() {
     feesPaidTotal: 0,
     cumPnlInception: 0,
     pnlBySide: { yes: 0, no: 0 },
-    peakEquity: START_BANKROLL,
+    peakEquity: DEFAULT_START_BANKROLL,
     markets: [],
     positions: [],
     logs: [],
@@ -466,6 +467,7 @@ export default function KalshiBotDashboard() {
     series,
     btcSpot,
     bankroll,
+    startingBankroll,
     dayPnl,
     unrealized,
     equityHistory,
@@ -491,6 +493,7 @@ export default function KalshiBotDashboard() {
 
   const dataAgeMs = updatedAt ? Math.max(0, Date.now() - new Date(updatedAt).getTime()) : null;
 
+  const startBankroll = Number(startingBankroll ?? DEFAULT_START_BANKROLL);
   const netEquity = bankroll + unrealized;
   const equityFmt = (v) => `$${Number(v || 0).toFixed(2)}`;
   const currentDrawdown = peakEquity - netEquity;
@@ -642,7 +645,7 @@ export default function KalshiBotDashboard() {
               value={`${unrealized >= 0 ? "+" : ""}${equityFmt(unrealized)}`}
               tone={unrealized >= 0 ? "pos" : "neg"}
             />
-            <StatBlock label="Net equity" value={equityFmt(netEquity)} sub={`start $${START_BANKROLL.toFixed(2)}`} />
+            <StatBlock label="Net equity" value={equityFmt(netEquity)} sub={`start $${startBankroll.toFixed(2)}`} />
           </div>
 
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 px-4 pt-4 mt-4 border-t border-[#1A1D22]">

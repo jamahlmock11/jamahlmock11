@@ -105,6 +105,7 @@ class HourBotStatus:
     guardrails: dict[str, float | int] = field(default_factory=dict)
     currentHour: dict[str, Any] = field(default_factory=dict)
     pollIntervalMs: int = 500
+    startingBankroll: float = 100.0
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

@@ -35,6 +35,7 @@ import uuid
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse
 
@@ -615,7 +616,7 @@ class DashboardRecorder:
             "outcome": outcome,
             "detail": detail or {},
         }
-        if not journal_only:
+        if not journal_only and kind != "scan":
             self.logs.insert(0, entry)
             self.logs = self.logs[:100]
         if kind != "scan" or detail:
@@ -908,6 +909,7 @@ class DashboardRecorder:
             },
             currentHour=current_hour or {},
             pollIntervalMs=HOUR_BOT_POLL_MS,
+            startingBankroll=round(RISK.starting_bankroll, 2),
         )
         status.save()
 
@@ -1186,13 +1188,12 @@ def run_cycle(
         return
 
     if not tradeable:
-        if dashboard:
-            dashboard.add_log(
-                "scan",
-                f"No markets in {MIN_TIME_LEFT_MINUTES:.0f}-{MAX_TIME_LEFT_MINUTES:.0f}m window "
-                f"(checked {len(markets)} contracts)",
-            )
-        log_main.debug("No markets in trading window this cycle.")
+        log_main.debug(
+            "No markets in %.0f-%.0fm window (checked %d contracts)",
+            MIN_TIME_LEFT_MINUTES,
+            MAX_TIME_LEFT_MINUTES,
+            len(markets),
+        )
         if dashboard:
             dashboard.publish(
                 risk=risk,
@@ -1216,12 +1217,10 @@ def run_cycle(
             no = book.get("no") or []
             depth_yes = sum(int(lvl[1]) for lvl in yes[:DEPTH_LEVELS]) if yes else 0
             depth_no = sum(int(lvl[1]) for lvl in no[:DEPTH_LEVELS]) if no else 0
-            if dashboard:
-                dashboard.add_log(
-                    "scan",
-                    f"scanned {ticker} — book yes:{depth_yes} no:{depth_no}, "
-                    f"{mins_left:.1f}m left",
-                )
+            log_main.debug(
+                "scanned %s — book yes:%s no:%s, %.1fm left",
+                ticker, depth_yes, depth_no, mins_left,
+            )
 
         if mins_left <= 0:
             continue
@@ -1296,6 +1295,128 @@ def run_cycle(
         )
 
 
+def _status_file_path() -> Path:
+    return Path(os.getenv("HOUR_BOT_STATUS_PATH", "data/1h_bot_status.json"))
+
+
+def _restore_positions_from_status(
+    raw: dict,
+    risk: RiskManager,
+    dashboard: DashboardRecorder,
+) -> None:
+    for pos in raw.get("positions") or []:
+        ticker = str(pos.get("ticker") or "")
+        if not ticker:
+            continue
+        entry_ms = int(pos.get("entryTime") or int(time.time() * 1000))
+        risk.open_positions[ticker] = Fill(
+            ticker=ticker,
+            side=str(pos.get("side") or "yes"),
+            count=int(pos.get("count") or 0),
+            price_cents=int(pos.get("entryPrice") or 0),
+            timestamp=entry_ms / 1000.0,
+        )
+        dashboard.position_meta[ticker] = {
+            "expiresAt": int(pos.get("expiresAt") or entry_ms + 3_600_000),
+            "strikeBtc": int(pos.get("strikeBtc") or 0),
+            "entryTime": entry_ms,
+            "signalReason": str(pos.get("signalReason") or ""),
+            "entryQuote": pos.get("entryQuote") or {},
+        }
+
+
+def _restore_positions_from_api(
+    client: KalshiClient,
+    risk: RiskManager,
+    dashboard: DashboardRecorder,
+) -> None:
+    for row in client.get_positions():
+        ticker = str(row.get("ticker") or "")
+        if not ticker:
+            continue
+        net = int(row.get("position") or 0)
+        if net == 0:
+            continue
+        side = "yes" if net > 0 else "no"
+        count = abs(net)
+        avg_price = int(float(row.get("average_price") or row.get("avg_price") or 0))
+        if avg_price <= 0:
+            market = client.get_market(ticker)
+            if market:
+                avg_price = int(market.get("yes_bid") or market.get("no_bid") or 50)
+        risk.open_positions[ticker] = Fill(
+            ticker=ticker,
+            side=side,
+            count=count,
+            price_cents=avg_price,
+            timestamp=time.time(),
+        )
+        if ticker not in dashboard.position_meta:
+            market = client.get_market(ticker) or {}
+            dashboard.position_meta[ticker] = {
+                "expiresAt": _expiration_ms(market) if market else int(time.time() * 1000) + 3_600_000,
+                "strikeBtc": _strike_from_market(market),
+                "entryTime": int(time.time() * 1000),
+                "signalReason": "restored from Kalshi portfolio",
+                "entryQuote": {},
+            }
+
+
+def restore_persisted_state(
+    risk: RiskManager,
+    dashboard: DashboardRecorder,
+    client: KalshiClient,
+    *,
+    mode: str,
+) -> None:
+    """Reload journal, P&L stats, and positions so restarts don't wipe the dashboard."""
+    path = _status_file_path()
+    raw: dict = {}
+    if path.exists():
+        try:
+            raw = json.loads(path.read_text())
+        except Exception as exc:
+            log_main.warning("Could not load prior dashboard state from %s: %s", path, exc)
+
+    if raw:
+        dashboard.journal = list(raw.get("journal") or [])[:300]
+        dashboard.logs = [row for row in (raw.get("logs") or []) if row.get("kind") != "scan"][:100]
+        dashboard.equity_history = list(raw.get("equityHistory") or [])[-120:]
+        dashboard.wins_today = int(raw.get("winsToday") or 0)
+        dashboard.losses_today = int(raw.get("lossesToday") or 0)
+        dashboard.sum_win_dollars = float(raw.get("sumWinDollars") or 0)
+        dashboard.sum_loss_dollars = float(raw.get("sumLossDollars") or 0)
+        dashboard.fees_paid_today = float(raw.get("feesPaidToday") or 0)
+        dashboard.fees_paid_total = float(raw.get("feesPaidTotal") or 0)
+        dashboard.cum_pnl_inception = float(raw.get("cumPnlInception") or 0)
+        dashboard.pnl_by_side = dict(raw.get("pnlBySide") or {"yes": 0.0, "no": 0.0})
+        dashboard.daily_entries = int(raw.get("dailyEntriesUsed") or 0)
+        dashboard.peak_equity = float(raw.get("peakEquity") or risk.starting_bankroll)
+        if dashboard.equity_history:
+            dashboard._tick = max(int(point.get("t", 0)) for point in dashboard.equity_history)
+        risk.realized_pnl_today = float(raw.get("dayPnl") or 0)
+
+    if mode == "live":
+        balance = client.get_balance()
+        if balance is not None:
+            risk.bankroll = balance
+        _restore_positions_from_api(client, risk, dashboard)
+        if not risk.open_positions and raw:
+            _restore_positions_from_status(raw, risk, dashboard)
+    elif raw:
+        risk.bankroll = float(raw.get("bankroll") or risk.starting_bankroll)
+        _restore_positions_from_status(raw, risk, dashboard)
+
+    if raw:
+        log_main.info(
+            "Restored dashboard state — journal=%d logs=%d positions=%d bankroll=$%.2f",
+            len(dashboard.journal),
+            len(dashboard.logs),
+            len(risk.open_positions),
+            risk.bankroll,
+        )
+
+
 def main():
     _require_credentials()
     control = HourBotControl.load()
@@ -1316,6 +1437,7 @@ def main():
     strategy = MarketImbalanceStrategy()
     risk = RiskManager()
     dashboard = DashboardRecorder(mode=mode)
+    restore_persisted_state(risk, dashboard, client, mode=mode)
     dashboard.add_log("scan", f"Bot started in {mode.upper()} mode")
 
     broker = PaperBroker(client) if mode == "paper" else client
