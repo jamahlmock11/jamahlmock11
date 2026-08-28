@@ -307,21 +307,32 @@ class KalshiClient:
 
     def place_order(self, ticker: str, side: str, count: int, price_cents: int,
                      order_type: str = "limit", action: str = "buy") -> Optional[dict]:
+        """Submit an order via Kalshi's V2 events endpoint (V1 /portfolio/orders is deprecated)."""
+        action_l = (action or "buy").lower()
+        side_l = (side or "").lower()
+        if side_l == "yes":
+            book_side = "bid" if action_l == "buy" else "ask"
+            price = price_cents / 100.0
+        elif side_l == "no":
+            book_side = "ask" if action_l == "buy" else "bid"
+            price = (100 - int(price_cents)) / 100.0
+        else:
+            log_api.error("Unsupported order side: %s", side)
+            return None
+
+        time_in_force = "good_till_canceled" if order_type == "limit" else "immediate_or_cancel"
         body = {
             "ticker": ticker,
             "client_order_id": str(uuid.uuid4()),
-            "action": action,
-            "side": side,
-            "type": order_type,
-            "count": count,
+            "side": book_side,
+            "count": f"{int(count):.2f}",
+            "price": f"{price:.4f}",
+            "time_in_force": time_in_force,
+            "self_trade_prevention_type": "taker_at_cross",
+            "exchange_index": -1,
         }
-        if order_type == "limit":
-            if side == "yes":
-                body["yes_price"] = price_cents
-            else:
-                body["no_price"] = price_cents
 
-        data = self._request("POST", "/portfolio/orders", json_body=body)
+        data = self._request("POST", "/portfolio/events/orders", json_body=body)
         if not data:
             return None
         return data.get("order", data)
@@ -1439,6 +1450,17 @@ def run_cycle(
                 )
             log_main.info(risk.status_line())
             break
+        log_main.warning("Order submission failed for %s — no fill recorded", signal.ticker)
+        if dashboard:
+            dashboard.add_log(
+                "reject",
+                f"{signal.ticker} order rejected by Kalshi API",
+                ticker=signal.ticker,
+                side=signal.side,
+                price=signal.limit_price,
+                count=size,
+                detail={"reason": "order_api_failed"},
+            )
 
     if dashboard:
         dashboard.publish(

@@ -176,6 +176,40 @@ def test_select_dashboard_markets_skips_threshold_tickers():
     assert tickers[0] == "KXBTC-TEST-B87750"
 
 
+def test_place_order_uses_v2_yes_body(monkeypatch):
+    captured = {}
+
+    def fake_request(self, method, path, **kwargs):
+        captured["method"] = method
+        captured["path"] = path
+        captured["body"] = kwargs.get("json_body")
+        return {"order_id": "abc"}
+
+    monkeypatch.setattr(bot.KalshiClient, "_request", fake_request)
+    client = bot.KalshiClient.__new__(bot.KalshiClient)
+    client.place_order("KXBTC-TEST-B79000", "yes", 3, 63, "limit")
+
+    assert captured["path"] == "/portfolio/events/orders"
+    assert captured["body"]["side"] == "bid"
+    assert captured["body"]["price"] == "0.6300"
+    assert captured["body"]["count"] == "3.00"
+
+
+def test_place_order_uses_v2_no_body(monkeypatch):
+    captured = {}
+
+    def fake_request(self, method, path, **kwargs):
+        captured["body"] = kwargs.get("json_body")
+        return {"order_id": "abc"}
+
+    monkeypatch.setattr(bot.KalshiClient, "_request", fake_request)
+    client = bot.KalshiClient.__new__(bot.KalshiClient)
+    client.place_order("KXBTC-TEST-B79000", "no", 2, 62, "limit")
+
+    assert captured["body"]["side"] == "ask"
+    assert captured["body"]["price"] == "0.3800"
+
+
 def test_restore_persisted_state_reloads_journal_and_filters_scans(tmp_path, monkeypatch):
     status_path = tmp_path / "1h_bot_status.json"
     status_path.write_text(
