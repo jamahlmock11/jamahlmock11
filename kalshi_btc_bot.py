@@ -122,6 +122,7 @@ REQUIRE_MOMENTUM = _env_bool("REQUIRE_MOMENTUM", True)
 ALLOW_ONE_SIDED_BOOKS = _env_bool("ALLOW_ONE_SIDED_BOOKS", False)
 MIN_SIDE_DEPTH = int(os.getenv("MIN_SIDE_DEPTH", "150"))
 MAX_MARKETS_PER_SCAN = int(os.getenv("MAX_MARKETS_PER_SCAN", "40"))
+SCAN_ATM_RADIUS_USD = float(os.getenv("SCAN_ATM_RADIUS_USD", "2500"))
 
 # Execution / polling
 POLL_INTERVAL_SECONDS = float(os.getenv("POLL_INTERVAL_SECONDS", "15"))
@@ -1112,20 +1113,28 @@ def sort_tradeable_for_scan(
     *,
     btc_spot: float,
 ) -> list[tuple[float, dict]]:
-    """Scan the contested OTM band first, then fall back to strikes near spot."""
+    """Prioritize near-ATM strikes, then the contested OTM band, then everything else."""
     if btc_spot <= 0:
         return tradeable
 
     band_center = btc_spot - 10_000
     band_lo = btc_spot - 12_000
     band_hi = btc_spot - 8_000
+    atm_radius = SCAN_ATM_RADIUS_USD
 
     def sort_key(row: tuple[float, dict]) -> tuple[int, float, float]:
         mins_left, market = row
         strike = _strike_from_market(market)
-        in_band = band_lo <= strike <= band_hi
-        zone = 0 if in_band else 1
-        anchor = band_center if in_band else btc_spot
+        dist_spot = abs(strike - btc_spot)
+        if dist_spot <= atm_radius:
+            zone = 0
+            anchor = btc_spot
+        elif band_lo <= strike <= band_hi:
+            zone = 1
+            anchor = band_center
+        else:
+            zone = 2
+            anchor = btc_spot
         return (zone, abs(strike - anchor), mins_left)
 
     return sorted(tradeable, key=sort_key)
@@ -1146,7 +1155,7 @@ def run_cycle(
     btc_spot = _btc_spot_from_markets(markets, event_prefix=event_prefix)
     scan_queue = sort_tradeable_for_scan(tradeable, btc_spot=btc_spot)[:MAX_MARKETS_PER_SCAN]
     current_hour = current_hour_snapshot(tradeable, total_markets=len(markets))
-    display_markets = [m for _, m in tradeable[:12]] or markets[:12]
+    display_markets = [m for _, m in scan_queue[:12]] or [m for _, m in tradeable[:12]] or markets[:12]
     market_books: dict[str, dict] = {}
 
     for market in display_markets:

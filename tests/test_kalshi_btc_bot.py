@@ -136,6 +136,19 @@ def test_settlement_journal_records_loss_outcome():
     assert entry["detail"]["marketResult"] == "no"
 
 
+def test_sort_tradeable_prioritizes_near_atm_before_otm_band():
+    spot = 87_800
+    tradeable = [
+        (30.0, {"ticker": "KXBTC-TEST-B75800"}),   # OTM band
+        (30.0, {"ticker": "KXBTC-TEST-B87750"}),   # near ATM
+        (30.0, {"ticker": "KXBTC-TEST-B95000"}),   # far from spot
+    ]
+    ordered = bot.sort_tradeable_for_scan(tradeable, btc_spot=spot)
+    assert ordered[0][1]["ticker"] == "KXBTC-TEST-B87750"
+    assert ordered[1][1]["ticker"] == "KXBTC-TEST-B75800"
+    assert ordered[2][1]["ticker"] == "KXBTC-TEST-B95000"
+
+
 def test_restore_persisted_state_reloads_journal_and_filters_scans(tmp_path, monkeypatch):
     status_path = tmp_path / "1h_bot_status.json"
     status_path.write_text(
