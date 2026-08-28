@@ -145,6 +145,7 @@ HOUR_BOT_POLL_MS = int(os.getenv("HOUR_BOT_POLL_MS", "500"))
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 LOG_FILE = os.getenv("LOG_FILE", "kalshi_bot.log")
 DAILY_ENTRY_BUDGET = int(os.getenv("DAILY_ENTRY_BUDGET", "20"))
+HOUR_MAX_CONTRACTS = int(os.getenv("HOUR_MAX_CONTRACTS", "2"))
 
 
 @dataclass
@@ -590,6 +591,7 @@ class Fill:
     count: int
     price_cents: int
     timestamp: float
+    event_ticker: str = ""
 
 
 @dataclass
@@ -600,9 +602,40 @@ class RiskManager:
     open_positions: dict = field(default_factory=dict)  # ticker -> Fill
     last_trade_time: float = 0.0
     trade_day: str = field(default_factory=lambda: datetime.now(timezone.utc).strftime("%Y-%m-%d"))
+    current_event: str = ""
+    hour_contracts_used: int = 0
 
     def __post_init__(self):
         self.bankroll = self.starting_bankroll
+
+    def contracts_open(self) -> int:
+        return sum(pos.count for pos in self.open_positions.values())
+
+    def contracts_open_this_event(self) -> int:
+        if not self.current_event:
+            return self.contracts_open()
+        return sum(
+            pos.count
+            for pos in self.open_positions.values()
+            if pos.event_ticker == self.current_event
+        )
+
+    def sync_event(self, event_ticker: str) -> None:
+        event_ticker = str(event_ticker or "").strip()
+        if not event_ticker:
+            return
+        if event_ticker != self.current_event:
+            log_risk.info(
+                "New hourly event %s — resetting contract budget (%d/%d used on prior event).",
+                event_ticker,
+                self.hour_contracts_used,
+                HOUR_MAX_CONTRACTS,
+            )
+            self.current_event = event_ticker
+            self.hour_contracts_used = 0
+
+    def hour_contracts_remaining(self) -> int:
+        return max(0, HOUR_MAX_CONTRACTS - self.hour_contracts_used)
 
     def _roll_day_if_needed(self):
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -633,6 +666,15 @@ class RiskManager:
             return False, f"Cooldown active, {RISK.cooldown_seconds_after_trade - elapsed:.0f}s remaining."
         if count > RISK.max_contracts_per_trade:
             return False, f"Requested count {count} exceeds max_contracts_per_trade."
+        if self.hour_contracts_used + count > HOUR_MAX_CONTRACTS:
+            return False, (
+                f"Hourly contract budget reached ({self.hour_contracts_used}/{HOUR_MAX_CONTRACTS} "
+                f"contracts used this event)."
+            )
+        if self.contracts_open_this_event() + count > HOUR_MAX_CONTRACTS:
+            return False, (
+                f"Would exceed {HOUR_MAX_CONTRACTS} contracts open for this hourly event."
+            )
         if cost > RISK.max_dollars_per_trade:
             return False, f"Trade cost ${cost:.2f} exceeds max_dollars_per_trade ${RISK.max_dollars_per_trade:.2f}."
         if cost > self.bankroll:
@@ -644,13 +686,31 @@ class RiskManager:
         max_by_contracts = RISK.max_contracts_per_trade
         max_by_dollars = int((RISK.max_dollars_per_trade * 100) // max(price_cents, 1))
         max_by_bankroll = int((self.bankroll * 100) // max(price_cents, 1))
-        return max(0, min(requested_count, max_by_contracts, max_by_dollars, max_by_bankroll))
+        max_by_hour = self.hour_contracts_remaining()
+        max_by_open = max(0, HOUR_MAX_CONTRACTS - self.contracts_open_this_event())
+        return max(
+            0,
+            min(
+                requested_count,
+                max_by_contracts,
+                max_by_dollars,
+                max_by_bankroll,
+                max_by_hour,
+                max_by_open,
+            ),
+        )
 
     def record_fill(self, ticker: str, side: str, count: int, price_cents: int):
         cost = (count * price_cents) / 100.0
         self.bankroll -= cost
+        self.hour_contracts_used += count
         self.open_positions[ticker] = Fill(
-            ticker=ticker, side=side, count=count, price_cents=price_cents, timestamp=time.time()
+            ticker=ticker,
+            side=side,
+            count=count,
+            price_cents=price_cents,
+            timestamp=time.time(),
+            event_ticker=self.current_event,
         )
         self.last_trade_time = time.time()
         log_risk.info(
@@ -1135,6 +1195,9 @@ class DashboardRecorder:
                     "minHoldSeconds": STOP_MIN_HOLD_SECONDS,
                     "thesisReversal": STOP_THESIS_REVERSAL,
                 },
+                "hourMaxContracts": HOUR_MAX_CONTRACTS,
+                "hourContractsUsed": risk.hour_contracts_used,
+                "hourContractsOpen": risk.contracts_open_this_event(),
             },
             currentHour=current_hour or {},
             pollIntervalMs=HOUR_BOT_POLL_MS,
@@ -1563,6 +1626,7 @@ def run_cycle(
     btc_spot = _btc_spot_from_markets(markets, event_prefix=event_prefix)
     scan_queue = sort_tradeable_for_scan(tradeable, btc_spot=btc_spot)[:MAX_MARKETS_PER_SCAN]
     current_hour = current_hour_snapshot(tradeable, total_markets=len(markets))
+    risk.sync_event(str(current_hour.get("eventTicker") or ""))
     trade_candidates: set[str] = set()
     display_markets = select_dashboard_markets(
         tradeable,

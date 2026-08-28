@@ -810,6 +810,19 @@ export default function KalshiBotDashboard() {
               format={(v) => v}
             />
             <GuardrailBar
+              label="Hourly contract budget"
+              used={guardrails?.hourContractsUsed || 0}
+              total={guardrails?.hourMaxContracts || 2}
+              format={(v) => `${v} ct`}
+              dangerAt={1.0}
+            />
+            <GuardrailBar
+              label="Contracts open now"
+              used={guardrails?.hourContractsOpen || 0}
+              total={guardrails?.hourMaxContracts || 2}
+              format={(v) => `${v} ct`}
+            />
+            <GuardrailBar
               label="Daily new-entry budget"
               used={dailyEntriesUsed || 0}
               total={guardrails?.dailyEntryBudget || 20}

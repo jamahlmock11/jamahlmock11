@@ -212,6 +212,31 @@ def test_place_order_uses_v2_no_body(monkeypatch):
     assert captured["body"]["price"] == "0.3800"
 
 
+def test_hourly_contract_budget_limits_entries(monkeypatch):
+    monkeypatch.setattr(bot, "HOUR_MAX_CONTRACTS", 2)
+    monkeypatch.setattr(bot.RISK, "cooldown_seconds_after_trade", 0)
+    risk = bot.RiskManager()
+    risk.bankroll = 100
+    risk.sync_event("KXBTC-TEST-HOUR")
+    risk.record_fill("A", "yes", 2, 50)
+    ok, reason = risk.approve_trade("B", 1, 50)
+    assert not ok
+    assert "Hourly contract budget" in reason
+
+
+def test_hour_contract_budget_resets_on_new_event(monkeypatch):
+    monkeypatch.setattr(bot, "HOUR_MAX_CONTRACTS", 2)
+    monkeypatch.setattr(bot.RISK, "cooldown_seconds_after_trade", 0)
+    risk = bot.RiskManager()
+    risk.bankroll = 100
+    risk.sync_event("KXBTC-HOUR-1")
+    risk.record_fill("A", "yes", 2, 50)
+    risk.sync_event("KXBTC-HOUR-2")
+    assert risk.hour_contracts_used == 0
+    ok, _ = risk.approve_trade("B", 2, 50)
+    assert ok
+
+
 def test_stop_loss_triggers_on_premium_loss(monkeypatch):
     monkeypatch.setattr(bot, "STOP_LOSS_ENABLED", True)
     monkeypatch.setattr(bot, "STOP_MIN_HOLD_SECONDS", 0)
