@@ -49,6 +49,7 @@ const LOG_STYLES = {
   settle: { dot: "bg-[#33D693]", text: "text-[#B7F3DB]" },
   settle_win: { dot: "bg-[#33D693]", text: "text-[#33D693]" },
   settle_loss: { dot: "bg-[#F2495C]", text: "text-[#F2495C]" },
+  exit: { dot: "bg-[#F0A93D]", text: "text-[#F0A93D]" },
 };
 
 function rowStyle(row) {
@@ -369,7 +370,7 @@ function DetailJournal({ journal, logs, winsToday, lossesToday }) {
     if (filter === "loss") return row.kind === "settle" && (row.won ?? row.detail?.won) === false;
     return row.kind === filter;
   });
-  const filters = ["all", "signal", "fill", "settle", "win", "loss", "reject", "scan"];
+  const filters = ["all", "signal", "fill", "exit", "settle", "win", "loss", "reject", "scan"];
 
   return (
     <div className="flex flex-col h-full min-h-[320px]">
@@ -821,6 +822,20 @@ export default function KalshiBotDashboard() {
               format={(v) => `$${Number(v).toFixed(2)}`}
               dangerAt={0.7}
             />
+            {guardrails?.stopLoss?.enabled && (
+              <div className="mt-1 pt-3 border-t border-[#24272C] text-[11px] text-[#767C86] leading-relaxed space-y-1">
+                <div className="text-[#B7BAC0] font-medium">Stop-loss profile</div>
+                <div>
+                  Premium stop: -{guardrails.stopLoss.cents}¢ or -{Math.round((guardrails.stopLoss.pct || 0) * 100)}%
+                </div>
+                <div>
+                  Take profit: +{guardrails.stopLoss.takeProfitCents}¢ · min hold {guardrails.stopLoss.minHoldSeconds}s
+                </div>
+                <div>
+                  Thesis reversal: {guardrails.stopLoss.thesisReversal ? "on" : "off"}
+                </div>
+              </div>
+            )}
             <div className="mt-1 pt-3 border-t border-[#24272C] text-[11px] text-[#767C86] leading-relaxed">
               Guardrails are enforced by the bot's risk manager. BTC spot: ${Number(btcSpot || 0).toLocaleString()}
             </div>
@@ -923,6 +938,13 @@ export default function KalshiBotDashboard() {
                     <div>
                       <div className="text-[#767C86]">Time held</div>
                       <div className="text-[#E9E7E2] mt-0.5">{fmtElapsed(timeHeldMs)}</div>
+                    </div>
+                    <div>
+                      <div className="text-[#767C86]">Stop / target</div>
+                      <div className="text-[#E9E7E2] mt-0.5">
+                        {p.stopLossBidFloor ? `≤${p.stopLossBidFloor}¢ stop` : "—"}
+                        {p.takeProfitBid ? ` · ≥${p.takeProfitBid}¢ TP` : ""}
+                      </div>
                     </div>
                     <div>
                       <div className="text-[#767C86]">Mark updated</div>

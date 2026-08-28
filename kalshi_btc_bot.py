@@ -127,6 +127,14 @@ SCAN_ATM_RADIUS_USD = float(os.getenv("SCAN_ATM_RADIUS_USD", "2500"))
 DASHBOARD_MARKETS_LIMIT = int(os.getenv("DASHBOARD_MARKETS_LIMIT", "24"))
 EXTREME_QUOTE_CENTS = int(os.getenv("EXTREME_QUOTE_CENTS", "2"))
 
+# Position exit / stop-loss (hourly imbalance bot)
+STOP_LOSS_ENABLED = _env_bool("STOP_LOSS_ENABLED", True)
+STOP_LOSS_CENTS = int(os.getenv("STOP_LOSS_CENTS", "8"))
+STOP_LOSS_PCT = float(os.getenv("STOP_LOSS_PCT", "0.45"))
+STOP_MIN_HOLD_SECONDS = float(os.getenv("STOP_MIN_HOLD_SECONDS", "45"))
+STOP_THESIS_REVERSAL = _env_bool("STOP_THESIS_REVERSAL", True)
+STOP_TAKE_PROFIT_CENTS = int(os.getenv("STOP_TAKE_PROFIT_CENTS", "12"))
+
 # Execution / polling
 POLL_INTERVAL_SECONDS = float(os.getenv("POLL_INTERVAL_SECONDS", "15"))
 QUOTE_REFRESH_SECONDS = float(os.getenv("QUOTE_REFRESH_SECONDS", "2"))
@@ -356,6 +364,16 @@ class Signal:
     reason: str
 
 
+@dataclass
+class ExitSignal:
+    ticker: str
+    side: str
+    trigger: str
+    reason: str
+    exit_bid_cents: int
+    limit_price_cents: int
+
+
 class MarketImbalanceStrategy:
     """
     Combines order-book imbalance (heavy resting size on one side while price
@@ -478,6 +496,86 @@ class MarketImbalanceStrategy:
         return None
 
 
+def mark_bid_cents(side: str, quote: dict) -> int:
+    if side == "yes":
+        return int(quote.get("yesBid") or 0)
+    return int(quote.get("noBid") or 0)
+
+
+def premium_loss_metrics(entry_cents: int, exit_bid_cents: int) -> tuple[int, float]:
+    loss_cents = max(0, entry_cents - exit_bid_cents)
+    loss_pct = (loss_cents / entry_cents) if entry_cents > 0 else 0.0
+    return loss_cents, loss_pct
+
+
+def stop_loss_bid_floor(entry_cents: int) -> int:
+    """Bid level where cent or percent stop would trigger (whichever is tighter)."""
+    by_cents = entry_cents - STOP_LOSS_CENTS
+    by_pct = int(entry_cents * (1.0 - STOP_LOSS_PCT))
+    return max(1, min(by_cents, by_pct))
+
+
+def evaluate_position_exit(
+    fill: "Fill",
+    orderbook: dict,
+    strategy: MarketImbalanceStrategy,
+    *,
+    held_seconds: float,
+) -> ExitSignal | None:
+    """Exit rules aligned with the imbalance entry thesis."""
+    if not STOP_LOSS_ENABLED:
+        return None
+
+    quote = DashboardRecorder._quote_from_book(orderbook)
+    exit_bid = mark_bid_cents(fill.side, quote)
+    if exit_bid <= 0:
+        return None
+
+    entry = fill.price_cents
+    loss_cents, loss_pct = premium_loss_metrics(entry, exit_bid)
+    gain_cents = max(0, exit_bid - entry)
+    within_min_hold = held_seconds + 1e-9 < STOP_MIN_HOLD_SECONDS
+
+    if STOP_TAKE_PROFIT_CENTS > 0 and gain_cents >= STOP_TAKE_PROFIT_CENTS and not within_min_hold:
+        return ExitSignal(
+            ticker=fill.ticker,
+            side=fill.side,
+            trigger="take_profit",
+            reason=f"take profit +{gain_cents}¢ (target +{STOP_TAKE_PROFIT_CENTS}¢; bid {exit_bid}¢)",
+            exit_bid_cents=exit_bid,
+            limit_price_cents=max(1, exit_bid - 1),
+        )
+
+    if not within_min_hold and (
+        loss_cents >= STOP_LOSS_CENTS or loss_pct + 1e-12 >= STOP_LOSS_PCT
+    ):
+        return ExitSignal(
+            ticker=fill.ticker,
+            side=fill.side,
+            trigger="stop_loss",
+            reason=(
+                f"stop loss -{loss_cents}¢ ({loss_pct:.0%} premium; "
+                f"limits -{STOP_LOSS_CENTS}¢ / -{STOP_LOSS_PCT:.0%})"
+            ),
+            exit_bid_cents=exit_bid,
+            limit_price_cents=max(1, exit_bid - 1),
+        )
+
+    if STOP_THESIS_REVERSAL and not within_min_hold:
+        opposite = strategy.evaluate_market(fill.ticker, orderbook)
+        if opposite and opposite.side != fill.side:
+            return ExitSignal(
+                ticker=fill.ticker,
+                side=fill.side,
+                trigger="thesis_reversal",
+                reason=f"thesis reversal — book now favors {opposite.side}: {opposite.reason}",
+                exit_bid_cents=exit_bid,
+                limit_price_cents=max(1, exit_bid - 1),
+            )
+
+    return None
+
+
 # ============================================================================
 # RISK MANAGEMENT
 # ============================================================================
@@ -559,6 +657,22 @@ class RiskManager:
             "FILL %s %s x%d @ %d\u00a2 | cost=$%.2f | bankroll=$%.2f",
             ticker, side, count, price_cents, cost, self.bankroll,
         )
+
+    def record_exit(self, ticker: str, exit_price_cents: int) -> float:
+        pos = self.open_positions.pop(ticker, None)
+        if pos is None:
+            log_risk.warning("Exit recorded for %s but no open position was tracked.", ticker)
+            return 0.0
+        proceeds = (pos.count * exit_price_cents) / 100.0
+        cost = (pos.count * pos.price_cents) / 100.0
+        pnl = proceeds - cost
+        self.bankroll += proceeds
+        self.realized_pnl_today += pnl
+        log_risk.info(
+            "EXIT %s %s x%d @ %d\u00a2 | pnl=$%.2f | bankroll=$%.2f | day_pnl=$%.2f",
+            ticker, pos.side, pos.count, exit_price_cents, pnl, self.bankroll, self.realized_pnl_today,
+        )
+        return pnl
 
     def record_settlement(self, ticker: str, won: bool, payout_per_contract_cents: int = 100):
         pos = self.open_positions.pop(ticker, None)
@@ -719,6 +833,54 @@ class DashboardRecorder:
             },
         )
 
+    def record_exit(
+        self,
+        ticker: str,
+        side: str,
+        trigger: str,
+        reason: str,
+        pnl: float,
+        *,
+        count: int = 0,
+        entry_price: int = 0,
+        exit_price: int = 0,
+        cost_basis: float = 0.0,
+        proceeds: float = 0.0,
+    ):
+        fee = 0.01
+        self.fees_paid_today += fee
+        self.fees_paid_total += fee
+        self.cum_pnl_inception += pnl
+        self.pnl_by_side[side] = round(self.pnl_by_side.get(side, 0.0) + pnl, 2)
+        if pnl >= 0:
+            self.wins_today += 1
+            self.sum_win_dollars += max(pnl, 0)
+        else:
+            self.losses_today += 1
+            self.sum_loss_dollars += max(-pnl, 0)
+        self.position_meta.pop(ticker, None)
+        outcome = "WIN" if pnl >= 0 else "LOSS"
+        self.add_log(
+            "exit",
+            f"EXIT {ticker} {side} — {trigger} — {reason} — pnl {pnl:+.2f}",
+            ticker=ticker,
+            side=side,
+            price=exit_price or None,
+            count=count or None,
+            won=pnl >= 0,
+            outcome=outcome,
+            detail={
+                "trigger": trigger,
+                "reason": reason,
+                "pnl": round(pnl, 2),
+                "entryPrice": entry_price,
+                "exitPrice": exit_price,
+                "count": count,
+                "costBasis": round(cost_basis, 2),
+                "proceeds": round(proceeds, 2),
+            },
+        )
+
     @staticmethod
     def _quote_from_book(orderbook: dict | None) -> dict:
         if not orderbook:
@@ -830,6 +992,12 @@ class DashboardRecorder:
             cost_basis = round((fill.price_cents * fill.count) / 100.0, 2)
             market_value = round((current_mark * fill.count) / 100.0, 2)
             unrealized_pnl = round(market_value - cost_basis, 2)
+            stop_floor = stop_loss_bid_floor(fill.price_cents) if STOP_LOSS_ENABLED else None
+            take_profit_bid = (
+                fill.price_cents + STOP_TAKE_PROFIT_CENTS
+                if STOP_LOSS_ENABLED and STOP_TAKE_PROFIT_CENTS > 0
+                else None
+            )
 
             rows.append(
                 {
@@ -851,6 +1019,8 @@ class DashboardRecorder:
                     "costBasis": cost_basis,
                     "marketValue": market_value,
                     "unrealizedPnl": unrealized_pnl,
+                    "stopLossBidFloor": stop_floor,
+                    "takeProfitBid": take_profit_bid,
                     "markUpdatedAt": datetime.now(timezone.utc).isoformat(),
                     **quote,
                 }
@@ -957,6 +1127,14 @@ class DashboardRecorder:
                 "dailyEntryBudget": DAILY_ENTRY_BUDGET,
                 "openPositionsCount": len(risk.open_positions),
                 "capitalDeployed": round(capital_deployed, 2),
+                "stopLoss": {
+                    "enabled": STOP_LOSS_ENABLED,
+                    "cents": STOP_LOSS_CENTS,
+                    "pct": STOP_LOSS_PCT,
+                    "takeProfitCents": STOP_TAKE_PROFIT_CENTS,
+                    "minHoldSeconds": STOP_MIN_HOLD_SECONDS,
+                    "thesisReversal": STOP_THESIS_REVERSAL,
+                },
             },
             currentHour=current_hour or {},
             pollIntervalMs=HOUR_BOT_POLL_MS,
@@ -1066,9 +1244,24 @@ class PaperBroker:
     def __init__(self, client: KalshiClient):
         self.client = client
 
-    def place_order(self, ticker: str, side: str, count: int, price_cents: int, order_type: str):
-        log_main.info("[PAPER] Would submit %s %s x%d @ %d\u00a2 (%s)", ticker, side, count, price_cents, order_type)
-        return {"order_id": f"paper-{ticker}-{int(time.time())}", "status": "filled"}
+    def place_order(
+        self,
+        ticker: str,
+        side: str,
+        count: int,
+        price_cents: int,
+        order_type: str,
+        action: str = "buy",
+    ):
+        verb = "sell" if (action or "buy").lower() == "sell" else "buy"
+        log_main.info(
+            "[PAPER] Would %s %s %s x%d @ %d\u00a2 (%s)",
+            verb, ticker, side, count, price_cents, order_type,
+        )
+        return {
+            "order_id": f"paper-{ticker}-{int(time.time())}",
+            "fill_count": f"{int(count):.2f}",
+        }
 
 
 def check_settlements(client: KalshiClient, risk: RiskManager, dashboard: DashboardRecorder | None = None):
@@ -1097,6 +1290,79 @@ def check_settlements(client: KalshiClient, risk: RiskManager, dashboard: Dashbo
                     cost_basis=cost,
                     payout=proceeds,
                 )
+
+
+def check_stop_losses(
+    client: KalshiClient,
+    broker,
+    strategy: MarketImbalanceStrategy,
+    risk: RiskManager,
+    dashboard: DashboardRecorder | None = None,
+) -> None:
+    if not STOP_LOSS_ENABLED or not risk.open_positions:
+        return
+
+    for ticker in list(risk.open_positions.keys()):
+        fill = risk.open_positions[ticker]
+        book = client.get_orderbook(ticker)
+        if not book:
+            continue
+
+        held_seconds = max(0.0, time.time() - fill.timestamp)
+        exit_sig = evaluate_position_exit(fill, book, strategy, held_seconds=held_seconds)
+        if not exit_sig:
+            continue
+
+        log_risk.info("EXIT signal %s %s — %s", ticker, exit_sig.trigger, exit_sig.reason)
+        if dashboard:
+            dashboard.add_log(
+                "signal",
+                f"EXIT {ticker} {fill.side} — {exit_sig.trigger} — {exit_sig.reason}",
+                ticker=ticker,
+                side=fill.side,
+                price=exit_sig.limit_price_cents,
+                count=fill.count,
+                detail={"trigger": exit_sig.trigger, "reason": exit_sig.reason},
+            )
+
+        order_res = broker.place_order(
+            ticker,
+            fill.side,
+            fill.count,
+            exit_sig.limit_price_cents,
+            "market",
+            action="sell",
+        )
+        if not order_res:
+            log_main.warning("Stop exit order failed for %s", ticker)
+            if dashboard:
+                dashboard.add_log(
+                    "reject",
+                    f"{ticker} exit order rejected — {exit_sig.reason}",
+                    ticker=ticker,
+                    side=fill.side,
+                    price=exit_sig.limit_price_cents,
+                    count=fill.count,
+                    detail={"trigger": exit_sig.trigger, "reason": "exit_api_failed"},
+                )
+            continue
+
+        cost_basis = (fill.price_cents * fill.count) / 100.0
+        proceeds = (exit_sig.exit_bid_cents * fill.count) / 100.0
+        pnl = risk.record_exit(ticker, exit_sig.exit_bid_cents)
+        if dashboard:
+            dashboard.record_exit(
+                ticker,
+                fill.side,
+                exit_sig.trigger,
+                exit_sig.reason,
+                pnl,
+                count=fill.count,
+                entry_price=fill.price_cents,
+                exit_price=exit_sig.exit_bid_cents,
+                cost_basis=cost_basis,
+                proceeds=proceeds,
+            )
 
 
 def _expiration_ms(market: dict) -> int:
@@ -1626,12 +1892,14 @@ def main():
         while True:
             control = HourBotControl.load()
             check_settlements(client, risk, dashboard)
+            check_stop_losses(client, broker, strategy, risk, dashboard)
             run_cycle(client, broker, strategy, risk, dashboard=dashboard, control=control)
 
             next_scan = time.time() + POLL_INTERVAL_SECONDS
             while time.time() < next_scan:
                 control = HourBotControl.load()
                 check_settlements(client, risk, dashboard)
+                check_stop_losses(client, broker, strategy, risk, dashboard)
                 if dashboard and risk.open_positions:
                     dashboard.publish_fast_quotes(risk=risk, client=client, control=control)
                 sleep_for = min(QUOTE_REFRESH_SECONDS, max(0.1, next_scan - time.time()))

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+
 import kalshi_btc_bot as bot
 from kalshi_btc_bot import DashboardRecorder, MarketImbalanceStrategy
 
@@ -208,6 +210,38 @@ def test_place_order_uses_v2_no_body(monkeypatch):
 
     assert captured["body"]["side"] == "ask"
     assert captured["body"]["price"] == "0.3800"
+
+
+def test_stop_loss_triggers_on_premium_loss(monkeypatch):
+    monkeypatch.setattr(bot, "STOP_LOSS_ENABLED", True)
+    monkeypatch.setattr(bot, "STOP_MIN_HOLD_SECONDS", 0)
+    monkeypatch.setattr(bot, "STOP_LOSS_CENTS", 8)
+    monkeypatch.setattr(bot, "STOP_LOSS_PCT", 0.45)
+    monkeypatch.setattr(bot, "STOP_TAKE_PROFIT_CENTS", 0)
+    monkeypatch.setattr(bot, "STOP_THESIS_REVERSAL", False)
+
+    fill = bot.Fill(ticker="T", side="yes", count=3, price_cents=50, timestamp=time.time())
+    book = {"yes": [[40, 100]], "no": [[58, 100]]}
+    strategy = bot.MarketImbalanceStrategy()
+    exit_sig = bot.evaluate_position_exit(fill, book, strategy, held_seconds=120)
+
+    assert exit_sig is not None
+    assert exit_sig.trigger == "stop_loss"
+
+
+def test_take_profit_triggers_on_gain(monkeypatch):
+    monkeypatch.setattr(bot, "STOP_LOSS_ENABLED", True)
+    monkeypatch.setattr(bot, "STOP_MIN_HOLD_SECONDS", 0)
+    monkeypatch.setattr(bot, "STOP_TAKE_PROFIT_CENTS", 12)
+    monkeypatch.setattr(bot, "STOP_THESIS_REVERSAL", False)
+
+    fill = bot.Fill(ticker="T", side="yes", count=3, price_cents=50, timestamp=time.time())
+    book = {"yes": [[63, 100]], "no": [[35, 100]]}
+    strategy = bot.MarketImbalanceStrategy()
+    exit_sig = bot.evaluate_position_exit(fill, book, strategy, held_seconds=120)
+
+    assert exit_sig is not None
+    assert exit_sig.trigger == "take_profit"
 
 
 def test_restore_persisted_state_reloads_journal_and_filters_scans(tmp_path, monkeypatch):
