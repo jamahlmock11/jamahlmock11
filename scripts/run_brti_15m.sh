@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Continuous 1-hour KXBTCD bot with auto-restart.
+# Continuous 15-minute KXBTC15M BRTI websocket bot with auto-restart.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -17,11 +17,11 @@ if [[ -f .venv/bin/activate ]]; then
   source .venv/bin/activate
 fi
 
-CONFIG="${CONFIG_1H:-config/1h_ws.yaml}"
+CONFIG="${CONFIG_BRTI_15M:-config/brti_15m.yaml}"
 mkdir -p logs
 
 effective_dry_run() {
-  echo "${DRY_RUN_1H:-${DRY_RUN:-true}}"
+  echo "${DRY_RUN_15M:-${DRY_RUN:-true}}"
 }
 
 live_flag() {
@@ -42,8 +42,9 @@ while true; do
     set +a
   fi
   live_flag
-  echo "[$(date -Is)] starting 1h-ws-bot mode=${LIVE_FLAG[*]:-PAPER}"
-  PYTHONPATH=src python3 -m kalshi_bot "${LIVE_FLAG[@]}" --1h-ws --config "$CONFIG" || true
-  echo "[$(date -Is)] 1h-ws-bot exited; restarting in 5s"
+  echo "[$(date -Is)] starting brti-ws-bot mode=${LIVE_FLAG[*]:-PAPER}"
+  PYTHONPATH=src python3 -m kalshi_bot "${LIVE_FLAG[@]}" --brti-ws --config "$CONFIG" \
+    2>&1 | tee -a logs/brti_15m.log || true
+  echo "[$(date -Is)] brti-ws-bot exited; restarting in 5s"
   sleep 5
 done

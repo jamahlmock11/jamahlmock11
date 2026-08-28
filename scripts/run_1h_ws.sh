@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Continuous 1-hour KXBTCD bot with auto-restart.
+# Continuous 1-hour WebSocket + crowd-favorite bot with auto-restart.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -17,7 +17,7 @@ if [[ -f .venv/bin/activate ]]; then
   source .venv/bin/activate
 fi
 
-CONFIG="${CONFIG_1H:-config/1h_ws.yaml}"
+CONFIG="${CONFIG_1H_WS:-config/1h_ws.yaml}"
 mkdir -p logs
 
 effective_dry_run() {

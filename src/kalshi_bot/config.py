@@ -573,6 +573,44 @@ class TerminalProbabilityConfig(BaseModel):
     predictions_db_path: str = "data/predictions_1h.db"
 
 
+class HourWSConfig(BaseModel):
+    """WebSocket + crowd-favorite 1-hour bot settings."""
+
+    series_ticker: str = "KXBTCD"
+    min_entry_cents: float = Field(default=45.0, ge=0.0, le=100.0)
+    max_entry_cents: float = Field(default=78.0, ge=0.0, le=100.0)
+    crowd_min_cents: float = Field(default=55.0, ge=0.0, le=100.0)
+    crowd_max_cents: float = Field(default=86.0, ge=0.0, le=100.0)
+    min_confidence: float = Field(default=35.0, ge=0.0, le=100.0)
+    min_edge_cents: float = Field(default=4.0, ge=0.0, le=50.0)
+    fair_value_move_cents: float = Field(default=5.0, ge=0.0, le=50.0)
+    crowd_boost_factor: float = Field(default=0.30, ge=0.0, le=1.0)
+    min_price_history: int = Field(default=20, ge=5)
+    max_position_size: int = Field(default=100, ge=1)
+    max_daily_loss: float = Field(default=50.0, ge=0.0)
+    order_quantity: int = Field(default=1, ge=1)
+    reconnect_delay_sec: float = Field(default=5.0, gt=0.0)
+    market_refresh_sec: float = Field(default=300.0, gt=0.0)
+    min_seconds_remaining: float = Field(default=60.0, ge=0.0)
+    max_entry_seconds_remaining: float = Field(default=3600.0, ge=0.0)
+
+
+class BrtiWSConfig(BaseModel):
+    """15-minute KXBTC15M bot using Kalshi cfbenchmarks_value websocket BRTI."""
+
+    series_ticker: str = "KXBTC15M"
+    sma_window_seconds: int = Field(default=300, ge=30)
+    momentum_lag_seconds: int = Field(default=60, ge=1)
+    mid_price_lag_seconds: int = Field(default=60, ge=1)
+    brti_history_seconds: int = Field(default=1200, ge=60)
+    expiry_safeguard_seconds: int = Field(default=60, ge=0)
+    min_edge_dollars: float = Field(default=2.0, ge=0.0)
+    order_count_contracts: int = Field(default=1, ge=1)
+    max_order_price: float = Field(default=0.95, gt=0.0, le=1.0)
+    decision_loop_seconds: float = Field(default=1.0, gt=0.0)
+    order_cooldown_seconds: float = Field(default=15.0, ge=0.0)
+
+
 class AppConfig(BaseModel):
     series: list[str] = Field(default_factory=lambda: ["KXBTC15M"])
     horizon: Literal["15m", "1h"] = "15m"
@@ -597,6 +635,8 @@ class AppConfig(BaseModel):
     terminal_probability: TerminalProbabilityConfig = Field(
         default_factory=TerminalProbabilityConfig
     )
+    hour_ws: HourWSConfig = Field(default_factory=HourWSConfig)
+    brti_ws: BrtiWSConfig = Field(default_factory=BrtiWSConfig)
 
 
 class Settings(BaseSettings):
