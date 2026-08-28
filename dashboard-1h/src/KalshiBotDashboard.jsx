@@ -60,6 +60,38 @@ function rowStyle(row) {
   return LOG_STYLES[row.kind] ?? LOG_STYLES.scan;
 }
 
+function sortMarketsForDisplay(markets) {
+  if (!markets?.length) return [];
+  return [...markets].sort((a, b) => {
+    const rank = (m) => {
+      if (m.tradeCandidate) return 0;
+      if (m.isExtremeQuote) return 3;
+      if (m.isAtm) return 1;
+      return 2;
+    };
+    const ra = rank(a);
+    const rb = rank(b);
+    if (ra !== rb) return ra - rb;
+    const da = Number(a.distFromSpot ?? 9_999_999);
+    const db = Number(b.distFromSpot ?? 9_999_999);
+    if (da !== db) return da - db;
+    return String(a.ticker).localeCompare(String(b.ticker));
+  });
+}
+
+function marketBadges(m) {
+  const badges = [];
+  if (m.tradeCandidate) {
+    badges.push({ label: "Signal", className: "bg-[#4CC9F0]/15 text-[#4CC9F0]" });
+  } else if (m.isAtm) {
+    badges.push({ label: "ATM", className: "bg-[#33D693]/15 text-[#33D693]" });
+  }
+  if (m.isExtremeQuote && !m.tradeCandidate) {
+    badges.push({ label: "1/99", className: "bg-[#767C86]/15 text-[#767C86]" });
+  }
+  return badges;
+}
+
 function SettlementOutcome({ row }) {
   if (row.kind !== "settle") return <span className="text-[#767C86]">—</span>;
   const won = row.won ?? row.detail?.won;
@@ -233,8 +265,9 @@ function DeltaTag({ value }) {
 }
 
 function TickerTape({ markets }) {
-  if (!markets.length) return null;
-  const row = [...markets, ...markets, ...markets];
+  const ordered = sortMarketsForDisplay(markets).filter((m) => m.isAtm || m.tradeCandidate || !m.isExtremeQuote);
+  if (!ordered.length) return null;
+  const row = [...ordered, ...ordered, ...ordered];
   return (
     <div className="relative overflow-hidden border-b border-[#24272C] bg-[#0D0F12] h-9 flex items-center">
       <div className="flex gap-10 whitespace-nowrap animate-[tape_28s_linear_infinite] px-4">
@@ -255,7 +288,8 @@ function TickerTape({ markets }) {
 }
 
 function LivePricesTable({ markets }) {
-  if (!markets?.length) {
+  const ordered = sortMarketsForDisplay(markets);
+  if (!ordered.length) {
     return <div className="text-[#767C86] text-xs py-6 text-center">No live quotes yet.</div>;
   }
   return (
@@ -274,11 +308,32 @@ function LivePricesTable({ markets }) {
           </tr>
         </thead>
         <tbody>
-          {markets.map((m) => (
-            <tr key={m.ticker} className="border-b border-[#1A1D22] last:border-0 hover:bg-[#0D0F12]">
+          {ordered.map((m) => {
+            const badges = marketBadges(m);
+            const dimmed = m.isExtremeQuote && !m.tradeCandidate;
+            return (
+            <tr
+              key={m.ticker}
+              className={`border-b border-[#1A1D22] last:border-0 hover:bg-[#0D0F12] ${
+                dimmed ? "opacity-45" : ""
+              } ${m.tradeCandidate ? "bg-[#4CC9F0]/5" : ""}`}
+            >
               <td className="py-2 pr-3 text-[#E9E7E2]">
-                <div className="font-medium">{m.ticker.split("-").slice(-1)[0]}</div>
-                {m.subtitle && <div className="text-[10px] text-[#767C86] truncate max-w-[180px]">{m.subtitle}</div>}
+                <div className="flex items-center gap-2">
+                  <div className="font-medium">{m.ticker.split("-").slice(-1)[0]}</div>
+                  {badges.map((badge) => (
+                    <span
+                      key={badge.label}
+                      className={`px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wide ${badge.className}`}
+                    >
+                      {badge.label}
+                    </span>
+                  ))}
+                </div>
+                {m.subtitle && <div className="text-[10px] text-[#767C86] truncate max-w-[220px]">{m.subtitle}</div>}
+                {m.distFromSpot != null && (
+                  <div className="text-[10px] text-[#767C86]">${Number(m.strike || 0).toLocaleString()} · {Number(m.distFromSpot).toFixed(0)} from spot</div>
+                )}
               </td>
               <td className="py-2 px-2 text-right text-[#33D693]">{m.yesBid ?? "—"}¢</td>
               <td className="py-2 px-2 text-right text-[#33D693]">{m.yesAsk ?? "—"}¢</td>
@@ -290,7 +345,8 @@ function LivePricesTable({ markets }) {
                 {m.depthYes ?? 0}/{m.depthNo ?? 0}
               </td>
             </tr>
-          ))}
+          );
+          })}
         </tbody>
       </table>
     </div>
@@ -496,6 +552,7 @@ export default function KalshiBotDashboard() {
   const startBankroll = Number(startingBankroll ?? DEFAULT_START_BANKROLL);
   const netEquity = bankroll + unrealized;
   const equityFmt = (v) => `$${Number(v || 0).toFixed(2)}`;
+  const displayMarkets = sortMarketsForDisplay(markets);
   const currentDrawdown = peakEquity - netEquity;
   const tradesToday = winsToday + lossesToday;
   const winRate = tradesToday > 0 ? winsToday / tradesToday : 0;
@@ -504,7 +561,7 @@ export default function KalshiBotDashboard() {
 
   return (
     <div className="min-h-screen w-full bg-[#0A0B0D] text-[#E9E7E2] font-[IBM_Plex_Mono] flex flex-col">
-      <TickerTape markets={markets} />
+      <TickerTape markets={displayMarkets} />
 
       <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-4 border-b border-[#24272C]">
         <div className="flex items-center gap-3">
@@ -882,7 +939,7 @@ export default function KalshiBotDashboard() {
 
         <Panel title="Live contract prices" eyebrow="Bid / ask / depth" className="xl:col-span-3">
           <div className="p-4">
-            <LivePricesTable markets={markets} />
+            <LivePricesTable markets={displayMarkets} />
           </div>
         </Panel>
 
@@ -893,18 +950,32 @@ export default function KalshiBotDashboard() {
                 No active hourly markets in status feed yet.
               </div>
             )}
-            {markets?.map((m) => {
+            {displayMarkets?.map((m) => {
               const impliedProb = Number(m.impliedProb || (m.yesBid + m.yesAsk) / 2 || 0);
               const ratio = m.depthNo > 0 ? m.depthYes / m.depthNo : 0;
               const skew = ratio >= 1 ? `${ratio.toFixed(1)}x yes` : `${(1 / (ratio || 1)).toFixed(1)}x no`;
+              const badges = marketBadges(m);
+              const dimmed = m.isExtremeQuote && !m.tradeCandidate;
               return (
                 <div
                   key={m.ticker}
-                  className="flex items-center gap-3 bg-[#0D0F12] border border-[#24272C] rounded-lg p-3"
+                  className={`flex items-center gap-3 bg-[#0D0F12] border rounded-lg p-3 ${
+                    m.tradeCandidate ? "border-[#4CC9F0]/40" : "border-[#24272C]"
+                  } ${dimmed ? "opacity-50" : ""}`}
                 >
                   <CountdownRing expiresAt={m.expiresAt} />
                   <div className="flex-1 min-w-0">
-                    <div className="text-xs text-[#E9E7E2] font-medium truncate">{m.ticker}</div>
+                    <div className="flex items-center gap-2">
+                      <div className="text-xs text-[#E9E7E2] font-medium truncate">{m.ticker}</div>
+                      {badges.map((badge) => (
+                        <span
+                          key={badge.label}
+                          className={`px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wide ${badge.className}`}
+                        >
+                          {badge.label}
+                        </span>
+                      ))}
+                    </div>
                     <div className="flex flex-wrap items-center gap-3 mt-1 text-[11px]">
                       <span className="text-[#33D693]">Y {m.yesBid}/{m.yesAsk}¢</span>
                       <span className="text-[#F2495C]">N {m.noBid}/{m.noAsk}¢</span>

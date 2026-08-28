@@ -29,6 +29,7 @@ import base64
 import json
 import logging
 import os
+import re
 import sys
 import time
 import uuid
@@ -123,6 +124,8 @@ ALLOW_ONE_SIDED_BOOKS = _env_bool("ALLOW_ONE_SIDED_BOOKS", False)
 MIN_SIDE_DEPTH = int(os.getenv("MIN_SIDE_DEPTH", "150"))
 MAX_MARKETS_PER_SCAN = int(os.getenv("MAX_MARKETS_PER_SCAN", "40"))
 SCAN_ATM_RADIUS_USD = float(os.getenv("SCAN_ATM_RADIUS_USD", "2500"))
+DASHBOARD_MARKETS_LIMIT = int(os.getenv("DASHBOARD_MARKETS_LIMIT", "24"))
+EXTREME_QUOTE_CENTS = int(os.getenv("EXTREME_QUOTE_CENTS", "2"))
 
 # Execution / polling
 POLL_INTERVAL_SECONDS = float(os.getenv("POLL_INTERVAL_SECONDS", "15"))
@@ -743,7 +746,14 @@ class DashboardRecorder:
             "depthNo": sum(int(lvl[1]) for lvl in no[:DEPTH_LEVELS]),
         }
 
-    def _market_row(self, market: dict, orderbook: dict | None) -> dict:
+    def _market_row(
+        self,
+        market: dict,
+        orderbook: dict | None,
+        *,
+        btc_spot: float = 0.0,
+        trade_candidates: set[str] | None = None,
+    ) -> dict:
         ticker = market.get("ticker", "")
         expiration_time = market_close_time_str(market) or ""
         try:
@@ -766,12 +776,19 @@ class DashboardRecorder:
 
         floor_strike = market.get("floor_strike")
         cap_strike = market.get("cap_strike")
+        strike = _strike_from_market(market)
+        dist_from_spot = abs(strike - btc_spot) if btc_spot > 0 and strike > 0 else 0
+        candidates = trade_candidates or set()
         return {
             "ticker": ticker,
             "expiresAt": expires_at,
-            "strike": _strike_from_market(market),
+            "strike": strike,
             "subtitle": str(market.get("subtitle") or ""),
             "lastPrice": int(market.get("last_price") or 0),
+            "distFromSpot": round(dist_from_spot, 1),
+            "isAtm": dist_from_spot <= SCAN_ATM_RADIUS_USD,
+            "isExtremeQuote": is_extreme_quote(quote),
+            "tradeCandidate": ticker in candidates,
             **quote,
         }
 
@@ -839,7 +856,9 @@ class DashboardRecorder:
         control: HourBotControl,
         btc_spot: float,
         current_hour: dict | None = None,
+        trade_candidates: set[str] | None = None,
     ) -> None:
+        candidates = set(trade_candidates or [])
         self._tick += 1
         self.last_publish_ctx = {
             "markets": markets,
@@ -847,6 +866,7 @@ class DashboardRecorder:
             "btc_spot": btc_spot,
             "current_hour": current_hour or {},
             "control": control,
+            "trade_candidates": candidates,
         }
 
         position_rows = self._position_rows(risk, client, market_books)
@@ -859,8 +879,7 @@ class DashboardRecorder:
             self.equity_history.append({"t": self._tick, "v": round(net_equity, 2)})
             self.equity_history = self.equity_history[-120:]
 
-        watched_tickers = {m.get("ticker") for m in markets if m.get("ticker")}
-        watched_tickers.update(risk.open_positions.keys())
+        open_tickers = set(risk.open_positions.keys())
         market_rows = []
         seen: set[str] = set()
         for market in markets:
@@ -868,13 +887,33 @@ class DashboardRecorder:
             if not ticker or ticker in seen:
                 continue
             seen.add(ticker)
-            market_rows.append(self._market_row(market, market_books.get(ticker)))
-        for ticker in risk.open_positions:
+            market_rows.append(
+                self._market_row(
+                    market,
+                    market_books.get(ticker),
+                    btc_spot=btc_spot,
+                    trade_candidates=candidates | open_tickers,
+                )
+            )
+        for ticker in open_tickers:
             if ticker in seen:
                 continue
             market = client.get_market(ticker)
             if market:
-                market_rows.append(self._market_row(market, market_books.get(ticker)))
+                market_rows.append(
+                    self._market_row(
+                        market,
+                        market_books.get(ticker),
+                        btc_spot=btc_spot,
+                        trade_candidates=candidates | open_tickers,
+                    )
+                )
+
+        market_rows = sort_market_rows_for_display(
+            market_rows,
+            trade_candidates=candidates,
+            open_tickers=open_tickers,
+        )
 
         status = HourBotStatus(
             mode=control.mode,
@@ -896,7 +935,7 @@ class DashboardRecorder:
             cumPnlInception=round(self.cum_pnl_inception, 2),
             pnlBySide=dict(self.pnl_by_side),
             peakEquity=round(self.peak_equity, 2),
-            markets=market_rows[:24],
+            markets=market_rows[:DASHBOARD_MARKETS_LIMIT],
             positions=position_rows,
             logs=self.logs,
             journal=self.journal,
@@ -937,6 +976,7 @@ class DashboardRecorder:
             control=control,
             btc_spot=float(ctx.get("btc_spot") or 0),
             current_hour=ctx.get("current_hour") or {},
+            trade_candidates=set(ctx.get("trade_candidates") or []),
         )
 
 
@@ -1140,6 +1180,97 @@ def sort_tradeable_for_scan(
     return sorted(tradeable, key=sort_key)
 
 
+def is_threshold_ticker(ticker: str) -> bool:
+    return bool(re.search(r"-T\d", str(ticker or "")))
+
+
+def is_extreme_quote(quote: dict) -> bool:
+    """True for classic 1¢/99¢ (or empty-side) books that are not actionable display rows."""
+    edge = EXTREME_QUOTE_CENTS
+    yes_bid = int(quote.get("yesBid") or 0)
+    yes_ask = int(quote.get("yesAsk") or 0)
+    no_bid = int(quote.get("noBid") or 0)
+    no_ask = int(quote.get("noAsk") or 0)
+
+    if yes_bid <= 0 and no_bid >= 100 - edge:
+        return True
+    if no_bid <= 0 and yes_bid > 0 and yes_bid <= edge:
+        return True
+    if yes_bid > 0 and yes_bid <= edge and (yes_ask <= 0 or yes_ask >= 100 - edge):
+        return True
+    if yes_ask >= 100 - edge and yes_bid <= edge:
+        return True
+
+    implied = quote.get("impliedProb")
+    if implied is not None:
+        try:
+            implied_f = float(implied)
+            if implied_f <= edge or implied_f >= 100 - edge:
+                return True
+        except (TypeError, ValueError):
+            pass
+    return False
+
+
+def sort_market_rows_for_display(
+    rows: list[dict],
+    *,
+    trade_candidates: set[str],
+    open_tickers: set[str],
+) -> list[dict]:
+    """ATM and actionable quotes first; 1/99-style books last unless trade candidate."""
+
+    def sort_key(row: dict) -> tuple[int, int, float, str]:
+        ticker = str(row.get("ticker") or "")
+        if ticker in open_tickers or ticker in trade_candidates:
+            return (0, 0, float(row.get("distFromSpot") or 0), ticker)
+        if row.get("isExtremeQuote"):
+            return (3, 1, float(row.get("distFromSpot") or 9_999_999), ticker)
+        if row.get("isAtm"):
+            return (1, 0, float(row.get("distFromSpot") or 0), ticker)
+        return (2, 0, float(row.get("distFromSpot") or 0), ticker)
+
+    return sorted(rows, key=sort_key)
+
+
+def select_dashboard_markets(
+    tradeable: list[tuple[float, dict]],
+    btc_spot: float,
+    *,
+    limit: int = DASHBOARD_MARKETS_LIMIT,
+    trade_candidates: set[str] | None = None,
+) -> list[dict]:
+    """Pick strike contracts near spot for the dashboard (skip threshold T tickers)."""
+    candidates = trade_candidates or set()
+    ranked: list[tuple[tuple[int, float, float], dict]] = []
+
+    for mins_left, market in tradeable:
+        ticker = str(market.get("ticker") or "")
+        if not ticker:
+            continue
+        if is_threshold_ticker(ticker) and ticker not in candidates:
+            continue
+        strike = _strike_from_market(market)
+        if strike <= 0:
+            continue
+        dist = abs(strike - btc_spot) if btc_spot > 0 else 0.0
+        priority = 0 if ticker in candidates else 1
+        ranked.append(((priority, dist, mins_left), market))
+
+    ranked.sort(key=lambda row: row[0])
+    selected = [market for _, market in ranked[:limit]]
+
+    for ticker in candidates:
+        if any(str(m.get("ticker")) == ticker for m in selected):
+            continue
+        for _, market in tradeable:
+            if str(market.get("ticker")) == ticker:
+                selected.append(market)
+                break
+
+    return selected[:limit]
+
+
 def run_cycle(
     client: KalshiClient,
     broker,
@@ -1155,7 +1286,15 @@ def run_cycle(
     btc_spot = _btc_spot_from_markets(markets, event_prefix=event_prefix)
     scan_queue = sort_tradeable_for_scan(tradeable, btc_spot=btc_spot)[:MAX_MARKETS_PER_SCAN]
     current_hour = current_hour_snapshot(tradeable, total_markets=len(markets))
-    display_markets = [m for _, m in scan_queue[:12]] or [m for _, m in tradeable[:12]] or markets[:12]
+    trade_candidates: set[str] = set()
+    display_markets = select_dashboard_markets(
+        tradeable,
+        btc_spot,
+        limit=DASHBOARD_MARKETS_LIMIT,
+        trade_candidates=trade_candidates,
+    )
+    if not display_markets:
+        display_markets = [m for _, m in tradeable[:DASHBOARD_MARKETS_LIMIT]] or markets[:DASHBOARD_MARKETS_LIMIT]
     market_books: dict[str, dict] = {}
 
     for market in display_markets:
@@ -1180,6 +1319,7 @@ def run_cycle(
             control=control or HourBotControl(),
             btc_spot=btc_spot,
             current_hour=current_hour,
+            trade_candidates=trade_candidates,
         )
 
     if control and (control.estop or not control.running):
@@ -1193,6 +1333,7 @@ def run_cycle(
                 control=control,
                 btc_spot=btc_spot,
                 current_hour=current_hour,
+                trade_candidates=trade_candidates,
             )
         return
 
@@ -1212,6 +1353,7 @@ def run_cycle(
                 control=control or HourBotControl(),
                 btc_spot=btc_spot,
                 current_hour=current_hour,
+                trade_candidates=trade_candidates,
             )
         return
 
@@ -1240,6 +1382,12 @@ def run_cycle(
         signal = strategy.evaluate_market(ticker, book)
         if not signal:
             continue
+
+        trade_candidates.add(ticker)
+        if not any(str(m.get("ticker")) == ticker for m in display_markets):
+            display_markets.append(market)
+            if book:
+                market_books[ticker] = book
 
         size = risk.size_trade(RISK.max_contracts_per_trade, signal.limit_price)
         if size <= 0:
@@ -1301,6 +1449,7 @@ def run_cycle(
             control=control or HourBotControl(),
             btc_spot=btc_spot,
             current_hour=current_hour,
+            trade_candidates=trade_candidates,
         )
 
 

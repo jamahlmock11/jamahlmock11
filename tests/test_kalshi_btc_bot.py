@@ -149,6 +149,33 @@ def test_sort_tradeable_prioritizes_near_atm_before_otm_band():
     assert ordered[2][1]["ticker"] == "KXBTC-TEST-B95000"
 
 
+def test_is_extreme_quote_detects_one_sided_99_books():
+    assert bot.is_extreme_quote({"yesBid": 0, "yesAsk": 0, "noBid": 99, "noAsk": 0}) is True
+    assert bot.is_extreme_quote({"yesBid": 45, "yesAsk": 47, "noBid": 53, "noAsk": 55}) is False
+
+
+def test_sort_market_rows_puts_extreme_quotes_last_unless_candidate():
+    rows = [
+        {"ticker": "EXTREME", "isExtremeQuote": True, "isAtm": True, "distFromSpot": 50},
+        {"ticker": "ATM", "isExtremeQuote": False, "isAtm": True, "distFromSpot": 100},
+        {"ticker": "SIGNAL", "isExtremeQuote": True, "isAtm": True, "distFromSpot": 200, "tradeCandidate": True},
+    ]
+    ordered = bot.sort_market_rows_for_display(rows, trade_candidates={"SIGNAL"}, open_tickers=set())
+    assert [row["ticker"] for row in ordered] == ["SIGNAL", "ATM", "EXTREME"]
+
+
+def test_select_dashboard_markets_skips_threshold_tickers():
+    tradeable = [
+        (30.0, {"ticker": "KXBTC-TEST-T87800"}),
+        (30.0, {"ticker": "KXBTC-TEST-B87750"}),
+        (30.0, {"ticker": "KXBTC-TEST-B87650"}),
+    ]
+    selected = bot.select_dashboard_markets(tradeable, 87_800, limit=2)
+    tickers = [m["ticker"] for m in selected]
+    assert "KXBTC-TEST-T87800" not in tickers
+    assert tickers[0] == "KXBTC-TEST-B87750"
+
+
 def test_restore_persisted_state_reloads_journal_and_filters_scans(tmp_path, monkeypatch):
     status_path = tmp_path / "1h_bot_status.json"
     status_path.write_text(
