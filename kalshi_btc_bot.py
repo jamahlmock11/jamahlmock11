@@ -26,14 +26,17 @@ Paper-trade before risking real money.
 from __future__ import annotations
 
 import base64
+import json
 import logging
 import os
+import re
 import sys
 import time
 import uuid
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse
 
@@ -42,7 +45,32 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding as asym_padding
 from dotenv import load_dotenv
 
+try:
+    from kalshi_bot.dashboard.hour_bot_status import (
+        HourBotControl,
+        HourBotStatus,
+        default_status,
+        new_log_id,
+    )
+except ImportError:
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
+    from kalshi_bot.dashboard.hour_bot_status import (
+        HourBotControl,
+        HourBotStatus,
+        default_status,
+        new_log_id,
+    )
+
 load_dotenv()
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in ("1", "true", "yes", "on")
 
 # ============================================================================
 # CONFIG
@@ -81,22 +109,48 @@ def _require_credentials() -> None:
 BTC_SERIES_TICKER = os.getenv("KALSHI_BTC_SERIES_TICKER", "KXBTC")
 
 # Strategy window (time-to-expiration gate)
-MIN_TIME_LEFT_MINUTES = float(os.getenv("MIN_TIME_LEFT_MINUTES", "10"))
-MAX_TIME_LEFT_MINUTES = float(os.getenv("MAX_TIME_LEFT_MINUTES", "50"))
+MIN_TIME_LEFT_MINUTES = float(os.getenv("MIN_TIME_LEFT_MINUTES", "8"))
+MAX_TIME_LEFT_MINUTES = float(os.getenv("MAX_TIME_LEFT_MINUTES", "45"))
 
 # Order book imbalance thresholds
-IMBALANCE_RATIO_THRESHOLD = float(os.getenv("IMBALANCE_RATIO_THRESHOLD", "3.0"))
-PRICE_BAND_LOW = int(os.getenv("PRICE_BAND_LOW", "40"))    # cents
-PRICE_BAND_HIGH = int(os.getenv("PRICE_BAND_HIGH", "55"))  # cents
+IMBALANCE_RATIO_THRESHOLD = float(os.getenv("IMBALANCE_RATIO_THRESHOLD", "2.2"))
+IMBALANCE_EXTREME_THRESHOLD = float(os.getenv("IMBALANCE_EXTREME_THRESHOLD", "3.0"))
+PRICE_BAND_LOW = int(os.getenv("PRICE_BAND_LOW", "32"))    # cents
+PRICE_BAND_HIGH = int(os.getenv("PRICE_BAND_HIGH", "62"))  # cents
 DEPTH_LEVELS = int(os.getenv("DEPTH_LEVELS", "3"))
+MOMENTUM_DELTA_CENTS = float(os.getenv("MOMENTUM_DELTA_CENTS", "2.0"))
+REQUIRE_MOMENTUM = _env_bool("REQUIRE_MOMENTUM", True)
+ALLOW_ONE_SIDED_BOOKS = _env_bool("ALLOW_ONE_SIDED_BOOKS", False)
+MIN_SIDE_DEPTH = int(os.getenv("MIN_SIDE_DEPTH", "150"))
+MAX_MARKETS_PER_SCAN = int(os.getenv("MAX_MARKETS_PER_SCAN", "40"))
+SCAN_ATM_RADIUS_USD = float(os.getenv("SCAN_ATM_RADIUS_USD", "2500"))
+DASHBOARD_MARKETS_LIMIT = int(os.getenv("DASHBOARD_MARKETS_LIMIT", "24"))
+EXTREME_QUOTE_CENTS = int(os.getenv("EXTREME_QUOTE_CENTS", "2"))
+
+# Position exit / stop-loss (hourly imbalance bot)
+STOP_LOSS_ENABLED = _env_bool("STOP_LOSS_ENABLED", True)
+STOP_LOSS_CENTS = int(os.getenv("STOP_LOSS_CENTS", "12"))
+STOP_LOSS_PCT = float(os.getenv("STOP_LOSS_PCT", "0.45"))
+STOP_MIN_HOLD_SECONDS = float(os.getenv("STOP_MIN_HOLD_SECONDS", "90"))
+STOP_THESIS_REVERSAL = _env_bool("STOP_THESIS_REVERSAL", True)
+STOP_THESIS_EXTREME_ONLY = _env_bool("STOP_THESIS_EXTREME_ONLY", True)
+STOP_TAKE_PROFIT_CENTS = int(os.getenv("STOP_TAKE_PROFIT_CENTS", "12"))
+STOP_PARTIAL_TP_ENABLED = _env_bool("STOP_PARTIAL_TP_ENABLED", True)
+STOP_TRAIL_ENABLED = _env_bool("STOP_TRAIL_ENABLED", True)
+STOP_TRAIL_ARM_CENTS = int(os.getenv("STOP_TRAIL_ARM_CENTS", "8"))
+STOP_TRAIL_OFFSET_CENTS = int(os.getenv("STOP_TRAIL_OFFSET_CENTS", "6"))
 
 # Execution / polling
 POLL_INTERVAL_SECONDS = float(os.getenv("POLL_INTERVAL_SECONDS", "15"))
+QUOTE_REFRESH_SECONDS = float(os.getenv("QUOTE_REFRESH_SECONDS", "2"))
 ORDER_TYPE = os.getenv("ORDER_TYPE", "limit")  # "limit" or "market"
+HOUR_BOT_POLL_MS = int(os.getenv("HOUR_BOT_POLL_MS", "500"))
 
 # Logging
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 LOG_FILE = os.getenv("LOG_FILE", "kalshi_bot.log")
+DAILY_ENTRY_BUDGET = int(os.getenv("DAILY_ENTRY_BUDGET", "20"))
+HOUR_MAX_CONTRACTS = int(os.getenv("HOUR_MAX_CONTRACTS", "2"))
 
 
 @dataclass
@@ -104,7 +158,7 @@ class RiskConfig:
     max_contracts_per_trade: int = int(os.getenv("MAX_CONTRACTS_PER_TRADE", "5"))
     max_dollars_per_trade: float = float(os.getenv("MAX_DOLLARS_PER_TRADE", "5.00"))
     daily_loss_limit_dollars: float = float(os.getenv("DAILY_LOSS_LIMIT", "25.00"))
-    max_open_positions: int = int(os.getenv("MAX_OPEN_POSITIONS", "3"))
+    max_open_positions: int = int(os.getenv("MAX_OPEN_POSITIONS", "4"))
     cooldown_seconds_after_trade: int = int(os.getenv("COOLDOWN_SECONDS", "120"))
     starting_bankroll: float = float(os.getenv("STARTING_BANKROLL", "100.00"))
 
@@ -226,9 +280,21 @@ class KalshiClient:
         data = self._request("GET", f"/markets/{ticker}/orderbook", params={"depth": depth})
         if not data:
             return None
-        book = data.get("orderbook", {})
-        yes_levels = sorted(book.get("yes") or [], key=lambda lvl: -lvl[0])
-        no_levels = sorted(book.get("no") or [], key=lambda lvl: -lvl[0])
+        book = data.get("orderbook") or {}
+        yes_levels = book.get("yes") or []
+        no_levels = book.get("no") or []
+        if not yes_levels and not no_levels:
+            fp = data.get("orderbook_fp") or {}
+            yes_levels = [
+                [int(round(float(price) * 100)), int(float(qty))]
+                for price, qty in (fp.get("yes_dollars") or [])
+            ]
+            no_levels = [
+                [int(round(float(price) * 100)), int(float(qty))]
+                for price, qty in (fp.get("no_dollars") or [])
+            ]
+        yes_levels = sorted(yes_levels, key=lambda lvl: -lvl[0])
+        no_levels = sorted(no_levels, key=lambda lvl: -lvl[0])
         return {"yes": yes_levels, "no": no_levels}
 
     def get_market(self, ticker: str) -> Optional[dict]:
@@ -255,21 +321,32 @@ class KalshiClient:
 
     def place_order(self, ticker: str, side: str, count: int, price_cents: int,
                      order_type: str = "limit", action: str = "buy") -> Optional[dict]:
+        """Submit an order via Kalshi's V2 events endpoint (V1 /portfolio/orders is deprecated)."""
+        action_l = (action or "buy").lower()
+        side_l = (side or "").lower()
+        if side_l == "yes":
+            book_side = "bid" if action_l == "buy" else "ask"
+            price = price_cents / 100.0
+        elif side_l == "no":
+            book_side = "ask" if action_l == "buy" else "bid"
+            price = (100 - int(price_cents)) / 100.0
+        else:
+            log_api.error("Unsupported order side: %s", side)
+            return None
+
+        time_in_force = "good_till_canceled" if order_type == "limit" else "immediate_or_cancel"
         body = {
             "ticker": ticker,
             "client_order_id": str(uuid.uuid4()),
-            "action": action,
-            "side": side,
-            "type": order_type,
-            "count": count,
+            "side": book_side,
+            "count": f"{int(count):.2f}",
+            "price": f"{price:.4f}",
+            "time_in_force": time_in_force,
+            "self_trade_prevention_type": "taker_at_cross",
+            "exchange_index": -1,
         }
-        if order_type == "limit":
-            if side == "yes":
-                body["yes_price"] = price_cents
-            else:
-                body["no_price"] = price_cents
 
-        data = self._request("POST", "/portfolio/orders", json_body=body)
+        data = self._request("POST", "/portfolio/events/orders", json_body=body)
         if not data:
             return None
         return data.get("order", data)
@@ -291,6 +368,17 @@ class Signal:
     side: str          # "yes" or "no"
     limit_price: int   # cents
     reason: str
+
+
+@dataclass
+class ExitSignal:
+    ticker: str
+    side: str
+    trigger: str
+    reason: str
+    exit_bid_cents: int
+    limit_price_cents: int
+    exit_count: int | None = None
 
 
 class MarketImbalanceStrategy:
@@ -322,19 +410,59 @@ class MarketImbalanceStrategy:
 
     def _momentum_direction(self, ticker: str) -> str | None:
         hist = self._midpoint_history.get(ticker)
-        if not hist or len(hist) < 3:
+        if not hist or len(hist) < 2:
             return None
         delta = hist[-1] - hist[0]
-        if delta >= 3:
+        if delta >= MOMENTUM_DELTA_CENTS:
             return "yes"
-        if delta <= -3:
+        if delta <= -MOMENTUM_DELTA_CENTS:
             return "no"
         return None
+
+    def _evaluate_one_sided(self, ticker: str, yes: list, no: list) -> Signal | None:
+        """Trade resting liquidity when Kalshi only returns bids on one side."""
+        low, high = PRICE_BAND_LOW, PRICE_BAND_HIGH
+        depth_n = DEPTH_LEVELS
+
+        if yes and not no:
+            best = yes[0][0]
+            depth = sum(lvl[1] for lvl in yes[:depth_n])
+            if low <= best <= high and depth >= MIN_SIDE_DEPTH:
+                return Signal(
+                    ticker=ticker,
+                    side="yes",
+                    limit_price=min(best + 1, 99),
+                    reason=f"one_sided_yes depth={depth} @ {best}\u00a2",
+                )
+
+        if no and not yes:
+            best = no[0][0]
+            depth = sum(lvl[1] for lvl in no[:depth_n])
+            if low <= best <= high and depth >= MIN_SIDE_DEPTH:
+                return Signal(
+                    ticker=ticker,
+                    side="no",
+                    limit_price=min(best + 1, 99),
+                    reason=f"one_sided_no depth={depth} @ {best}\u00a2",
+                )
+
+        return None
+
+    def _imbalance_confirmed(self, side: str, ratio: float, momentum: str | None) -> bool:
+        if not REQUIRE_MOMENTUM:
+            return True
+        if ratio >= IMBALANCE_EXTREME_THRESHOLD:
+            return True
+        return momentum == side
 
     def evaluate_market(self, ticker: str, orderbook: dict) -> Signal | None:
         yes = orderbook.get("yes") or []
         no = orderbook.get("no") or []
+        if not yes and not no:
+            return None
         if not yes or not no:
+            if ALLOW_ONE_SIDED_BOOKS:
+                return self._evaluate_one_sided(ticker, yes, no)
             return None
 
         midpoint = self._midpoint(orderbook)
@@ -358,21 +486,178 @@ class MarketImbalanceStrategy:
         low, high = PRICE_BAND_LOW, PRICE_BAND_HIGH
         threshold = IMBALANCE_RATIO_THRESHOLD
 
-        if yes_no_ratio >= threshold and low <= best_yes_bid <= high:
-            if momentum == "yes" or yes_no_ratio >= threshold + 1.0:
+        if yes_no_ratio >= threshold and low <= midpoint <= high:
+            if self._imbalance_confirmed("yes", yes_no_ratio, momentum):
                 return Signal(
                     ticker=ticker, side="yes", limit_price=min(best_yes_bid + 1, 99),
                     reason=f"book_imbalance={yes_no_ratio:.2f}x yes, momentum={momentum}",
                 )
 
-        if no_yes_ratio >= threshold and low <= best_no_bid <= high:
-            if momentum == "no" or no_yes_ratio >= threshold + 1.0:
+        if no_yes_ratio >= threshold and low <= (100 - midpoint) <= high:
+            if self._imbalance_confirmed("no", no_yes_ratio, momentum):
                 return Signal(
                     ticker=ticker, side="no", limit_price=min(best_no_bid + 1, 99),
                     reason=f"book_imbalance={no_yes_ratio:.2f}x no, momentum={momentum}",
                 )
 
         return None
+
+
+def mark_bid_cents(side: str, quote: dict) -> int:
+    if side == "yes":
+        return int(quote.get("yesBid") or 0)
+    return int(quote.get("noBid") or 0)
+
+
+def premium_loss_metrics(entry_cents: int, exit_bid_cents: int) -> tuple[int, float]:
+    loss_cents = max(0, entry_cents - exit_bid_cents)
+    loss_pct = (loss_cents / entry_cents) if entry_cents > 0 else 0.0
+    return loss_cents, loss_pct
+
+
+def stop_loss_bid_floor(entry_cents: int) -> int:
+    """Bid level where cent or percent stop would trigger (whichever is tighter)."""
+    by_cents = entry_cents - STOP_LOSS_CENTS
+    by_pct = int(entry_cents * (1.0 - STOP_LOSS_PCT))
+    return max(1, min(by_cents, by_pct))
+
+
+def _imbalance_ratio_from_reason(reason: str) -> float | None:
+    marker = "book_imbalance="
+    if marker not in reason:
+        return None
+    try:
+        return float(reason.split(marker, 1)[1].split("x", 1)[0])
+    except (ValueError, IndexError):
+        return None
+
+
+def opposite_signal_qualifies(opposite: Signal) -> bool:
+    """Require extreme book imbalance before thesis-reversal exits."""
+    if not STOP_THESIS_EXTREME_ONLY:
+        return True
+    ratio = _imbalance_ratio_from_reason(opposite.reason)
+    return ratio is not None and ratio + 1e-12 >= IMBALANCE_EXTREME_THRESHOLD
+
+
+def update_trail_state(meta: dict, exit_bid: int, entry_cents: int) -> dict:
+    peak = max(int(meta.get("peakBidCents") or exit_bid), exit_bid)
+    meta["peakBidCents"] = peak
+    armed = bool(meta.get("trailArmed")) or (
+        STOP_TRAIL_ENABLED and (peak - entry_cents) >= STOP_TRAIL_ARM_CENTS
+    )
+    meta["trailArmed"] = armed
+    if armed and STOP_TRAIL_ENABLED:
+        meta["trailFloorCents"] = max(1, peak - STOP_TRAIL_OFFSET_CENTS)
+    else:
+        meta.pop("trailFloorCents", None)
+    return meta
+
+
+def evaluate_position_exit(
+    fill: "Fill",
+    orderbook: dict,
+    strategy: MarketImbalanceStrategy,
+    *,
+    held_seconds: float,
+    position_meta: dict | None = None,
+) -> ExitSignal | None:
+    """Exit rules aligned with the imbalance entry thesis."""
+    if not STOP_LOSS_ENABLED:
+        return None
+
+    quote = DashboardRecorder._quote_from_book(orderbook)
+    exit_bid = mark_bid_cents(fill.side, quote)
+    if exit_bid <= 0:
+        return None
+
+    meta = position_meta if position_meta is not None else {}
+    entry = fill.price_cents
+    loss_cents, loss_pct = premium_loss_metrics(entry, exit_bid)
+    gain_cents = max(0, exit_bid - entry)
+    within_min_hold = held_seconds + 1e-9 < STOP_MIN_HOLD_SECONDS
+    partial_tp_taken = bool(meta.get("partialTpTaken"))
+    trail = update_trail_state(meta, exit_bid, entry)
+
+    if not within_min_hold and STOP_TRAIL_ENABLED and trail.get("trailArmed"):
+        trail_floor = int(trail.get("trailFloorCents") or 0)
+        if trail_floor > 0 and exit_bid <= trail_floor:
+            return ExitSignal(
+                ticker=fill.ticker,
+                side=fill.side,
+                trigger="trailing_stop",
+                reason=(
+                    f"trailing stop — bid {exit_bid}¢ fell to floor {trail_floor}¢ "
+                    f"(peak {trail['peakBidCents']}¢, trail -{STOP_TRAIL_OFFSET_CENTS}¢)"
+                ),
+                exit_bid_cents=exit_bid,
+                limit_price_cents=max(1, exit_bid - 1),
+            )
+
+    if (
+        not within_min_hold
+        and STOP_TAKE_PROFIT_CENTS > 0
+        and gain_cents >= STOP_TAKE_PROFIT_CENTS
+        and STOP_PARTIAL_TP_ENABLED
+        and fill.count > 1
+        and not partial_tp_taken
+    ):
+        return ExitSignal(
+            ticker=fill.ticker,
+            side=fill.side,
+            trigger="partial_take_profit",
+            reason=(
+                f"partial take profit +{gain_cents}¢ on 1/{fill.count} contracts "
+                f"(target +{STOP_TAKE_PROFIT_CENTS}¢; bid {exit_bid}¢)"
+            ),
+            exit_bid_cents=exit_bid,
+            limit_price_cents=max(1, exit_bid - 1),
+            exit_count=1,
+        )
+
+    if (
+        STOP_TAKE_PROFIT_CENTS > 0
+        and gain_cents >= STOP_TAKE_PROFIT_CENTS
+        and not within_min_hold
+        and (fill.count <= 1 or partial_tp_taken or not STOP_PARTIAL_TP_ENABLED)
+    ):
+        return ExitSignal(
+            ticker=fill.ticker,
+            side=fill.side,
+            trigger="take_profit",
+            reason=f"take profit +{gain_cents}¢ (target +{STOP_TAKE_PROFIT_CENTS}¢; bid {exit_bid}¢)",
+            exit_bid_cents=exit_bid,
+            limit_price_cents=max(1, exit_bid - 1),
+        )
+
+    if not within_min_hold and (
+        loss_cents >= STOP_LOSS_CENTS or loss_pct + 1e-12 >= STOP_LOSS_PCT
+    ):
+        return ExitSignal(
+            ticker=fill.ticker,
+            side=fill.side,
+            trigger="stop_loss",
+            reason=(
+                f"stop loss -{loss_cents}¢ ({loss_pct:.0%} premium; "
+                f"limits -{STOP_LOSS_CENTS}¢ / -{STOP_LOSS_PCT:.0%})"
+            ),
+            exit_bid_cents=exit_bid,
+            limit_price_cents=max(1, exit_bid - 1),
+        )
+
+    if STOP_THESIS_REVERSAL and not within_min_hold:
+        opposite = strategy.evaluate_market(fill.ticker, orderbook)
+        if opposite and opposite.side != fill.side and opposite_signal_qualifies(opposite):
+            return ExitSignal(
+                ticker=fill.ticker,
+                side=fill.side,
+                trigger="thesis_reversal",
+                reason=f"thesis reversal — book now favors {opposite.side}: {opposite.reason}",
+                exit_bid_cents=exit_bid,
+                limit_price_cents=max(1, exit_bid - 1),
+            )
+
+    return None
 
 
 # ============================================================================
@@ -389,6 +674,7 @@ class Fill:
     count: int
     price_cents: int
     timestamp: float
+    event_ticker: str = ""
 
 
 @dataclass
@@ -399,9 +685,40 @@ class RiskManager:
     open_positions: dict = field(default_factory=dict)  # ticker -> Fill
     last_trade_time: float = 0.0
     trade_day: str = field(default_factory=lambda: datetime.now(timezone.utc).strftime("%Y-%m-%d"))
+    current_event: str = ""
+    hour_contracts_used: int = 0
 
     def __post_init__(self):
         self.bankroll = self.starting_bankroll
+
+    def contracts_open(self) -> int:
+        return sum(pos.count for pos in self.open_positions.values())
+
+    def contracts_open_this_event(self) -> int:
+        if not self.current_event:
+            return self.contracts_open()
+        return sum(
+            pos.count
+            for pos in self.open_positions.values()
+            if pos.event_ticker == self.current_event
+        )
+
+    def sync_event(self, event_ticker: str) -> None:
+        event_ticker = str(event_ticker or "").strip()
+        if not event_ticker:
+            return
+        if event_ticker != self.current_event:
+            log_risk.info(
+                "New hourly event %s — resetting contract budget (%d/%d used on prior event).",
+                event_ticker,
+                self.hour_contracts_used,
+                HOUR_MAX_CONTRACTS,
+            )
+            self.current_event = event_ticker
+            self.hour_contracts_used = 0
+
+    def hour_contracts_remaining(self) -> int:
+        return max(0, HOUR_MAX_CONTRACTS - self.hour_contracts_used)
 
     def _roll_day_if_needed(self):
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -432,6 +749,15 @@ class RiskManager:
             return False, f"Cooldown active, {RISK.cooldown_seconds_after_trade - elapsed:.0f}s remaining."
         if count > RISK.max_contracts_per_trade:
             return False, f"Requested count {count} exceeds max_contracts_per_trade."
+        if self.hour_contracts_used + count > HOUR_MAX_CONTRACTS:
+            return False, (
+                f"Hourly contract budget reached ({self.hour_contracts_used}/{HOUR_MAX_CONTRACTS} "
+                f"contracts used this event)."
+            )
+        if self.contracts_open_this_event() + count > HOUR_MAX_CONTRACTS:
+            return False, (
+                f"Would exceed {HOUR_MAX_CONTRACTS} contracts open for this hourly event."
+            )
         if cost > RISK.max_dollars_per_trade:
             return False, f"Trade cost ${cost:.2f} exceeds max_dollars_per_trade ${RISK.max_dollars_per_trade:.2f}."
         if cost > self.bankroll:
@@ -443,19 +769,73 @@ class RiskManager:
         max_by_contracts = RISK.max_contracts_per_trade
         max_by_dollars = int((RISK.max_dollars_per_trade * 100) // max(price_cents, 1))
         max_by_bankroll = int((self.bankroll * 100) // max(price_cents, 1))
-        return max(0, min(requested_count, max_by_contracts, max_by_dollars, max_by_bankroll))
+        max_by_hour = self.hour_contracts_remaining()
+        max_by_open = max(0, HOUR_MAX_CONTRACTS - self.contracts_open_this_event())
+        return max(
+            0,
+            min(
+                requested_count,
+                max_by_contracts,
+                max_by_dollars,
+                max_by_bankroll,
+                max_by_hour,
+                max_by_open,
+            ),
+        )
 
     def record_fill(self, ticker: str, side: str, count: int, price_cents: int):
         cost = (count * price_cents) / 100.0
         self.bankroll -= cost
+        self.hour_contracts_used += count
         self.open_positions[ticker] = Fill(
-            ticker=ticker, side=side, count=count, price_cents=price_cents, timestamp=time.time()
+            ticker=ticker,
+            side=side,
+            count=count,
+            price_cents=price_cents,
+            timestamp=time.time(),
+            event_ticker=self.current_event,
         )
         self.last_trade_time = time.time()
         log_risk.info(
             "FILL %s %s x%d @ %d\u00a2 | cost=$%.2f | bankroll=$%.2f",
             ticker, side, count, price_cents, cost, self.bankroll,
         )
+
+    def record_exit(self, ticker: str, exit_price_cents: int) -> float:
+        pos = self.open_positions.pop(ticker, None)
+        if pos is None:
+            log_risk.warning("Exit recorded for %s but no open position was tracked.", ticker)
+            return 0.0
+        proceeds = (pos.count * exit_price_cents) / 100.0
+        cost = (pos.count * pos.price_cents) / 100.0
+        pnl = proceeds - cost
+        self.bankroll += proceeds
+        self.realized_pnl_today += pnl
+        log_risk.info(
+            "EXIT %s %s x%d @ %d\u00a2 | pnl=$%.2f | bankroll=$%.2f | day_pnl=$%.2f",
+            ticker, pos.side, pos.count, exit_price_cents, pnl, self.bankroll, self.realized_pnl_today,
+        )
+        return pnl
+
+    def record_partial_exit(self, ticker: str, exit_count: int, exit_price_cents: int) -> float:
+        pos = self.open_positions.get(ticker)
+        if pos is None:
+            log_risk.warning("Partial exit recorded for %s but no open position was tracked.", ticker)
+            return 0.0
+        if exit_count <= 0 or exit_count >= pos.count:
+            return self.record_exit(ticker, exit_price_cents)
+        proceeds = (exit_count * exit_price_cents) / 100.0
+        cost = (exit_count * pos.price_cents) / 100.0
+        pnl = proceeds - cost
+        self.bankroll += proceeds
+        self.realized_pnl_today += pnl
+        pos.count -= exit_count
+        self.last_trade_time = time.time()
+        log_risk.info(
+            "PARTIAL EXIT %s %s x%d @ %d\u00a2 | pnl=$%.2f | remaining=%d | bankroll=$%.2f",
+            ticker, pos.side, exit_count, exit_price_cents, pnl, pos.count, self.bankroll,
+        )
+        return pnl
 
     def record_settlement(self, ticker: str, won: bool, payout_per_contract_cents: int = 100):
         pos = self.open_positions.pop(ticker, None)
@@ -479,6 +859,502 @@ class RiskManager:
         )
 
 
+@dataclass
+class DashboardRecorder:
+    """Tracks bot state for the 1-hour React dashboard."""
+
+    mode: str
+    logs: list[dict] = field(default_factory=list)
+    journal: list[dict] = field(default_factory=list)
+    equity_history: list[dict] = field(default_factory=list)
+    wins_today: int = 0
+    losses_today: int = 0
+    sum_win_dollars: float = 0.0
+    sum_loss_dollars: float = 0.0
+    fees_paid_today: float = 0.0
+    fees_paid_total: float = 0.0
+    cum_pnl_inception: float = 0.0
+    pnl_by_side: dict[str, float] = field(default_factory=lambda: {"yes": 0.0, "no": 0.0})
+    daily_entries: int = 0
+    peak_equity: float = field(default_factory=lambda: RISK.starting_bankroll)
+    position_meta: dict[str, dict] = field(default_factory=dict)
+    last_publish_ctx: dict = field(default_factory=dict)
+    _tick: int = 0
+
+    def add_log(
+        self,
+        kind: str,
+        text: str,
+        *,
+        ticker: str = "",
+        side: str = "",
+        price: int | None = None,
+        count: int | None = None,
+        won: bool | None = None,
+        outcome: str = "",
+        detail: dict | None = None,
+        journal_only: bool = False,
+    ) -> None:
+        entry = {
+            "id": new_log_id(),
+            "time": datetime.now(timezone.utc).isoformat(),
+            "kind": kind,
+            "text": text,
+            "ticker": ticker,
+            "side": side,
+            "price": price,
+            "count": count,
+            "won": won,
+            "outcome": outcome,
+            "detail": detail or {},
+        }
+        if not journal_only and kind != "scan":
+            self.logs.insert(0, entry)
+            self.logs = self.logs[:100]
+        if kind != "scan" or detail:
+            self.journal.insert(0, entry)
+            self.journal = self.journal[:300]
+
+    def record_entry(
+        self,
+        ticker: str,
+        side: str,
+        count: int,
+        price_cents: int,
+        *,
+        expires_at_ms: int,
+        strike_btc: int,
+        signal_reason: str = "",
+        quote: dict | None = None,
+    ):
+        self.daily_entries += 1
+        self.position_meta[ticker] = {
+            "expiresAt": expires_at_ms,
+            "strikeBtc": strike_btc,
+            "entryTime": int(time.time() * 1000),
+            "signalReason": signal_reason,
+            "entryQuote": quote or {},
+            "peakBidCents": price_cents,
+            "trailArmed": False,
+            "partialTpTaken": False,
+        }
+        self.add_log(
+            "fill",
+            f"FILL {ticker} {side} x{count} @ {price_cents}c — {signal_reason}".strip(" —"),
+            ticker=ticker,
+            side=side,
+            price=price_cents,
+            count=count,
+            detail={"signalReason": signal_reason, "quote": quote or {}},
+        )
+
+    def record_settlement(
+        self,
+        ticker: str,
+        side: str,
+        pnl: float,
+        won: bool,
+        *,
+        market_result: str = "",
+        count: int = 0,
+        entry_price: int = 0,
+        cost_basis: float = 0.0,
+        payout: float = 0.0,
+    ):
+        fee = 0.01
+        self.fees_paid_today += fee
+        self.fees_paid_total += fee
+        self.cum_pnl_inception += pnl
+        self.pnl_by_side[side] = round(self.pnl_by_side.get(side, 0.0) + pnl, 2)
+        if won:
+            self.wins_today += 1
+            self.sum_win_dollars += max(pnl, 0)
+        else:
+            self.losses_today += 1
+            self.sum_loss_dollars += max(-pnl, 0)
+        self.position_meta.pop(ticker, None)
+        outcome = "WIN" if won else "LOSS"
+        self.add_log(
+            "settle",
+            (
+                f"SETTLED {ticker} {side} — {outcome} — "
+                f"market settled {market_result or '?'} — pnl {pnl:+.2f}"
+            ),
+            ticker=ticker,
+            side=side,
+            price=entry_price or None,
+            count=count or None,
+            won=won,
+            outcome=outcome,
+            detail={
+                "won": won,
+                "outcome": outcome,
+                "marketResult": market_result,
+                "heldSide": side,
+                "pnl": round(pnl, 2),
+                "count": count,
+                "entryPrice": entry_price,
+                "costBasis": round(cost_basis, 2),
+                "payout": round(payout, 2),
+            },
+        )
+
+    def record_exit(
+        self,
+        ticker: str,
+        side: str,
+        trigger: str,
+        reason: str,
+        pnl: float,
+        *,
+        count: int = 0,
+        entry_price: int = 0,
+        exit_price: int = 0,
+        cost_basis: float = 0.0,
+        proceeds: float = 0.0,
+        keep_position: bool = False,
+    ):
+        fee = 0.01
+        self.fees_paid_today += fee
+        self.fees_paid_total += fee
+        self.cum_pnl_inception += pnl
+        self.pnl_by_side[side] = round(self.pnl_by_side.get(side, 0.0) + pnl, 2)
+        if pnl >= 0:
+            self.wins_today += 1
+            self.sum_win_dollars += max(pnl, 0)
+        else:
+            self.losses_today += 1
+            self.sum_loss_dollars += max(-pnl, 0)
+        if not keep_position:
+            self.position_meta.pop(ticker, None)
+        outcome = "WIN" if pnl >= 0 else "LOSS"
+        self.add_log(
+            "exit",
+            f"EXIT {ticker} {side} — {trigger} — {reason} — pnl {pnl:+.2f}",
+            ticker=ticker,
+            side=side,
+            price=exit_price or None,
+            count=count or None,
+            won=pnl >= 0,
+            outcome=outcome,
+            detail={
+                "trigger": trigger,
+                "reason": reason,
+                "pnl": round(pnl, 2),
+                "entryPrice": entry_price,
+                "exitPrice": exit_price,
+                "count": count,
+                "costBasis": round(cost_basis, 2),
+                "proceeds": round(proceeds, 2),
+            },
+        )
+
+    @staticmethod
+    def _quote_from_book(orderbook: dict | None) -> dict:
+        if not orderbook:
+            return {
+                "yesBid": 0,
+                "yesAsk": 0,
+                "noBid": 0,
+                "noAsk": 0,
+                "spread": 0,
+                "impliedProb": 0,
+                "depthYes": 0,
+                "depthNo": 0,
+            }
+        yes = orderbook.get("yes") or []
+        no = orderbook.get("no") or []
+        yes_bid = int(yes[0][0]) if yes else 0
+        no_bid = int(no[0][0]) if no else 0
+        yes_ask = int(100 - no_bid) if no_bid > 0 else 0
+        no_ask = int(100 - yes_bid) if yes_bid > 0 else 0
+        if yes_bid > 0 and yes_ask <= 0:
+            yes_ask = min(99, yes_bid + 2)
+        if no_bid > 0 and no_ask <= 0:
+            no_ask = min(99, no_bid + 2)
+        if yes_bid > 0 and yes_ask > 0 and yes_ask < yes_bid:
+            yes_ask = min(99, yes_bid + 1)
+        implied = round((yes_bid + yes_ask) / 2, 1) if yes_bid > 0 and yes_ask > 0 else yes_bid or yes_ask
+        spread = max(0, yes_ask - yes_bid) if yes_bid > 0 and yes_ask > 0 else 0
+        return {
+            "yesBid": yes_bid,
+            "yesAsk": yes_ask,
+            "noBid": no_bid,
+            "noAsk": no_ask,
+            "spread": spread,
+            "impliedProb": implied,
+            "depthYes": sum(int(lvl[1]) for lvl in yes[:DEPTH_LEVELS]),
+            "depthNo": sum(int(lvl[1]) for lvl in no[:DEPTH_LEVELS]),
+        }
+
+    def _market_row(
+        self,
+        market: dict,
+        orderbook: dict | None,
+        *,
+        btc_spot: float = 0.0,
+        trade_candidates: set[str] | None = None,
+    ) -> dict:
+        ticker = market.get("ticker", "")
+        expiration_time = market_close_time_str(market) or ""
+        try:
+            expires_at = int(
+                datetime.fromisoformat(expiration_time.replace("Z", "+00:00")).timestamp() * 1000
+            )
+        except Exception:
+            expires_at = int(time.time() * 1000) + 3_600_000
+
+        quote = self._quote_from_book(orderbook)
+        if quote["yesBid"] <= 0:
+            quote["yesBid"] = int(market.get("yes_bid") or 0)
+        if quote["yesAsk"] <= 0:
+            quote["yesAsk"] = int(market.get("yes_ask") or 0)
+        if quote["yesBid"] > 0 and quote["yesAsk"] <= 0:
+            quote["yesAsk"] = min(99, quote["yesBid"] + 2)
+        if quote["yesBid"] > 0 and quote["yesAsk"] > 0:
+            quote["impliedProb"] = round((quote["yesBid"] + quote["yesAsk"]) / 2, 1)
+            quote["spread"] = max(0, quote["yesAsk"] - quote["yesBid"])
+
+        floor_strike = market.get("floor_strike")
+        cap_strike = market.get("cap_strike")
+        strike = _strike_from_market(market)
+        dist_from_spot = abs(strike - btc_spot) if btc_spot > 0 and strike > 0 else 0
+        candidates = trade_candidates or set()
+        return {
+            "ticker": ticker,
+            "expiresAt": expires_at,
+            "strike": strike,
+            "subtitle": str(market.get("subtitle") or ""),
+            "lastPrice": int(market.get("last_price") or 0),
+            "distFromSpot": round(dist_from_spot, 1),
+            "isAtm": dist_from_spot <= SCAN_ATM_RADIUS_USD,
+            "isExtremeQuote": is_extreme_quote(quote),
+            "tradeCandidate": ticker in candidates,
+            **quote,
+        }
+
+    def _position_rows(
+        self,
+        risk: RiskManager,
+        client: KalshiClient,
+        market_books: dict[str, dict],
+    ) -> list[dict]:
+        rows: list[dict] = []
+        now_ms = int(time.time() * 1000)
+        for ticker, fill in risk.open_positions.items():
+            meta = self.position_meta.get(ticker, {})
+            market = client.get_market(ticker)
+            book = market_books.get(ticker) or client.get_orderbook(ticker)
+            if book:
+                market_books[ticker] = book
+            quote = self._quote_from_book(book)
+
+            if fill.side == "yes":
+                current_mark = quote["yesBid"] or quote["yesAsk"] or fill.price_cents
+            else:
+                current_mark = quote["noBid"] or quote["noAsk"] or fill.price_cents
+
+            update_trail_state(meta, current_mark, fill.price_cents)
+
+            strike = int(meta.get("strikeBtc") or _strike_from_market(market or {}))
+            expires_at = int(meta.get("expiresAt") or now_ms + 3_600_000)
+            minutes_remaining = max(0.0, (expires_at - now_ms) / 60_000)
+            cost_basis = round((fill.price_cents * fill.count) / 100.0, 2)
+            market_value = round((current_mark * fill.count) / 100.0, 2)
+            unrealized_pnl = round(market_value - cost_basis, 2)
+            stop_floor = stop_loss_bid_floor(fill.price_cents) if STOP_LOSS_ENABLED else None
+            take_profit_bid = (
+                fill.price_cents + STOP_TAKE_PROFIT_CENTS
+                if STOP_LOSS_ENABLED and STOP_TAKE_PROFIT_CENTS > 0
+                else None
+            )
+            peak_bid = int(meta.get("peakBidCents") or current_mark)
+            trail_armed = bool(meta.get("trailArmed"))
+            trail_floor = int(meta.get("trailFloorCents") or 0) or None
+
+            rows.append(
+                {
+                    "id": ticker,
+                    "ticker": ticker,
+                    "side": fill.side,
+                    "entryPrice": fill.price_cents,
+                    "currentMark": current_mark,
+                    "count": fill.count,
+                    "entryTime": int(meta.get("entryTime") or fill.timestamp * 1000),
+                    "expiresAt": expires_at,
+                    "strikeBtc": strike,
+                    "floorStrike": market.get("floor_strike") if market else None,
+                    "capStrike": market.get("cap_strike") if market else None,
+                    "subtitle": str(market.get("subtitle") or "") if market else "",
+                    "signalReason": str(meta.get("signalReason") or ""),
+                    "entryQuote": meta.get("entryQuote") or {},
+                    "minutesRemaining": round(minutes_remaining, 1),
+                    "costBasis": cost_basis,
+                    "marketValue": market_value,
+                    "unrealizedPnl": unrealized_pnl,
+                    "stopLossBidFloor": stop_floor,
+                    "takeProfitBid": take_profit_bid,
+                    "peakBidCents": peak_bid,
+                    "trailArmed": trail_armed,
+                    "trailFloorCents": trail_floor,
+                    "partialTpTaken": bool(meta.get("partialTpTaken")),
+                    "markUpdatedAt": datetime.now(timezone.utc).isoformat(),
+                    **quote,
+                }
+            )
+        return rows
+
+    def publish(
+        self,
+        *,
+        risk: RiskManager,
+        client: KalshiClient,
+        markets: list[dict],
+        market_books: dict[str, dict],
+        control: HourBotControl,
+        btc_spot: float,
+        current_hour: dict | None = None,
+        trade_candidates: set[str] | None = None,
+    ) -> None:
+        candidates = set(trade_candidates or [])
+        self._tick += 1
+        self.last_publish_ctx = {
+            "markets": markets,
+            "market_books": dict(market_books),
+            "btc_spot": btc_spot,
+            "current_hour": current_hour or {},
+            "control": control,
+            "trade_candidates": candidates,
+        }
+
+        position_rows = self._position_rows(risk, client, market_books)
+        unrealized = sum(p["unrealizedPnl"] for p in position_rows)
+        capital_deployed = sum(p["costBasis"] for p in position_rows)
+
+        net_equity = risk.bankroll + unrealized
+        self.peak_equity = max(self.peak_equity, net_equity)
+        if self._tick % 2 == 0:
+            self.equity_history.append({"t": self._tick, "v": round(net_equity, 2)})
+            self.equity_history = self.equity_history[-120:]
+
+        open_tickers = set(risk.open_positions.keys())
+        market_rows = []
+        seen: set[str] = set()
+        for market in markets:
+            ticker = market.get("ticker", "")
+            if not ticker or ticker in seen:
+                continue
+            seen.add(ticker)
+            market_rows.append(
+                self._market_row(
+                    market,
+                    market_books.get(ticker),
+                    btc_spot=btc_spot,
+                    trade_candidates=candidates | open_tickers,
+                )
+            )
+        for ticker in open_tickers:
+            if ticker in seen:
+                continue
+            market = client.get_market(ticker)
+            if market:
+                market_rows.append(
+                    self._market_row(
+                        market,
+                        market_books.get(ticker),
+                        btc_spot=btc_spot,
+                        trade_candidates=candidates | open_tickers,
+                    )
+                )
+
+        market_rows = sort_market_rows_for_display(
+            market_rows,
+            trade_candidates=candidates,
+            open_tickers=open_tickers,
+        )
+
+        status = HourBotStatus(
+            mode=control.mode,
+            running=control.running and not control.estop,
+            estop=control.estop,
+            series=BTC_SERIES_TICKER,
+            btcSpot=round(btc_spot, 2),
+            bankroll=round(risk.bankroll, 2),
+            dayPnl=round(risk.realized_pnl_today, 2),
+            unrealized=round(unrealized, 2),
+            equityHistory=self.equity_history,
+            dailyEntriesUsed=self.daily_entries,
+            winsToday=self.wins_today,
+            lossesToday=self.losses_today,
+            sumWinDollars=round(self.sum_win_dollars, 2),
+            sumLossDollars=round(self.sum_loss_dollars, 2),
+            feesPaidToday=round(self.fees_paid_today, 2),
+            feesPaidTotal=round(self.fees_paid_total, 2),
+            cumPnlInception=round(self.cum_pnl_inception, 2),
+            pnlBySide=dict(self.pnl_by_side),
+            peakEquity=round(self.peak_equity, 2),
+            markets=market_rows[:DASHBOARD_MARKETS_LIMIT],
+            positions=position_rows,
+            logs=self.logs,
+            journal=self.journal,
+            guardrails={
+                "dailyLossLimit": RISK.daily_loss_limit_dollars,
+                "maxOpenPositions": RISK.max_open_positions,
+                "maxCapitalDeployed": RISK.max_dollars_per_trade * RISK.max_open_positions,
+                "dailyEntryBudget": DAILY_ENTRY_BUDGET,
+                "openPositionsCount": len(risk.open_positions),
+                "capitalDeployed": round(capital_deployed, 2),
+                "stopLoss": {
+                    "enabled": STOP_LOSS_ENABLED,
+                    "cents": STOP_LOSS_CENTS,
+                    "pct": STOP_LOSS_PCT,
+                    "takeProfitCents": STOP_TAKE_PROFIT_CENTS,
+                    "minHoldSeconds": STOP_MIN_HOLD_SECONDS,
+                    "thesisReversal": STOP_THESIS_REVERSAL,
+                    "thesisExtremeOnly": STOP_THESIS_EXTREME_ONLY,
+                    "partialTpEnabled": STOP_PARTIAL_TP_ENABLED,
+                    "trailEnabled": STOP_TRAIL_ENABLED,
+                    "trailArmCents": STOP_TRAIL_ARM_CENTS,
+                    "trailOffsetCents": STOP_TRAIL_OFFSET_CENTS,
+                },
+                "hourMaxContracts": HOUR_MAX_CONTRACTS,
+                "hourContractsUsed": risk.hour_contracts_used,
+                "hourContractsOpen": risk.contracts_open_this_event(),
+                "currentEvent": risk.current_event,
+            },
+            currentHour=current_hour or {},
+            pollIntervalMs=HOUR_BOT_POLL_MS,
+            startingBankroll=round(RISK.starting_bankroll, 2),
+        )
+        status.save()
+
+    def publish_fast_quotes(self, *, risk: RiskManager, client: KalshiClient, control: HourBotControl) -> None:
+        if not self.last_publish_ctx:
+            return
+        ctx = self.last_publish_ctx
+        market_books = dict(ctx.get("market_books") or {})
+        tickers_to_refresh = list(risk.open_positions.keys())
+        for market in (ctx.get("markets") or [])[:12]:
+            ticker = market.get("ticker")
+            if ticker and ticker not in tickers_to_refresh:
+                tickers_to_refresh.append(ticker)
+        for ticker in tickers_to_refresh:
+            book = client.get_orderbook(ticker)
+            if book:
+                market_books[ticker] = book
+                time.sleep(0.05)
+        self.publish(
+            risk=risk,
+            client=client,
+            markets=ctx.get("markets") or [],
+            market_books=market_books,
+            control=control,
+            btc_spot=float(ctx.get("btc_spot") or 0),
+            current_hour=ctx.get("current_hour") or {},
+            trade_candidates=set(ctx.get("trade_candidates") or []),
+        )
+
+
 # ============================================================================
 # MAIN LOOP
 # ============================================================================
@@ -492,58 +1368,511 @@ def minutes_to_expiration(expiration_time_str: str) -> float:
     return (expiry - now).total_seconds() / 60.0
 
 
+def market_close_time_str(market: dict) -> str | None:
+    """Hourly contracts settle on close_time, not the series expiration_time."""
+    for field in ("close_time", "expected_expiration_time", "expiration_time"):
+        value = market.get(field)
+        if value:
+            return str(value)
+    return None
+
+
+def markets_in_trading_window(markets: list[dict]) -> list[tuple[float, dict]]:
+    rows: list[tuple[float, dict]] = []
+    for market in markets:
+        close_time = market_close_time_str(market)
+        if not close_time:
+            continue
+        try:
+            mins_left = minutes_to_expiration(close_time)
+        except ValueError:
+            continue
+        if MIN_TIME_LEFT_MINUTES <= mins_left <= MAX_TIME_LEFT_MINUTES:
+            rows.append((mins_left, market))
+    rows.sort(key=lambda row: row[0])
+    return rows
+
+
+def current_hour_snapshot(
+    tradeable: list[tuple[float, dict]],
+    *,
+    total_markets: int,
+) -> dict:
+    if not tradeable:
+        return {
+            "active": False,
+            "message": (
+                f"No contracts in the {MIN_TIME_LEFT_MINUTES:.0f}-"
+                f"{MAX_TIME_LEFT_MINUTES:.0f} minute trading window"
+            ),
+            "contractsInWindow": 0,
+            "marketsScanned": total_markets,
+        }
+    mins_left, market = tradeable[0]
+    ticker = str(market.get("ticker") or "")
+    event = str(market.get("event_ticker") or ticker.rsplit("-", 1)[0])
+    close_time = market_close_time_str(market) or ""
+    return {
+        "active": True,
+        "eventTicker": event,
+        "sampleTicker": ticker,
+        "minutesRemaining": round(mins_left, 1),
+        "closeTime": close_time,
+        "contractsInWindow": len(tradeable),
+        "marketsScanned": total_markets,
+        "message": f"{event} · {mins_left:.1f}m to close · {len(tradeable)} strikes in window",
+    }
+
+
 class PaperBroker:
     """Simulates fills against the real order book without sending real orders."""
 
     def __init__(self, client: KalshiClient):
         self.client = client
 
-    def place_order(self, ticker: str, side: str, count: int, price_cents: int, order_type: str):
-        log_main.info("[PAPER] Would submit %s %s x%d @ %d\u00a2 (%s)", ticker, side, count, price_cents, order_type)
-        return {"order_id": f"paper-{ticker}-{int(time.time())}", "status": "filled"}
+    def place_order(
+        self,
+        ticker: str,
+        side: str,
+        count: int,
+        price_cents: int,
+        order_type: str,
+        action: str = "buy",
+    ):
+        verb = "sell" if (action or "buy").lower() == "sell" else "buy"
+        log_main.info(
+            "[PAPER] Would %s %s %s x%d @ %d\u00a2 (%s)",
+            verb, ticker, side, count, price_cents, order_type,
+        )
+        return {
+            "order_id": f"paper-{ticker}-{int(time.time())}",
+            "fill_count": f"{int(count):.2f}",
+        }
 
 
-def check_settlements(client: KalshiClient, risk: RiskManager):
+def check_settlements(client: KalshiClient, risk: RiskManager, dashboard: DashboardRecorder | None = None):
     for ticker in list(risk.open_positions.keys()):
         market = client.get_market(ticker)
         if not market:
             continue
         if market.get("status") == "finalized" and market.get("result") in ("yes", "no"):
             held_side = risk.open_positions[ticker].side
-            won = held_side == market.get("result")
+            market_result = str(market.get("result"))
+            won = held_side == market_result
+            fill = risk.open_positions[ticker]
+            cost = (fill.price_cents * fill.count) / 100.0
+            proceeds = fill.count * 1.0 if won else 0.0
+            pnl = proceeds - cost
             risk.record_settlement(ticker, won=won)
+            if dashboard:
+                dashboard.record_settlement(
+                    ticker,
+                    held_side,
+                    pnl,
+                    won,
+                    market_result=market_result,
+                    count=fill.count,
+                    entry_price=fill.price_cents,
+                    cost_basis=cost,
+                    payout=proceeds,
+                )
 
 
-def run_cycle(client: KalshiClient, broker, strategy: MarketImbalanceStrategy, risk: RiskManager):
-    markets = client.get_btc_hourly_markets()
-    if not markets:
-        log_main.debug("No open BTC hourly markets found this cycle.")
+def check_stop_losses(
+    client: KalshiClient,
+    broker,
+    strategy: MarketImbalanceStrategy,
+    risk: RiskManager,
+    dashboard: DashboardRecorder | None = None,
+) -> None:
+    if not STOP_LOSS_ENABLED or not risk.open_positions:
         return
 
-    for market in markets:
-        ticker = market.get("ticker")
-        expiration_time = market.get("expiration_time")
-        if not ticker or not expiration_time:
+    for ticker in list(risk.open_positions.keys()):
+        fill = risk.open_positions[ticker]
+        book = client.get_orderbook(ticker)
+        if not book:
             continue
 
-        try:
-            mins_left = minutes_to_expiration(expiration_time)
-        except ValueError:
-            log_main.warning("Could not parse expiration_time for %s: %r", ticker, expiration_time)
+        position_meta = dashboard.position_meta.setdefault(ticker, {}) if dashboard else {}
+        held_seconds = max(0.0, time.time() - fill.timestamp)
+        exit_sig = evaluate_position_exit(
+            fill,
+            book,
+            strategy,
+            held_seconds=held_seconds,
+            position_meta=position_meta,
+        )
+        if not exit_sig:
             continue
+
+        exit_count = exit_sig.exit_count or fill.count
+        log_risk.info(
+            "EXIT signal %s %s x%d — %s — %s",
+            ticker,
+            exit_sig.trigger,
+            exit_count,
+            exit_sig.reason,
+        )
+        if dashboard:
+            dashboard.add_log(
+                "signal",
+                f"EXIT {ticker} {fill.side} x{exit_count} — {exit_sig.trigger} — {exit_sig.reason}",
+                ticker=ticker,
+                side=fill.side,
+                price=exit_sig.limit_price_cents,
+                count=exit_count,
+                detail={"trigger": exit_sig.trigger, "reason": exit_sig.reason},
+            )
+
+        order_res = broker.place_order(
+            ticker,
+            fill.side,
+            exit_count,
+            exit_sig.limit_price_cents,
+            "market",
+            action="sell",
+        )
+        if not order_res:
+            log_main.warning("Stop exit order failed for %s", ticker)
+            if dashboard:
+                dashboard.add_log(
+                    "reject",
+                    f"{ticker} exit order rejected — {exit_sig.reason}",
+                    ticker=ticker,
+                    side=fill.side,
+                    price=exit_sig.limit_price_cents,
+                    count=exit_count,
+                    detail={"trigger": exit_sig.trigger, "reason": "exit_api_failed"},
+                )
+            continue
+
+        cost_basis = (fill.price_cents * exit_count) / 100.0
+        proceeds = (exit_sig.exit_bid_cents * exit_count) / 100.0
+        is_partial = exit_count < fill.count
+        if is_partial:
+            pnl = risk.record_partial_exit(ticker, exit_count, exit_sig.exit_bid_cents)
+            if dashboard:
+                position_meta["partialTpTaken"] = True
+        else:
+            pnl = risk.record_exit(ticker, exit_sig.exit_bid_cents)
+        if dashboard:
+            dashboard.record_exit(
+                ticker,
+                fill.side,
+                exit_sig.trigger,
+                exit_sig.reason,
+                pnl,
+                count=exit_count,
+                entry_price=fill.price_cents,
+                exit_price=exit_sig.exit_bid_cents,
+                cost_basis=cost_basis,
+                proceeds=proceeds,
+                keep_position=is_partial,
+            )
+
+
+def _expiration_ms(market: dict) -> int:
+    close_time = market_close_time_str(market)
+    if not close_time:
+        return int(time.time() * 1000) + 3_600_000
+    return int(datetime.fromisoformat(close_time.replace("Z", "+00:00")).timestamp() * 1000)
+
+
+def _strike_from_market(market: dict) -> int:
+    ticker = str(market.get("ticker") or "")
+    if "-B" in ticker:
+        suffix = ticker.rsplit("-B", 1)[-1]
+        if suffix.startswith("T"):
+            try:
+                return int(round(float(suffix[1:])))
+            except ValueError:
+                pass
+        else:
+            try:
+                return int(suffix)
+            except ValueError:
+                pass
+    floor = market.get("floor_strike")
+    cap = market.get("cap_strike")
+    if floor is not None and cap is not None:
+        return int(round((float(floor) + float(cap)) / 2))
+    for key in ("floor_strike", "strike", "cap_strike"):
+        if market.get(key) is not None:
+            return int(market[key])
+    return 0
+
+
+def _event_prefix(market: dict) -> str:
+    event = market.get("event_ticker")
+    if event:
+        return str(event)
+    ticker = str(market.get("ticker") or "")
+    parts = ticker.split("-")
+    if len(parts) >= 2:
+        return f"{parts[0]}-{parts[1]}"
+    return ticker
+
+
+def _btc_spot_from_markets(markets: list[dict], *, event_prefix: str = "") -> float:
+    """Use the threshold (T) contract from the active hourly event as spot reference."""
+    best = 0.0
+    for market in markets:
+        ticker = str(market.get("ticker") or "")
+        if event_prefix and not ticker.startswith(event_prefix):
+            continue
+        if "-T" not in ticker:
+            continue
+        try:
+            price = float(ticker.rsplit("-T", 1)[-1])
+        except ValueError:
+            continue
+        if price > best:
+            best = price
+    return best
+
+
+def sort_tradeable_for_scan(
+    tradeable: list[tuple[float, dict]],
+    *,
+    btc_spot: float,
+) -> list[tuple[float, dict]]:
+    """Prioritize near-ATM strikes, then the contested OTM band, then everything else."""
+    if btc_spot <= 0:
+        return tradeable
+
+    band_center = btc_spot - 10_000
+    band_lo = btc_spot - 12_000
+    band_hi = btc_spot - 8_000
+    atm_radius = SCAN_ATM_RADIUS_USD
+
+    def sort_key(row: tuple[float, dict]) -> tuple[int, float, float]:
+        mins_left, market = row
+        strike = _strike_from_market(market)
+        dist_spot = abs(strike - btc_spot)
+        if dist_spot <= atm_radius:
+            zone = 0
+            anchor = btc_spot
+        elif band_lo <= strike <= band_hi:
+            zone = 1
+            anchor = band_center
+        else:
+            zone = 2
+            anchor = btc_spot
+        return (zone, abs(strike - anchor), mins_left)
+
+    return sorted(tradeable, key=sort_key)
+
+
+def is_threshold_ticker(ticker: str) -> bool:
+    return bool(re.search(r"-T\d", str(ticker or "")))
+
+
+def is_extreme_quote(quote: dict) -> bool:
+    """True for classic 1¢/99¢ (or empty-side) books that are not actionable display rows."""
+    edge = EXTREME_QUOTE_CENTS
+    yes_bid = int(quote.get("yesBid") or 0)
+    yes_ask = int(quote.get("yesAsk") or 0)
+    no_bid = int(quote.get("noBid") or 0)
+    no_ask = int(quote.get("noAsk") or 0)
+
+    if yes_bid <= 0 and no_bid >= 100 - edge:
+        return True
+    if no_bid <= 0 and yes_bid > 0 and yes_bid <= edge:
+        return True
+    if yes_bid > 0 and yes_bid <= edge and (yes_ask <= 0 or yes_ask >= 100 - edge):
+        return True
+    if yes_ask >= 100 - edge and yes_bid <= edge:
+        return True
+
+    implied = quote.get("impliedProb")
+    if implied is not None:
+        try:
+            implied_f = float(implied)
+            if implied_f <= edge or implied_f >= 100 - edge:
+                return True
+        except (TypeError, ValueError):
+            pass
+    return False
+
+
+def sort_market_rows_for_display(
+    rows: list[dict],
+    *,
+    trade_candidates: set[str],
+    open_tickers: set[str],
+) -> list[dict]:
+    """ATM and actionable quotes first; 1/99-style books last unless trade candidate."""
+
+    def sort_key(row: dict) -> tuple[int, int, float, str]:
+        ticker = str(row.get("ticker") or "")
+        if ticker in open_tickers or ticker in trade_candidates:
+            return (0, 0, float(row.get("distFromSpot") or 0), ticker)
+        if row.get("isExtremeQuote"):
+            return (3, 1, float(row.get("distFromSpot") or 9_999_999), ticker)
+        if row.get("isAtm"):
+            return (1, 0, float(row.get("distFromSpot") or 0), ticker)
+        return (2, 0, float(row.get("distFromSpot") or 0), ticker)
+
+    return sorted(rows, key=sort_key)
+
+
+def select_dashboard_markets(
+    tradeable: list[tuple[float, dict]],
+    btc_spot: float,
+    *,
+    limit: int = DASHBOARD_MARKETS_LIMIT,
+    trade_candidates: set[str] | None = None,
+) -> list[dict]:
+    """Pick strike contracts near spot for the dashboard (skip threshold T tickers)."""
+    candidates = trade_candidates or set()
+    ranked: list[tuple[tuple[int, float, float], dict]] = []
+
+    for mins_left, market in tradeable:
+        ticker = str(market.get("ticker") or "")
+        if not ticker:
+            continue
+        if is_threshold_ticker(ticker) and ticker not in candidates:
+            continue
+        strike = _strike_from_market(market)
+        if strike <= 0:
+            continue
+        dist = abs(strike - btc_spot) if btc_spot > 0 else 0.0
+        priority = 0 if ticker in candidates else 1
+        ranked.append(((priority, dist, mins_left), market))
+
+    ranked.sort(key=lambda row: row[0])
+    selected = [market for _, market in ranked[:limit]]
+
+    for ticker in candidates:
+        if any(str(m.get("ticker")) == ticker for m in selected):
+            continue
+        for _, market in tradeable:
+            if str(market.get("ticker")) == ticker:
+                selected.append(market)
+                break
+
+    return selected[:limit]
+
+
+def run_cycle(
+    client: KalshiClient,
+    broker,
+    strategy: MarketImbalanceStrategy,
+    risk: RiskManager,
+    *,
+    dashboard: DashboardRecorder | None = None,
+    control: HourBotControl | None = None,
+) -> None:
+    markets = client.get_btc_hourly_markets()
+    tradeable = markets_in_trading_window(markets)
+    event_prefix = _event_prefix(tradeable[0][1]) if tradeable else ""
+    btc_spot = _btc_spot_from_markets(markets, event_prefix=event_prefix)
+    scan_queue = sort_tradeable_for_scan(tradeable, btc_spot=btc_spot)[:MAX_MARKETS_PER_SCAN]
+    current_hour = current_hour_snapshot(tradeable, total_markets=len(markets))
+    risk.sync_event(str(current_hour.get("eventTicker") or ""))
+    trade_candidates: set[str] = set()
+    display_markets = select_dashboard_markets(
+        tradeable,
+        btc_spot,
+        limit=DASHBOARD_MARKETS_LIMIT,
+        trade_candidates=trade_candidates,
+    )
+    if not display_markets:
+        display_markets = [m for _, m in tradeable[:DASHBOARD_MARKETS_LIMIT]] or markets[:DASHBOARD_MARKETS_LIMIT]
+    market_books: dict[str, dict] = {}
+
+    for market in display_markets:
+        ticker = market.get("ticker")
+        if not ticker:
+            continue
+        book = client.get_orderbook(ticker)
+        if book:
+            market_books[ticker] = book
+        if not btc_spot:
+            strike = _strike_from_market(market)
+            if strike:
+                btc_spot = float(strike)
+        time.sleep(0.15)
+
+    if dashboard:
+        dashboard.publish(
+            risk=risk,
+            client=client,
+            markets=display_markets,
+            market_books=market_books,
+            control=control or HourBotControl(),
+            btc_spot=btc_spot,
+            current_hour=current_hour,
+            trade_candidates=trade_candidates,
+        )
+
+    if control and (control.estop or not control.running):
+        if dashboard:
+            dashboard.add_log("reject", "Scanning paused — bot halted by dashboard control")
+            dashboard.publish(
+                risk=risk,
+                client=client,
+                markets=display_markets,
+                market_books=market_books,
+                control=control,
+                btc_spot=btc_spot,
+                current_hour=current_hour,
+                trade_candidates=trade_candidates,
+            )
+        return
+
+    if not tradeable:
+        log_main.debug(
+            "No markets in %.0f-%.0fm window (checked %d contracts)",
+            MIN_TIME_LEFT_MINUTES,
+            MAX_TIME_LEFT_MINUTES,
+            len(markets),
+        )
+        if dashboard:
+            dashboard.publish(
+                risk=risk,
+                client=client,
+                markets=display_markets,
+                market_books=market_books,
+                control=control or HourBotControl(),
+                btc_spot=btc_spot,
+                current_hour=current_hour,
+                trade_candidates=trade_candidates,
+            )
+        return
+
+    for mins_left, market in scan_queue:
+        ticker = market.get("ticker")
+        if not ticker:
+            continue
+
+        book = market_books.get(ticker) or client.get_orderbook(ticker)
+        if book:
+            yes = book.get("yes") or []
+            no = book.get("no") or []
+            depth_yes = sum(int(lvl[1]) for lvl in yes[:DEPTH_LEVELS]) if yes else 0
+            depth_no = sum(int(lvl[1]) for lvl in no[:DEPTH_LEVELS]) if no else 0
+            log_main.debug(
+                "scanned %s — book yes:%s no:%s, %.1fm left",
+                ticker, depth_yes, depth_no, mins_left,
+            )
 
         if mins_left <= 0:
             continue
-        if not (MIN_TIME_LEFT_MINUTES <= mins_left <= MAX_TIME_LEFT_MINUTES):
+
+        if not book:
             continue
 
-        orderbook = client.get_orderbook(ticker)
-        if not orderbook:
-            continue
-
-        signal = strategy.evaluate_market(ticker, orderbook)
+        signal = strategy.evaluate_market(ticker, book)
         if not signal:
             continue
+
+        trade_candidates.add(ticker)
+        if not any(str(m.get("ticker")) == ticker for m in display_markets):
+            display_markets.append(market)
+            if book:
+                market_books[ticker] = book
 
         size = risk.size_trade(RISK.max_contracts_per_trade, signal.limit_price)
         if size <= 0:
@@ -552,25 +1881,218 @@ def run_cycle(client: KalshiClient, broker, strategy: MarketImbalanceStrategy, r
         approved, reason = risk.approve_trade(signal.ticker, size, signal.limit_price)
         if not approved:
             log_main.info("Signal on %s rejected by risk manager: %s", signal.ticker, reason)
+            if dashboard:
+                dashboard.add_log(
+                    "reject",
+                    f"{signal.ticker} rejected by risk manager — {reason}",
+                    ticker=signal.ticker,
+                    side=signal.side,
+                    price=signal.limit_price,
+                    detail={"reason": reason},
+                )
             continue
 
         log_main.info(
             "SIGNAL %s side=%s price=%d\u00a2 size=%d | %s | %.1fm to expiry",
             signal.ticker, signal.side, signal.limit_price, size, signal.reason, mins_left,
         )
+        if dashboard:
+            dashboard.add_log(
+                "signal",
+                f"SIGNAL {signal.ticker} side={signal.side} price={signal.limit_price}c | {signal.reason}",
+                ticker=signal.ticker,
+                side=signal.side,
+                price=signal.limit_price,
+                count=size,
+                detail={"reason": signal.reason, "minutesLeft": round(mins_left, 1)},
+            )
 
         order_res = broker.place_order(signal.ticker, signal.side, size, signal.limit_price, ORDER_TYPE)
         if order_res:
             risk.record_fill(signal.ticker, signal.side, size, signal.limit_price)
+            if dashboard:
+                entry_quote = dashboard._quote_from_book(book)
+                dashboard.record_entry(
+                    signal.ticker,
+                    signal.side,
+                    size,
+                    signal.limit_price,
+                    expires_at_ms=_expiration_ms(market),
+                    strike_btc=_strike_from_market(market),
+                    signal_reason=signal.reason,
+                    quote=entry_quote,
+                )
             log_main.info(risk.status_line())
-            # One trade per cycle: keeps things simple and avoids stacking new
-            # positions faster than the cooldown allows.
             break
+        log_main.warning("Order submission failed for %s — no fill recorded", signal.ticker)
+        if dashboard:
+            dashboard.add_log(
+                "reject",
+                f"{signal.ticker} order rejected by Kalshi API",
+                ticker=signal.ticker,
+                side=signal.side,
+                price=signal.limit_price,
+                count=size,
+                detail={"reason": "order_api_failed"},
+            )
+
+    if dashboard:
+        dashboard.publish(
+            risk=risk,
+            client=client,
+            markets=display_markets,
+            market_books=market_books,
+            control=control or HourBotControl(),
+            btc_spot=btc_spot,
+            current_hour=current_hour,
+            trade_candidates=trade_candidates,
+        )
+
+
+def _status_file_path() -> Path:
+    return Path(os.getenv("HOUR_BOT_STATUS_PATH", "data/1h_bot_status.json"))
+
+
+def _restore_positions_from_status(
+    raw: dict,
+    risk: RiskManager,
+    dashboard: DashboardRecorder,
+) -> None:
+    for pos in raw.get("positions") or []:
+        ticker = str(pos.get("ticker") or "")
+        if not ticker:
+            continue
+        entry_ms = int(pos.get("entryTime") or int(time.time() * 1000))
+        event_ticker = str(pos.get("eventTicker") or "")
+        risk.open_positions[ticker] = Fill(
+            ticker=ticker,
+            side=str(pos.get("side") or "yes"),
+            count=int(pos.get("count") or 0),
+            price_cents=int(pos.get("entryPrice") or 0),
+            timestamp=entry_ms / 1000.0,
+            event_ticker=event_ticker,
+        )
+        dashboard.position_meta[ticker] = {
+            "expiresAt": int(pos.get("expiresAt") or entry_ms + 3_600_000),
+            "strikeBtc": int(pos.get("strikeBtc") or 0),
+            "entryTime": entry_ms,
+            "signalReason": str(pos.get("signalReason") or ""),
+            "entryQuote": pos.get("entryQuote") or {},
+            "peakBidCents": int(pos.get("peakBidCents") or pos.get("entryPrice") or 0),
+            "trailArmed": bool(pos.get("trailArmed")),
+            "trailFloorCents": int(pos.get("trailFloorCents") or 0) or None,
+            "partialTpTaken": bool(pos.get("partialTpTaken")),
+        }
+
+
+def _restore_positions_from_api(
+    client: KalshiClient,
+    risk: RiskManager,
+    dashboard: DashboardRecorder,
+) -> None:
+    for row in client.get_positions():
+        ticker = str(row.get("ticker") or "")
+        if not ticker:
+            continue
+        net = int(row.get("position") or 0)
+        if net == 0:
+            continue
+        side = "yes" if net > 0 else "no"
+        count = abs(net)
+        avg_price = int(float(row.get("average_price") or row.get("avg_price") or 0))
+        if avg_price <= 0:
+            market = client.get_market(ticker)
+            if market:
+                avg_price = int(market.get("yes_bid") or market.get("no_bid") or 50)
+        risk.open_positions[ticker] = Fill(
+            ticker=ticker,
+            side=side,
+            count=count,
+            price_cents=avg_price,
+            timestamp=time.time(),
+        )
+        if ticker not in dashboard.position_meta:
+            market = client.get_market(ticker) or {}
+            dashboard.position_meta[ticker] = {
+                "expiresAt": _expiration_ms(market) if market else int(time.time() * 1000) + 3_600_000,
+                "strikeBtc": _strike_from_market(market),
+                "entryTime": int(time.time() * 1000),
+                "signalReason": "restored from Kalshi portfolio",
+                "entryQuote": {},
+            }
+
+
+def restore_persisted_state(
+    risk: RiskManager,
+    dashboard: DashboardRecorder,
+    client: KalshiClient,
+    *,
+    mode: str,
+) -> None:
+    """Reload journal, P&L stats, and positions so restarts don't wipe the dashboard."""
+    path = _status_file_path()
+    raw: dict = {}
+    if path.exists():
+        try:
+            raw = json.loads(path.read_text())
+        except Exception as exc:
+            log_main.warning("Could not load prior dashboard state from %s: %s", path, exc)
+
+    if raw:
+        dashboard.journal = list(raw.get("journal") or [])[:300]
+        dashboard.logs = [row for row in (raw.get("logs") or []) if row.get("kind") != "scan"][:100]
+        dashboard.equity_history = list(raw.get("equityHistory") or [])[-120:]
+        dashboard.wins_today = int(raw.get("winsToday") or 0)
+        dashboard.losses_today = int(raw.get("lossesToday") or 0)
+        dashboard.sum_win_dollars = float(raw.get("sumWinDollars") or 0)
+        dashboard.sum_loss_dollars = float(raw.get("sumLossDollars") or 0)
+        dashboard.fees_paid_today = float(raw.get("feesPaidToday") or 0)
+        dashboard.fees_paid_total = float(raw.get("feesPaidTotal") or 0)
+        dashboard.cum_pnl_inception = float(raw.get("cumPnlInception") or 0)
+        dashboard.pnl_by_side = dict(raw.get("pnlBySide") or {"yes": 0.0, "no": 0.0})
+        dashboard.daily_entries = int(raw.get("dailyEntriesUsed") or 0)
+        dashboard.peak_equity = float(raw.get("peakEquity") or risk.starting_bankroll)
+        if dashboard.equity_history:
+            dashboard._tick = max(int(point.get("t", 0)) for point in dashboard.equity_history)
+        risk.realized_pnl_today = float(raw.get("dayPnl") or 0)
+        guardrails = raw.get("guardrails") or {}
+        risk.hour_contracts_used = int(guardrails.get("hourContractsUsed") or 0)
+        risk.current_event = str(guardrails.get("currentEvent") or "")
+        current_hour = raw.get("currentHour") or {}
+        if not risk.current_event:
+            risk.current_event = str(current_hour.get("eventTicker") or "")
+
+    if mode == "live":
+        balance = client.get_balance()
+        if balance is not None:
+            risk.bankroll = balance
+        _restore_positions_from_api(client, risk, dashboard)
+        if not risk.open_positions and raw:
+            _restore_positions_from_status(raw, risk, dashboard)
+    elif raw:
+        risk.bankroll = float(raw.get("bankroll") or risk.starting_bankroll)
+        _restore_positions_from_status(raw, risk, dashboard)
+
+    if raw:
+        log_main.info(
+            "Restored dashboard state — journal=%d logs=%d positions=%d bankroll=$%.2f",
+            len(dashboard.journal),
+            len(dashboard.logs),
+            len(risk.open_positions),
+            risk.bankroll,
+        )
 
 
 def main():
     _require_credentials()
-    log_main.info("Starting Kalshi hourly-BTC bot in %s mode.", TRADING_MODE.upper())
+    control = HourBotControl.load()
+    control.mode = TRADING_MODE
+    control.save()
+
+    mode = TRADING_MODE
+    if mode == "live":
+        log_main.warning("LIVE MODE — real orders will be sent to Kalshi (max $%.2f/trade).", RISK.max_dollars_per_trade)
+    log_main.info("Starting Kalshi hourly-BTC bot in %s mode.", mode.upper())
     log_main.info(
         "Risk config: max_contracts=%d max_$=%.2f daily_loss_limit=%.2f cooldown=%ds max_open=%d",
         RISK.max_contracts_per_trade, RISK.max_dollars_per_trade,
@@ -580,14 +2102,28 @@ def main():
     client = KalshiClient()
     strategy = MarketImbalanceStrategy()
     risk = RiskManager()
+    dashboard = DashboardRecorder(mode=mode)
+    restore_persisted_state(risk, dashboard, client, mode=mode)
+    dashboard.add_log("scan", f"Bot started in {mode.upper()} mode")
 
-    broker = PaperBroker(client) if TRADING_MODE == "paper" else client
+    broker = PaperBroker(client) if mode == "paper" else client
 
     try:
         while True:
-            check_settlements(client, risk)
-            run_cycle(client, broker, strategy, risk)
-            time.sleep(POLL_INTERVAL_SECONDS)
+            control = HourBotControl.load()
+            check_settlements(client, risk, dashboard)
+            check_stop_losses(client, broker, strategy, risk, dashboard)
+            run_cycle(client, broker, strategy, risk, dashboard=dashboard, control=control)
+
+            next_scan = time.time() + POLL_INTERVAL_SECONDS
+            while time.time() < next_scan:
+                control = HourBotControl.load()
+                check_settlements(client, risk, dashboard)
+                check_stop_losses(client, broker, strategy, risk, dashboard)
+                if dashboard and risk.open_positions:
+                    dashboard.publish_fast_quotes(risk=risk, client=client, control=control)
+                sleep_for = min(QUOTE_REFRESH_SECONDS, max(0.1, next_scan - time.time()))
+                time.sleep(sleep_for)
     except KeyboardInterrupt:
         log_main.info("Shutting down. Final status: %s", risk.status_line())
 
