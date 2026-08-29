@@ -842,10 +842,18 @@ export default function KalshiBotDashboard() {
                   Premium stop: -{guardrails.stopLoss.cents}¢ or -{Math.round((guardrails.stopLoss.pct || 0) * 100)}%
                 </div>
                 <div>
-                  Take profit: +{guardrails.stopLoss.takeProfitCents}¢ · min hold {guardrails.stopLoss.minHoldSeconds}s
+                  Take profit: +{guardrails.stopLoss.takeProfitCents}¢
+                  {guardrails.stopLoss.partialTpEnabled ? " (partial 1ct when 2+ held)" : ""}
+                  {" · "}min hold {guardrails.stopLoss.minHoldSeconds}s
                 </div>
+                {guardrails.stopLoss.trailEnabled && (
+                  <div>
+                    Trailing: arm +{guardrails.stopLoss.trailArmCents}¢ · trail -{guardrails.stopLoss.trailOffsetCents}¢ from peak
+                  </div>
+                )}
                 <div>
                   Thesis reversal: {guardrails.stopLoss.thesisReversal ? "on" : "off"}
+                  {guardrails.stopLoss.thesisExtremeOnly ? " (extreme imbalance only)" : ""}
                 </div>
               </div>
             )}
@@ -957,6 +965,15 @@ export default function KalshiBotDashboard() {
                       <div className="text-[#E9E7E2] mt-0.5">
                         {p.stopLossBidFloor ? `≤${p.stopLossBidFloor}¢ stop` : "—"}
                         {p.takeProfitBid ? ` · ≥${p.takeProfitBid}¢ TP` : ""}
+                        {p.partialTpTaken ? " · partial taken" : ""}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-[#767C86]">Trail</div>
+                      <div className="text-[#E9E7E2] mt-0.5">
+                        {p.trailArmed
+                          ? `armed · peak ${p.peakBidCents ?? "—"}¢ · floor ${p.trailFloorCents ?? "—"}¢`
+                          : `idle · peak ${p.peakBidCents ?? p.currentMark ?? "—"}¢`}
                       </div>
                     </div>
                     <div>

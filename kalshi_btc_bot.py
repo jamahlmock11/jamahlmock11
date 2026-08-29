@@ -129,11 +129,16 @@ EXTREME_QUOTE_CENTS = int(os.getenv("EXTREME_QUOTE_CENTS", "2"))
 
 # Position exit / stop-loss (hourly imbalance bot)
 STOP_LOSS_ENABLED = _env_bool("STOP_LOSS_ENABLED", True)
-STOP_LOSS_CENTS = int(os.getenv("STOP_LOSS_CENTS", "8"))
+STOP_LOSS_CENTS = int(os.getenv("STOP_LOSS_CENTS", "12"))
 STOP_LOSS_PCT = float(os.getenv("STOP_LOSS_PCT", "0.45"))
-STOP_MIN_HOLD_SECONDS = float(os.getenv("STOP_MIN_HOLD_SECONDS", "45"))
+STOP_MIN_HOLD_SECONDS = float(os.getenv("STOP_MIN_HOLD_SECONDS", "90"))
 STOP_THESIS_REVERSAL = _env_bool("STOP_THESIS_REVERSAL", True)
+STOP_THESIS_EXTREME_ONLY = _env_bool("STOP_THESIS_EXTREME_ONLY", True)
 STOP_TAKE_PROFIT_CENTS = int(os.getenv("STOP_TAKE_PROFIT_CENTS", "12"))
+STOP_PARTIAL_TP_ENABLED = _env_bool("STOP_PARTIAL_TP_ENABLED", True)
+STOP_TRAIL_ENABLED = _env_bool("STOP_TRAIL_ENABLED", True)
+STOP_TRAIL_ARM_CENTS = int(os.getenv("STOP_TRAIL_ARM_CENTS", "8"))
+STOP_TRAIL_OFFSET_CENTS = int(os.getenv("STOP_TRAIL_OFFSET_CENTS", "6"))
 
 # Execution / polling
 POLL_INTERVAL_SECONDS = float(os.getenv("POLL_INTERVAL_SECONDS", "15"))
@@ -373,6 +378,7 @@ class ExitSignal:
     reason: str
     exit_bid_cents: int
     limit_price_cents: int
+    exit_count: int | None = None
 
 
 class MarketImbalanceStrategy:
@@ -516,12 +522,45 @@ def stop_loss_bid_floor(entry_cents: int) -> int:
     return max(1, min(by_cents, by_pct))
 
 
+def _imbalance_ratio_from_reason(reason: str) -> float | None:
+    marker = "book_imbalance="
+    if marker not in reason:
+        return None
+    try:
+        return float(reason.split(marker, 1)[1].split("x", 1)[0])
+    except (ValueError, IndexError):
+        return None
+
+
+def opposite_signal_qualifies(opposite: Signal) -> bool:
+    """Require extreme book imbalance before thesis-reversal exits."""
+    if not STOP_THESIS_EXTREME_ONLY:
+        return True
+    ratio = _imbalance_ratio_from_reason(opposite.reason)
+    return ratio is not None and ratio + 1e-12 >= IMBALANCE_EXTREME_THRESHOLD
+
+
+def update_trail_state(meta: dict, exit_bid: int, entry_cents: int) -> dict:
+    peak = max(int(meta.get("peakBidCents") or exit_bid), exit_bid)
+    meta["peakBidCents"] = peak
+    armed = bool(meta.get("trailArmed")) or (
+        STOP_TRAIL_ENABLED and (peak - entry_cents) >= STOP_TRAIL_ARM_CENTS
+    )
+    meta["trailArmed"] = armed
+    if armed and STOP_TRAIL_ENABLED:
+        meta["trailFloorCents"] = max(1, peak - STOP_TRAIL_OFFSET_CENTS)
+    else:
+        meta.pop("trailFloorCents", None)
+    return meta
+
+
 def evaluate_position_exit(
     fill: "Fill",
     orderbook: dict,
     strategy: MarketImbalanceStrategy,
     *,
     held_seconds: float,
+    position_meta: dict | None = None,
 ) -> ExitSignal | None:
     """Exit rules aligned with the imbalance entry thesis."""
     if not STOP_LOSS_ENABLED:
@@ -532,12 +571,56 @@ def evaluate_position_exit(
     if exit_bid <= 0:
         return None
 
+    meta = position_meta if position_meta is not None else {}
     entry = fill.price_cents
     loss_cents, loss_pct = premium_loss_metrics(entry, exit_bid)
     gain_cents = max(0, exit_bid - entry)
     within_min_hold = held_seconds + 1e-9 < STOP_MIN_HOLD_SECONDS
+    partial_tp_taken = bool(meta.get("partialTpTaken"))
+    trail = update_trail_state(meta, exit_bid, entry)
 
-    if STOP_TAKE_PROFIT_CENTS > 0 and gain_cents >= STOP_TAKE_PROFIT_CENTS and not within_min_hold:
+    if not within_min_hold and STOP_TRAIL_ENABLED and trail.get("trailArmed"):
+        trail_floor = int(trail.get("trailFloorCents") or 0)
+        if trail_floor > 0 and exit_bid <= trail_floor:
+            return ExitSignal(
+                ticker=fill.ticker,
+                side=fill.side,
+                trigger="trailing_stop",
+                reason=(
+                    f"trailing stop — bid {exit_bid}¢ fell to floor {trail_floor}¢ "
+                    f"(peak {trail['peakBidCents']}¢, trail -{STOP_TRAIL_OFFSET_CENTS}¢)"
+                ),
+                exit_bid_cents=exit_bid,
+                limit_price_cents=max(1, exit_bid - 1),
+            )
+
+    if (
+        not within_min_hold
+        and STOP_TAKE_PROFIT_CENTS > 0
+        and gain_cents >= STOP_TAKE_PROFIT_CENTS
+        and STOP_PARTIAL_TP_ENABLED
+        and fill.count > 1
+        and not partial_tp_taken
+    ):
+        return ExitSignal(
+            ticker=fill.ticker,
+            side=fill.side,
+            trigger="partial_take_profit",
+            reason=(
+                f"partial take profit +{gain_cents}¢ on 1/{fill.count} contracts "
+                f"(target +{STOP_TAKE_PROFIT_CENTS}¢; bid {exit_bid}¢)"
+            ),
+            exit_bid_cents=exit_bid,
+            limit_price_cents=max(1, exit_bid - 1),
+            exit_count=1,
+        )
+
+    if (
+        STOP_TAKE_PROFIT_CENTS > 0
+        and gain_cents >= STOP_TAKE_PROFIT_CENTS
+        and not within_min_hold
+        and (fill.count <= 1 or partial_tp_taken or not STOP_PARTIAL_TP_ENABLED)
+    ):
         return ExitSignal(
             ticker=fill.ticker,
             side=fill.side,
@@ -564,7 +647,7 @@ def evaluate_position_exit(
 
     if STOP_THESIS_REVERSAL and not within_min_hold:
         opposite = strategy.evaluate_market(fill.ticker, orderbook)
-        if opposite and opposite.side != fill.side:
+        if opposite and opposite.side != fill.side and opposite_signal_qualifies(opposite):
             return ExitSignal(
                 ticker=fill.ticker,
                 side=fill.side,
@@ -734,6 +817,26 @@ class RiskManager:
         )
         return pnl
 
+    def record_partial_exit(self, ticker: str, exit_count: int, exit_price_cents: int) -> float:
+        pos = self.open_positions.get(ticker)
+        if pos is None:
+            log_risk.warning("Partial exit recorded for %s but no open position was tracked.", ticker)
+            return 0.0
+        if exit_count <= 0 or exit_count >= pos.count:
+            return self.record_exit(ticker, exit_price_cents)
+        proceeds = (exit_count * exit_price_cents) / 100.0
+        cost = (exit_count * pos.price_cents) / 100.0
+        pnl = proceeds - cost
+        self.bankroll += proceeds
+        self.realized_pnl_today += pnl
+        pos.count -= exit_count
+        self.last_trade_time = time.time()
+        log_risk.info(
+            "PARTIAL EXIT %s %s x%d @ %d\u00a2 | pnl=$%.2f | remaining=%d | bankroll=$%.2f",
+            ticker, pos.side, exit_count, exit_price_cents, pnl, pos.count, self.bankroll,
+        )
+        return pnl
+
     def record_settlement(self, ticker: str, won: bool, payout_per_contract_cents: int = 100):
         pos = self.open_positions.pop(ticker, None)
         if pos is None:
@@ -831,6 +934,9 @@ class DashboardRecorder:
             "entryTime": int(time.time() * 1000),
             "signalReason": signal_reason,
             "entryQuote": quote or {},
+            "peakBidCents": price_cents,
+            "trailArmed": False,
+            "partialTpTaken": False,
         }
         self.add_log(
             "fill",
@@ -906,6 +1012,7 @@ class DashboardRecorder:
         exit_price: int = 0,
         cost_basis: float = 0.0,
         proceeds: float = 0.0,
+        keep_position: bool = False,
     ):
         fee = 0.01
         self.fees_paid_today += fee
@@ -918,7 +1025,8 @@ class DashboardRecorder:
         else:
             self.losses_today += 1
             self.sum_loss_dollars += max(-pnl, 0)
-        self.position_meta.pop(ticker, None)
+        if not keep_position:
+            self.position_meta.pop(ticker, None)
         outcome = "WIN" if pnl >= 0 else "LOSS"
         self.add_log(
             "exit",
@@ -1046,6 +1154,8 @@ class DashboardRecorder:
             else:
                 current_mark = quote["noBid"] or quote["noAsk"] or fill.price_cents
 
+            update_trail_state(meta, current_mark, fill.price_cents)
+
             strike = int(meta.get("strikeBtc") or _strike_from_market(market or {}))
             expires_at = int(meta.get("expiresAt") or now_ms + 3_600_000)
             minutes_remaining = max(0.0, (expires_at - now_ms) / 60_000)
@@ -1058,6 +1168,9 @@ class DashboardRecorder:
                 if STOP_LOSS_ENABLED and STOP_TAKE_PROFIT_CENTS > 0
                 else None
             )
+            peak_bid = int(meta.get("peakBidCents") or current_mark)
+            trail_armed = bool(meta.get("trailArmed"))
+            trail_floor = int(meta.get("trailFloorCents") or 0) or None
 
             rows.append(
                 {
@@ -1081,6 +1194,10 @@ class DashboardRecorder:
                     "unrealizedPnl": unrealized_pnl,
                     "stopLossBidFloor": stop_floor,
                     "takeProfitBid": take_profit_bid,
+                    "peakBidCents": peak_bid,
+                    "trailArmed": trail_armed,
+                    "trailFloorCents": trail_floor,
+                    "partialTpTaken": bool(meta.get("partialTpTaken")),
                     "markUpdatedAt": datetime.now(timezone.utc).isoformat(),
                     **quote,
                 }
@@ -1194,10 +1311,16 @@ class DashboardRecorder:
                     "takeProfitCents": STOP_TAKE_PROFIT_CENTS,
                     "minHoldSeconds": STOP_MIN_HOLD_SECONDS,
                     "thesisReversal": STOP_THESIS_REVERSAL,
+                    "thesisExtremeOnly": STOP_THESIS_EXTREME_ONLY,
+                    "partialTpEnabled": STOP_PARTIAL_TP_ENABLED,
+                    "trailEnabled": STOP_TRAIL_ENABLED,
+                    "trailArmCents": STOP_TRAIL_ARM_CENTS,
+                    "trailOffsetCents": STOP_TRAIL_OFFSET_CENTS,
                 },
                 "hourMaxContracts": HOUR_MAX_CONTRACTS,
                 "hourContractsUsed": risk.hour_contracts_used,
                 "hourContractsOpen": risk.contracts_open_this_event(),
+                "currentEvent": risk.current_event,
             },
             currentHour=current_hour or {},
             pollIntervalMs=HOUR_BOT_POLL_MS,
@@ -1371,27 +1494,41 @@ def check_stop_losses(
         if not book:
             continue
 
+        position_meta = dashboard.position_meta.setdefault(ticker, {}) if dashboard else {}
         held_seconds = max(0.0, time.time() - fill.timestamp)
-        exit_sig = evaluate_position_exit(fill, book, strategy, held_seconds=held_seconds)
+        exit_sig = evaluate_position_exit(
+            fill,
+            book,
+            strategy,
+            held_seconds=held_seconds,
+            position_meta=position_meta,
+        )
         if not exit_sig:
             continue
 
-        log_risk.info("EXIT signal %s %s — %s", ticker, exit_sig.trigger, exit_sig.reason)
+        exit_count = exit_sig.exit_count or fill.count
+        log_risk.info(
+            "EXIT signal %s %s x%d — %s — %s",
+            ticker,
+            exit_sig.trigger,
+            exit_count,
+            exit_sig.reason,
+        )
         if dashboard:
             dashboard.add_log(
                 "signal",
-                f"EXIT {ticker} {fill.side} — {exit_sig.trigger} — {exit_sig.reason}",
+                f"EXIT {ticker} {fill.side} x{exit_count} — {exit_sig.trigger} — {exit_sig.reason}",
                 ticker=ticker,
                 side=fill.side,
                 price=exit_sig.limit_price_cents,
-                count=fill.count,
+                count=exit_count,
                 detail={"trigger": exit_sig.trigger, "reason": exit_sig.reason},
             )
 
         order_res = broker.place_order(
             ticker,
             fill.side,
-            fill.count,
+            exit_count,
             exit_sig.limit_price_cents,
             "market",
             action="sell",
@@ -1405,14 +1542,20 @@ def check_stop_losses(
                     ticker=ticker,
                     side=fill.side,
                     price=exit_sig.limit_price_cents,
-                    count=fill.count,
+                    count=exit_count,
                     detail={"trigger": exit_sig.trigger, "reason": "exit_api_failed"},
                 )
             continue
 
-        cost_basis = (fill.price_cents * fill.count) / 100.0
-        proceeds = (exit_sig.exit_bid_cents * fill.count) / 100.0
-        pnl = risk.record_exit(ticker, exit_sig.exit_bid_cents)
+        cost_basis = (fill.price_cents * exit_count) / 100.0
+        proceeds = (exit_sig.exit_bid_cents * exit_count) / 100.0
+        is_partial = exit_count < fill.count
+        if is_partial:
+            pnl = risk.record_partial_exit(ticker, exit_count, exit_sig.exit_bid_cents)
+            if dashboard:
+                position_meta["partialTpTaken"] = True
+        else:
+            pnl = risk.record_exit(ticker, exit_sig.exit_bid_cents)
         if dashboard:
             dashboard.record_exit(
                 ticker,
@@ -1420,11 +1563,12 @@ def check_stop_losses(
                 exit_sig.trigger,
                 exit_sig.reason,
                 pnl,
-                count=fill.count,
+                count=exit_count,
                 entry_price=fill.price_cents,
                 exit_price=exit_sig.exit_bid_cents,
                 cost_basis=cost_basis,
                 proceeds=proceeds,
+                keep_position=is_partial,
             )
 
 
@@ -1819,12 +1963,14 @@ def _restore_positions_from_status(
         if not ticker:
             continue
         entry_ms = int(pos.get("entryTime") or int(time.time() * 1000))
+        event_ticker = str(pos.get("eventTicker") or "")
         risk.open_positions[ticker] = Fill(
             ticker=ticker,
             side=str(pos.get("side") or "yes"),
             count=int(pos.get("count") or 0),
             price_cents=int(pos.get("entryPrice") or 0),
             timestamp=entry_ms / 1000.0,
+            event_ticker=event_ticker,
         )
         dashboard.position_meta[ticker] = {
             "expiresAt": int(pos.get("expiresAt") or entry_ms + 3_600_000),
@@ -1832,6 +1978,10 @@ def _restore_positions_from_status(
             "entryTime": entry_ms,
             "signalReason": str(pos.get("signalReason") or ""),
             "entryQuote": pos.get("entryQuote") or {},
+            "peakBidCents": int(pos.get("peakBidCents") or pos.get("entryPrice") or 0),
+            "trailArmed": bool(pos.get("trailArmed")),
+            "trailFloorCents": int(pos.get("trailFloorCents") or 0) or None,
+            "partialTpTaken": bool(pos.get("partialTpTaken")),
         }
 
 
@@ -1905,6 +2055,12 @@ def restore_persisted_state(
         if dashboard.equity_history:
             dashboard._tick = max(int(point.get("t", 0)) for point in dashboard.equity_history)
         risk.realized_pnl_today = float(raw.get("dayPnl") or 0)
+        guardrails = raw.get("guardrails") or {}
+        risk.hour_contracts_used = int(guardrails.get("hourContractsUsed") or 0)
+        risk.current_event = str(guardrails.get("currentEvent") or "")
+        current_hour = raw.get("currentHour") or {}
+        if not risk.current_event:
+            risk.current_event = str(current_hour.get("eventTicker") or "")
 
     if mode == "live":
         balance = client.get_balance()

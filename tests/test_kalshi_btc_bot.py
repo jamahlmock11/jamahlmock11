@@ -240,13 +240,15 @@ def test_hour_contract_budget_resets_on_new_event(monkeypatch):
 def test_stop_loss_triggers_on_premium_loss(monkeypatch):
     monkeypatch.setattr(bot, "STOP_LOSS_ENABLED", True)
     monkeypatch.setattr(bot, "STOP_MIN_HOLD_SECONDS", 0)
-    monkeypatch.setattr(bot, "STOP_LOSS_CENTS", 8)
+    monkeypatch.setattr(bot, "STOP_LOSS_CENTS", 12)
     monkeypatch.setattr(bot, "STOP_LOSS_PCT", 0.45)
     monkeypatch.setattr(bot, "STOP_TAKE_PROFIT_CENTS", 0)
     monkeypatch.setattr(bot, "STOP_THESIS_REVERSAL", False)
+    monkeypatch.setattr(bot, "STOP_TRAIL_ENABLED", False)
+    monkeypatch.setattr(bot, "STOP_PARTIAL_TP_ENABLED", False)
 
     fill = bot.Fill(ticker="T", side="yes", count=3, price_cents=50, timestamp=time.time())
-    book = {"yes": [[40, 100]], "no": [[58, 100]]}
+    book = {"yes": [[37, 100]], "no": [[61, 100]]}
     strategy = bot.MarketImbalanceStrategy()
     exit_sig = bot.evaluate_position_exit(fill, book, strategy, held_seconds=120)
 
@@ -259,14 +261,112 @@ def test_take_profit_triggers_on_gain(monkeypatch):
     monkeypatch.setattr(bot, "STOP_MIN_HOLD_SECONDS", 0)
     monkeypatch.setattr(bot, "STOP_TAKE_PROFIT_CENTS", 12)
     monkeypatch.setattr(bot, "STOP_THESIS_REVERSAL", False)
+    monkeypatch.setattr(bot, "STOP_TRAIL_ENABLED", False)
+    monkeypatch.setattr(bot, "STOP_PARTIAL_TP_ENABLED", False)
 
-    fill = bot.Fill(ticker="T", side="yes", count=3, price_cents=50, timestamp=time.time())
+    fill = bot.Fill(ticker="T", side="yes", count=1, price_cents=50, timestamp=time.time())
     book = {"yes": [[63, 100]], "no": [[35, 100]]}
     strategy = bot.MarketImbalanceStrategy()
     exit_sig = bot.evaluate_position_exit(fill, book, strategy, held_seconds=120)
 
     assert exit_sig is not None
     assert exit_sig.trigger == "take_profit"
+
+
+def test_partial_take_profit_sells_one_contract(monkeypatch):
+    monkeypatch.setattr(bot, "STOP_LOSS_ENABLED", True)
+    monkeypatch.setattr(bot, "STOP_MIN_HOLD_SECONDS", 0)
+    monkeypatch.setattr(bot, "STOP_TAKE_PROFIT_CENTS", 12)
+    monkeypatch.setattr(bot, "STOP_THESIS_REVERSAL", False)
+    monkeypatch.setattr(bot, "STOP_TRAIL_ENABLED", False)
+    monkeypatch.setattr(bot, "STOP_PARTIAL_TP_ENABLED", True)
+
+    fill = bot.Fill(ticker="T", side="yes", count=2, price_cents=40, timestamp=time.time())
+    book = {"yes": [[52, 100]], "no": [[46, 100]]}
+    strategy = bot.MarketImbalanceStrategy()
+    exit_sig = bot.evaluate_position_exit(fill, book, strategy, held_seconds=120)
+
+    assert exit_sig is not None
+    assert exit_sig.trigger == "partial_take_profit"
+    assert exit_sig.exit_count == 1
+
+
+def test_trailing_stop_triggers_after_peak(monkeypatch):
+    monkeypatch.setattr(bot, "STOP_LOSS_ENABLED", True)
+    monkeypatch.setattr(bot, "STOP_MIN_HOLD_SECONDS", 0)
+    monkeypatch.setattr(bot, "STOP_TAKE_PROFIT_CENTS", 0)
+    monkeypatch.setattr(bot, "STOP_THESIS_REVERSAL", False)
+    monkeypatch.setattr(bot, "STOP_TRAIL_ENABLED", True)
+    monkeypatch.setattr(bot, "STOP_TRAIL_ARM_CENTS", 8)
+    monkeypatch.setattr(bot, "STOP_TRAIL_OFFSET_CENTS", 6)
+    monkeypatch.setattr(bot, "STOP_PARTIAL_TP_ENABLED", False)
+
+    fill = bot.Fill(ticker="T", side="yes", count=2, price_cents=40, timestamp=time.time())
+    strategy = bot.MarketImbalanceStrategy()
+    meta = {"peakBidCents": 55, "trailArmed": True, "trailFloorCents": 49}
+    book = {"yes": [[48, 100]], "no": [[50, 100]]}
+    exit_sig = bot.evaluate_position_exit(
+        fill, book, strategy, held_seconds=120, position_meta=meta
+    )
+
+    assert exit_sig is not None
+    assert exit_sig.trigger == "trailing_stop"
+
+
+def test_thesis_reversal_requires_extreme_opposite(monkeypatch):
+    monkeypatch.setattr(bot, "STOP_LOSS_ENABLED", True)
+    monkeypatch.setattr(bot, "STOP_MIN_HOLD_SECONDS", 0)
+    monkeypatch.setattr(bot, "STOP_TAKE_PROFIT_CENTS", 0)
+    monkeypatch.setattr(bot, "STOP_TRAIL_ENABLED", False)
+    monkeypatch.setattr(bot, "STOP_PARTIAL_TP_ENABLED", False)
+    monkeypatch.setattr(bot, "STOP_THESIS_REVERSAL", True)
+    monkeypatch.setattr(bot, "STOP_THESIS_EXTREME_ONLY", True)
+    monkeypatch.setattr(bot, "IMBALANCE_EXTREME_THRESHOLD", 2.5)
+    monkeypatch.setattr(bot, "IMBALANCE_RATIO_THRESHOLD", 2.0)
+
+    fill = bot.Fill(ticker="T", side="yes", count=2, price_cents=45, timestamp=time.time())
+    strategy = bot.MarketImbalanceStrategy()
+    mild_no_book = {
+        "yes": [[45, 200], [44, 100]],
+        "no": [[52, 420], [51, 200]],
+    }
+    assert bot.evaluate_position_exit(fill, mild_no_book, strategy, held_seconds=120) is None
+
+    extreme_no_book = {
+        "yes": [[45, 200], [44, 100]],
+        "no": [[52, 900], [51, 400]],
+    }
+    exit_sig = bot.evaluate_position_exit(fill, extreme_no_book, strategy, held_seconds=120)
+    assert exit_sig is not None
+    assert exit_sig.trigger == "thesis_reversal"
+
+
+def test_restore_persists_hour_contract_budget(tmp_path, monkeypatch):
+    status_path = tmp_path / "1h_bot_status.json"
+    status_path.write_text(
+        """
+        {
+          "journal": [],
+          "logs": [],
+          "equityHistory": [],
+          "bankroll": 21.25,
+          "guardrails": {
+            "hourContractsUsed": 2,
+            "currentEvent": "KXBTC-TEST-HOUR"
+          },
+          "currentHour": {"eventTicker": "KXBTC-TEST-HOUR"},
+          "positions": []
+        }
+        """
+    )
+    monkeypatch.setattr(bot, "_status_file_path", lambda: status_path)
+
+    risk = bot.RiskManager()
+    dash = bot.DashboardRecorder(mode="paper")
+    bot.restore_persisted_state(risk, dash, client=object(), mode="paper")
+
+    assert risk.hour_contracts_used == 2
+    assert risk.current_event == "KXBTC-TEST-HOUR"
 
 
 def test_restore_persisted_state_reloads_journal_and_filters_scans(tmp_path, monkeypatch):
